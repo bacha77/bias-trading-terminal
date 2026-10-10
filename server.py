@@ -1,6 +1,8 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from tradingview_screener import Query, Column
 import time
 from datetime import datetime
@@ -867,6 +869,24 @@ async def place_bracket_order(req_body: BracketOrderRequest):
     except Exception as e:
         return {"status": "ERROR", "error": str(e)}
 
+frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.exists(frontend_dist):
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        target = os.path.join(frontend_dist, full_path)
+        if os.path.isfile(target):
+            return FileResponse(target)
+        return FileResponse(os.path.join(frontend_dist, "index.html"))
+
 if __name__ == "__main__":
-    print("Starting LIVE B.I.A.S. Terminal API on port 8000...")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    print(f"Starting LIVE B.I.A.S. Terminal on port {port}...")
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
