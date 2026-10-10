@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B.I.A.S. Terminal v2</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="top-nav">
+            <div class="logo">
+                <span class="logo-icon">⟁</span>
+                <h1>B.I.A.S. <span class="dim">Terminal v2</span></h1>
+            </div>
+            <div class="ticker-tape">
+                <div class="ticker-item">SPY <span class="green">448.72 +1.34%</span></div>
+                <div class="ticker-item">QQQ <span class="green">378.11 +1.02%</span></div>
+                <div class="ticker-item">VIX <span class="red">15.89 -2.31%</span></div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <div class="dashboard-grid">
+            
+            <!-- Left Sidebar: Breakout Scanner -->
+            <aside class="panel scanner-panel">
+                <div class="panel-header">
+                    <h2>Volume Breakout Scanner</h2>
+                    <div class="pulse-indicator"></div>
+                </div>
+                <div class="table-header">
+                    <span>Ticker</span>
+                    <span>Price</span>
+                    <span>Vol/Avg</span>
+                </div>
+                <div id="scanner-results" class="scanner-list">
+                    <div class="loading">Scanning markets...</div>
+                </div>
+            </aside>
+
+            <!-- Center Content: Chart & Matrix -->
+            <main class="center-content">
+                <!-- Interactive Chart Area -->
+                <div class="panel chart-panel">
+                    <div class="panel-header">
+                        <h2>Candlestick Chart (SPY) <span class="green ml-2">+1.34%</span></h2>
+                    </div>
+                    <div class="chart-container">
+                        <!-- We will simulate a chart here for the visual -->
+                        <div class="mock-chart">
+                            <div class="chart-line"></div>
+                            <div class="candlesticks"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Row: Sentiment & Backtesting -->
+                <div class="bottom-row">
+                    <div class="panel sentiment-panel">
+                        <div class="panel-header">
+                            <h2>Live Sentiment Matrix</h2>
+                        </div>
+                        <div class="sentiment-bar-container">
+                            <div class="sentiment-labels">
+                                <span class="green" id="bullish-text">Bullish 82%</span>
+                                <span class="red" id="bearish-text">Bearish 18%</span>
+                            </div>
+                            <div class="sentiment-bar">
+                                <div class="sentiment-fill" id="sentiment-fill" style="width: 82%;"></div>
+                            </div>
+                        </div>
+                        <div class="matrix-grid">
+                            <div class="matrix-box box-green">
+                                <h3>SPY</h3>
+                                <p id="spy-alignment">LEAN BULLISH</p>
+                            </div>
+                            <div class="matrix-box box-green">
+                                <h3>QQQ</h3>
+                                <p>STRONG BUY</p>
+                            </div>
+                            <div class="matrix-box box-red">
+                                <h3>VIX</h3>
+                                <p>BEARISH</p>
+                            </div>
+                            <div class="matrix-box box-gold">
+                                <h3>BTC</h3>
+                                <p>NEUTRAL</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel backtest-panel">
+                        <div class="panel-header">
+                            <h2>Automated Strategy Backtesting</h2>
+                        </div>
+                        <div class="backtest-controls">
+                            <select id="bt-strategy">
+                                <option>Gamma Scalp</option>
+                                <option>Keltner Breakout</option>
+                                <option>RSI Pullback</option>
+                            </select>
+                            <select id="bt-timeframe">
+                                <option>1D</option>
+                                <option>1H</option>
+                                <option>15m</option>
+                            </select>
+                            <button id="run-backtest-btn" class="btn-primary">Run Test</button>
+                        </div>
+                        <div class="backtest-results" id="backtest-results">
+                            <div class="stat">
+                                <span class="label">ROI</span>
+                                <span class="value green">+48.2%</span>
+                            </div>
+                            <div class="stat">
+                                <span class="label">Sharpe</span>
+                                <span class="value green">2.1</span>
+                            </div>
+                            <div class="stat">
+                                <span class="label">Drawdown</span>
+                                <span class="value red">-9.1%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    <script src="main.js"></script>
+</body>
+</html>
