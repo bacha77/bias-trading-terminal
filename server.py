@@ -1217,8 +1217,8 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
         except Exception as be:
             print(f"Gem radar boost error: {be}")
 
-        # 2. Fetch DexScreener search for fresh pump / solana / base tokens
-        for q in ["solana", "base"]:
+        # 2. Fetch DexScreener search for fresh tokens, RWA, DePIN, and AI infrastructure
+        for q in ["solana", "base", "rwa", "depin"]:
             try:
                 req_s = urllib.request.Request(
                     f"https://api.dexscreener.com/latest/dex/search?q={q}",
@@ -1280,12 +1280,37 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
             if sym in ["SOL", "WSOL", "WETH", "ETH", "USDC", "USDT", "DAI", "WBTC"]:
                 continue
 
-            cat = "MEME"
+            # Category classification
             name_lower = f"{name} {sym}".lower()
-            if any(k in name_lower for k in ["ai", "agent", "bot", "gpt", "intel", "mind", "neural", "synth"]):
+            if any(k in name_lower for k in ["rwa", "depin", "yield", "asset", "credit", "sensor", "mesh", "wifi", "storage", "compute", "cloud"]):
+                cat = "RWA / DePIN"
+            elif any(k in name_lower for k in ["ai", "agent", "bot", "gpt", "intel", "mind", "neural", "synth"]):
                 cat = "AI AGENT"
-            elif any(k in name_lower for k in ["swap", "dex", "dao", "net", "chain", "layer", "bridge", "lend"]):
+            elif any(k in name_lower for k in ["swap", "dex", "dao", "net", "chain", "layer", "bridge", "lend", "perp", "oracle"]):
                 cat = "UTILITY"
+            else:
+                cat = "MEME"
+
+            # Automated Institutional Signal Verdict
+            if (buy_ratio < 40 and total_5m >= 4) or chg_1h < -25.0 or (sells_5m > buys_5m * 2 and total_5m >= 6):
+                verdict = "DUMP_RISK"
+                verdict_label = "DUMP IN PROGRESS"
+            elif velocity >= 12.0 and buy_ratio >= 65 and chg_1h > 15:
+                verdict = "PARABOLIC"
+                verdict_label = "PARABOLIC BREAKOUT"
+            elif buy_ratio >= 65 and liq >= 30000 and velocity >= 3.0 and chg_1h >= 0:
+                verdict = "PRIME_RUNNER"
+                verdict_label = "PRIME RUNNER"
+            elif liq >= 25000 and buy_ratio >= 45:
+                verdict = "ACCUMULATING"
+                verdict_label = "ACCUMULATING"
+            else:
+                verdict = "NEUTRAL"
+                verdict_label = "NEUTRAL / CHOP"
+
+            # Audit and Bubblemaps links
+            audit_url = f"https://rugcheck.xyz/tokens/{addr}" if p_chain == "solana" else f"https://tokensniffer.com/token/{p_chain}/{addr}"
+            bubblemaps_url = f"https://app.bubblemaps.io/{p_chain}/token/{addr}"
 
             gems.append({
                 "symbol": sym,
@@ -1308,10 +1333,14 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
                 "chg_24h": round(chg_24h, 2),
                 "safety_score": min(100, score),
                 "url": p.get("url"),
-                "category": cat
+                "category": cat,
+                "verdict": verdict,
+                "verdict_label": verdict_label,
+                "audit_url": audit_url,
+                "bubblemaps_url": bubblemaps_url
             })
 
-        gems.sort(key=lambda x: (x["velocity"] >= 3.0, x["volume_24h"]), reverse=True)
+        gems.sort(key=lambda x: (x["verdict"] in ["PARABOLIC", "PRIME_RUNNER"], x["velocity"] >= 3.0, x["volume_24h"]), reverse=True)
         return {
             "gems": gems[:40],
             "count": len(gems),

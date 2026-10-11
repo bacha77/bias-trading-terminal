@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Flame, RefreshCw, ExternalLink, Copy, Check, 
-  ShieldCheck, Search, Zap, Eye, X
+  ShieldCheck, ShieldAlert, Search, Zap, Eye, X
 } from 'lucide-react';
 import { API_BASE } from './config';
 
@@ -26,7 +26,11 @@ export interface GemToken {
   chg_24h: number;
   safety_score: number;
   url?: string;
-  category: 'MEME' | 'AI AGENT' | 'UTILITY';
+  category: 'MEME' | 'AI AGENT' | 'RWA / DePIN' | 'UTILITY';
+  verdict?: 'PARABOLIC' | 'PRIME_RUNNER' | 'DUMP_RISK' | 'ACCUMULATING' | 'NEUTRAL';
+  verdict_label?: string;
+  audit_url?: string;
+  bubblemaps_url?: string;
 }
 
 const fmtCurrency = (val: number) => {
@@ -54,6 +58,7 @@ export function EarlyGemRadar() {
   const [selectedChain, setSelectedChain] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [highVelocityOnly, setHighVelocityOnly] = useState<boolean>(false);
+  const [runnerFilter, setRunnerFilter] = useState<'ALL' | 'RUNNERS_ONLY' | 'SAFE_ONLY'>('ALL');
   const [minLiq, setMinLiq] = useState<number>(5000);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
@@ -104,6 +109,13 @@ export function EarlyGemRadar() {
       if (selectedCategory !== 'all' && g.category !== selectedCategory) {
         return false;
       }
+      // Runner / Safe filter
+      if (runnerFilter === 'RUNNERS_ONLY' && g.verdict !== 'PRIME_RUNNER' && g.verdict !== 'PARABOLIC') {
+        return false;
+      }
+      if (runnerFilter === 'SAFE_ONLY' && g.safety_score < 90) {
+        return false;
+      }
       // High velocity toggle
       if (highVelocityOnly && g.velocity < 3.0) {
         return false;
@@ -118,7 +130,7 @@ export function EarlyGemRadar() {
       }
       return true;
     });
-  }, [gems, selectedChain, selectedCategory, highVelocityOnly, searchQuery]);
+  }, [gems, selectedChain, selectedCategory, runnerFilter, highVelocityOnly, searchQuery]);
 
   return (
     <section className="glass-panel p-4 flex flex-col gap-4 border border-amber-500/30 bg-gradient-to-b from-black/80 to-[#070b14]/90 shadow-[0_0_30px_rgba(245,158,11,0.08)] rounded-xl mt-2">
@@ -140,7 +152,7 @@ export function EarlyGemRadar() {
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-sans">
-              Autonomous On-Chain Screener · Volume Velocity, Smart Contract Audits & Holder Concentration
+              Algorithmic Breakout Detection · Automated Signal Badges, RWA / DePIN Fundamentals & 1-Click Contract Audits
             </p>
           </div>
         </div>
@@ -199,12 +211,13 @@ export function EarlyGemRadar() {
           ))}
         </div>
 
-        {/* Category Filters */}
+        {/* Category Filters (Includes RWA / DePIN Real-World Utility!) */}
         <div className="flex bg-black/50 p-0.5 rounded-lg border border-white/10 shrink-0">
           {[
             { id: 'all', label: 'ALL TYPES' },
             { id: 'MEME', label: '🔥 MEMES' },
             { id: 'AI AGENT', label: '🤖 AI AGENTS' },
+            { id: 'RWA / DePIN', label: '🌐 RWA / DePIN' },
             { id: 'UTILITY', label: '⚙️ UTILITY' },
           ].map((cat) => (
             <button
@@ -221,6 +234,32 @@ export function EarlyGemRadar() {
           ))}
         </div>
 
+        {/* Signal Mode Filter */}
+        <div className="flex bg-black/50 p-0.5 rounded-lg border border-white/10 shrink-0">
+          <button
+            onClick={() => setRunnerFilter('ALL')}
+            className={`px-2 py-1 text-[10px] rounded font-bold ${runnerFilter === 'ALL' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'}`}
+          >
+            ALL SIGNALS
+          </button>
+          <button
+            onClick={() => setRunnerFilter(runnerFilter === 'RUNNERS_ONLY' ? 'ALL' : 'RUNNERS_ONLY')}
+            className={`px-2 py-1 text-[10px] rounded font-bold transition-all flex items-center gap-1 ${
+              runnerFilter === 'RUNNERS_ONLY' ? 'bg-neon-green/20 text-neon-green border border-neon-green/40 shadow-[0_0_8px_rgba(0,255,163,0.2)]' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            🚀 RUNNERS ONLY
+          </button>
+          <button
+            onClick={() => setRunnerFilter(runnerFilter === 'SAFE_ONLY' ? 'ALL' : 'SAFE_ONLY')}
+            className={`px-2 py-1 text-[10px] rounded font-bold transition-all flex items-center gap-1 ${
+              runnerFilter === 'SAFE_ONLY' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            🛡️ 90+ SAFE
+          </button>
+        </div>
+
         {/* High Velocity Pill */}
         <button
           onClick={() => setHighVelocityOnly(!highVelocityOnly)}
@@ -231,7 +270,7 @@ export function EarlyGemRadar() {
           }`}
         >
           <Zap size={12} className={highVelocityOnly ? 'animate-bounce text-neon-red' : ''} />
-          {highVelocityOnly ? '🔥 >3x VELOCITY (ON)' : '⚡ VELOCITY FILTER'}
+          {highVelocityOnly ? '🔥 >3x VELOCITY (ON)' : '⚡ >3x VELOCITY'}
         </button>
 
         {/* Min Liquidity Selector */}
@@ -271,29 +310,55 @@ export function EarlyGemRadar() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {loading && gems.length === 0 ? (
             <div className="col-span-full py-12 text-center text-slate-500 font-mono italic">
-              Scanning 40,000+ DEX pools on Solana & Base for breakout momentum...
+              Scanning 40,000+ DEX pools across Solana, Base, and RWA/DePIN for high-conviction breakout setups...
             </div>
           ) : filteredGems.length === 0 ? (
             <div className="col-span-full py-12 text-center text-slate-500 font-mono italic">
-              No gems found matching the active filters. Try lowering the liquidity threshold or resetting velocity filter.
+              No gems found matching the active filters. Try resetting the runner filter or lowering the liquidity threshold.
             </div>
           ) : (
             filteredGems.map((g) => {
-              const isHighVelocity = g.velocity >= 3.0;
-              const isParabolic = g.velocity >= 10.0;
+              const isParabolic = g.verdict === 'PARABOLIC';
+              const isRunner = g.verdict === 'PRIME_RUNNER';
+              const isDump = g.verdict === 'DUMP_RISK';
+              const isAccum = g.verdict === 'ACCUMULATING';
+
               return (
                 <div
                   key={g.address}
                   className={`rounded-xl border p-3 flex flex-col justify-between transition-all duration-300 relative overflow-hidden group ${
                     isParabolic
-                      ? 'bg-gradient-to-br from-amber-500/10 via-black/80 to-purple-950/20 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.15)] hover:border-amber-400'
-                      : isHighVelocity
-                      ? 'bg-black/60 border-neon-green/30 hover:border-neon-green/60 shadow-[0_0_10px_rgba(0,255,163,0.06)]'
+                      ? 'bg-gradient-to-br from-amber-500/10 via-black/80 to-purple-950/20 border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.2)] hover:border-amber-400'
+                      : isRunner
+                      ? 'bg-gradient-to-br from-neon-green/10 via-black/80 to-cyan-950/20 border-neon-green/50 shadow-[0_0_15px_rgba(0,255,163,0.12)] hover:border-neon-green'
+                      : isDump
+                      ? 'bg-black/50 border-neon-red/40 opacity-80 hover:opacity-100'
                       : 'bg-black/40 border-white/10 hover:border-white/30'
                   }`}
                 >
-                  {/* Top Bar: Token Identity & Chain */}
                   <div>
+                    {/* Top Automated Signal Verdict Banner */}
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border flex items-center gap-1 uppercase tracking-wider ${
+                        isParabolic ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.3)] animate-pulse' :
+                        isRunner ? 'bg-neon-green/20 border-neon-green text-neon-green shadow-[0_0_8px_rgba(0,255,163,0.25)]' :
+                        isDump ? 'bg-neon-red/20 border-neon-red/50 text-neon-red' :
+                        isAccum ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300' :
+                        'bg-white/5 border-white/10 text-slate-400'
+                      }`}>
+                        {isParabolic && '🔥 PARABOLIC BREAKOUT'}
+                        {isRunner && '🚀 PRIME RUNNER'}
+                        {isDump && '⚠️ DUMP IN PROGRESS'}
+                        {isAccum && '👀 ACCUMULATING'}
+                        {!isParabolic && !isRunner && !isDump && !isAccum && '⚖️ CONSOLIDATING'}
+                      </span>
+
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 font-mono uppercase font-bold shrink-0">
+                        {g.chain} · {g.dex}
+                      </span>
+                    </div>
+
+                    {/* Token Identity */}
                     <div className="flex items-start justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-2 overflow-hidden">
                         <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center font-bold text-xs text-white shrink-0 font-mono">
@@ -304,6 +369,7 @@ export function EarlyGemRadar() {
                             <span className="font-bold text-sm text-white font-mono truncate">{g.symbol}</span>
                             <span className={`text-[8px] px-1 py-0.2 rounded font-bold uppercase tracking-wider shrink-0 ${
                               g.category === 'AI AGENT' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' :
+                              g.category === 'RWA / DePIN' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
                               g.category === 'UTILITY' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' :
                               'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                             }`}>
@@ -313,11 +379,6 @@ export function EarlyGemRadar() {
                           <div className="text-[10px] text-slate-400 truncate">{g.name}</div>
                         </div>
                       </div>
-
-                      {/* Chain Badge */}
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 font-mono uppercase font-bold shrink-0">
-                        {g.chain} · {g.dex}
-                      </span>
                     </div>
 
                     {/* Price & 5m / 1h Returns */}
@@ -339,7 +400,7 @@ export function EarlyGemRadar() {
                     <div className="grid grid-cols-2 gap-1.5 p-2 rounded-lg bg-black/40 border border-white/5 text-[10px] font-mono mb-2.5">
                       <div>
                         <span className="text-slate-500 block text-[9px] uppercase">VELOCITY (V/L)</span>
-                        <span className={`font-bold ${isParabolic ? 'text-neon-gold flex items-center gap-1' : isHighVelocity ? 'text-neon-green' : 'text-slate-300'}`}>
+                        <span className={`font-bold ${isParabolic ? 'text-neon-gold flex items-center gap-1' : isRunner ? 'text-neon-green' : 'text-slate-300'}`}>
                           {g.velocity.toFixed(1)}x {isParabolic && '🔥'}
                         </span>
                       </div>
@@ -357,62 +418,98 @@ export function EarlyGemRadar() {
                       </div>
                     </div>
 
-                    {/* 5m Buy Pressure & Safety Indicator */}
+                    {/* 5m Buy Pressure Progress Bar */}
                     <div className="mb-2.5">
                       <div className="flex justify-between text-[9px] font-mono mb-0.5 text-slate-400">
-                        <span>5M BUY FLOW: <strong className={g.buy_ratio_5m >= 60 ? 'text-neon-green' : 'text-slate-300'}>{g.buy_ratio_5m}%</strong></span>
+                        <span>5M BUY FLOW: <strong className={g.buy_ratio_5m >= 60 ? 'text-neon-green' : isDump ? 'text-neon-red' : 'text-slate-300'}>{g.buy_ratio_5m}%</strong></span>
                         <span className="text-slate-500">{g.buys_5m}B / {g.sells_5m}S</span>
                       </div>
-                      <div className="h-1.5 w-full bg-neon-red/30 rounded-full overflow-hidden">
+                      <div className="h-1.5 w-full bg-neon-red/40 rounded-full overflow-hidden">
                         <div 
-                          className="h-full bg-neon-green rounded-full transition-all duration-500" 
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            g.buy_ratio_5m >= 65 ? 'bg-neon-green shadow-[0_0_6px_#00ffa3]' :
+                            g.buy_ratio_5m >= 45 ? 'bg-cyan-400' : 'bg-neon-red'
+                          }`}
                           style={{ width: `${Math.min(100, Math.max(0, g.buy_ratio_5m))}%` }} 
                         />
                       </div>
                     </div>
                   </div>
 
-                  {/* Card Bottom: Safety Score, Age & Action Buttons */}
-                  <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px] font-mono">
-                    <div className="flex items-center gap-1">
-                      <ShieldCheck size={12} className={g.safety_score >= 80 ? 'text-neon-green' : g.safety_score >= 60 ? 'text-neon-gold' : 'text-slate-500'} />
-                      <span className={g.safety_score >= 80 ? 'text-neon-green font-bold' : 'text-slate-400'}>
-                        {g.safety_score}/100
-                      </span>
-                      <span className="text-slate-600">· {g.age_hours < 1 ? `${Math.round(g.age_hours * 60)}m` : `${g.age_hours}h`}</span>
+                  {/* Card Bottom: Safety Score, Age & 1-Click Action Suite */}
+                  <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-[10px] font-mono">
+                      <div className="flex items-center gap-1">
+                        {g.safety_score >= 80 ? (
+                          <ShieldCheck size={12} className="text-neon-green" />
+                        ) : (
+                          <ShieldAlert size={12} className="text-neon-gold" />
+                        )}
+                        <span className={g.safety_score >= 80 ? 'text-neon-green font-bold' : 'text-slate-400'}>
+                          {g.safety_score}/100
+                        </span>
+                        <span className="text-slate-600">· {g.age_hours < 1 ? `${Math.round(g.age_hours * 60)}m` : `${g.age_hours}h`}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {/* 1-Click RugCheck / TokenSniffer */}
+                        {g.audit_url && (
+                          <a
+                            href={g.audit_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-1.5 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold flex items-center gap-0.5 transition-colors"
+                            title="Verify Mint, Freeze & LP Lock Audit"
+                          >
+                            🛡️ Audit
+                          </a>
+                        )}
+
+                        {/* 1-Click BubbleMaps Cluster */}
+                        {g.bubblemaps_url && (
+                          <a
+                            href={g.bubblemaps_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-1.5 py-0.5 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] font-bold flex items-center gap-0.5 transition-colors"
+                            title="Inspect Top Holder Clusters"
+                          >
+                            🫧 Bubbles
+                          </a>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
-                      {/* Copy CA */}
+                    {/* Bottom Action Row */}
+                    <div className="flex items-center justify-between text-[10px] font-mono pt-1 border-t border-white/5">
                       <button
                         onClick={() => copyToClipboard(g.address)}
-                        className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                        className="flex items-center gap-1 text-slate-400 hover:text-white transition-colors"
                         title="Copy Contract Address"
                       >
-                        {copiedAddress === g.address ? <Check size={12} className="text-neon-green" /> : <Copy size={12} />}
+                        {copiedAddress === g.address ? <Check size={11} className="text-neon-green" /> : <Copy size={11} />}
+                        <span className="text-[9px]">{copiedAddress === g.address ? 'Copied' : `${g.address.slice(0, 4)}...${g.address.slice(-3)}`}</span>
                       </button>
 
-                      {/* Interactive Preview Modal */}
-                      <button
-                        onClick={() => setPreviewToken(g)}
-                        className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 text-[10px] font-bold flex items-center gap-1"
-                        title="Preview Live Chart"
-                      >
-                        <Eye size={10} /> Chart
-                      </button>
-
-                      {/* External DexScreener Link */}
-                      {g.url && (
-                        <a
-                          href={g.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-1 rounded hover:bg-white/10 text-amber-400 hover:text-amber-300 transition-colors"
-                          title="Open on DexScreener"
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setPreviewToken(g)}
+                          className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 text-[10px] font-bold flex items-center gap-1"
                         >
-                          <ExternalLink size={12} />
-                        </a>
-                      )}
+                          <Eye size={10} /> Chart
+                        </button>
+                        {g.url && (
+                          <a
+                            href={g.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1 rounded hover:bg-white/10 text-amber-400 hover:text-amber-300"
+                            title="Open DexScreener"
+                          >
+                            <ExternalLink size={12} />
+                          </a>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -428,76 +525,91 @@ export function EarlyGemRadar() {
           <table className="w-full text-left text-xs font-mono">
             <thead className="bg-white/5 border-b border-white/10 text-[10px] text-slate-400 uppercase">
               <tr>
-                <th className="py-2.5 px-3">Token</th>
+                <th className="py-2.5 px-3">Signal</th>
+                <th className="py-2.5 px-2">Token</th>
                 <th className="py-2.5 px-2">Chain</th>
                 <th className="py-2.5 px-2">Price</th>
                 <th className="py-2.5 px-2">5m Chg</th>
                 <th className="py-2.5 px-2">1h Chg</th>
                 <th className="py-2.5 px-2">Velocity (V/L)</th>
                 <th className="py-2.5 px-2">Liquidity</th>
-                <th className="py-2.5 px-2">24h Vol</th>
                 <th className="py-2.5 px-2">5m Buy Flow</th>
                 <th className="py-2.5 px-2">Safety</th>
                 <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {filteredGems.map((g) => (
-                <tr key={g.address} className="hover:bg-white/[0.03] transition-colors">
-                  <td className="py-2 px-3">
-                    <div className="font-bold text-white flex items-center gap-1.5">
-                      {g.symbol}
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-white/10 text-slate-400">{g.category}</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500 truncate max-w-[120px]">{g.name}</div>
-                  </td>
-                  <td className="py-2 px-2 uppercase text-[10px] text-slate-300 font-bold">{g.chain}</td>
-                  <td className="py-2 px-2 font-bold text-white">{fmtPrice(g.price_usd)}</td>
-                  <td className={`py-2 px-2 font-bold ${g.chg_5m >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                    {g.chg_5m >= 0 ? '+' : ''}{g.chg_5m.toFixed(1)}%
-                  </td>
-                  <td className={`py-2 px-2 font-bold ${g.chg_1h >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                    {g.chg_1h >= 0 ? '+' : ''}{g.chg_1h.toFixed(1)}%
-                  </td>
-                  <td className={`py-2 px-2 font-bold ${g.velocity >= 3.0 ? 'text-neon-gold' : 'text-slate-300'}`}>
-                    {g.velocity.toFixed(1)}x
-                  </td>
-                  <td className="py-2 px-2 text-slate-300">{fmtCurrency(g.liquidity)}</td>
-                  <td className="py-2 px-2 text-white font-bold">{fmtCurrency(g.volume_24h)}</td>
-                  <td className="py-2 px-2">
-                    <span className={g.buy_ratio_5m >= 60 ? 'text-neon-green font-bold' : 'text-slate-300'}>
-                      {g.buy_ratio_5m}%
-                    </span>
-                  </td>
-                  <td className="py-2 px-2">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${g.safety_score >= 80 ? 'bg-neon-green/20 text-neon-green border border-neon-green/30' : 'bg-white/10 text-slate-300'}`}>
-                      {g.safety_score}
-                    </span>
-                  </td>
-                  <td className="py-2 px-3 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <button
-                        onClick={() => copyToClipboard(g.address)}
-                        className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
-                        title="Copy CA"
-                      >
-                        {copiedAddress === g.address ? <Check size={12} className="text-neon-green" /> : <Copy size={12} />}
-                      </button>
-                      <button
-                        onClick={() => setPreviewToken(g)}
-                        className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-bold"
-                      >
-                        Chart
-                      </button>
-                      {g.url && (
-                        <a href={g.url} target="_blank" rel="noopener noreferrer" className="p-1 hover:text-amber-300 text-amber-400">
-                          <ExternalLink size={12} />
-                        </a>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filteredGems.map((g) => {
+                const isParabolic = g.verdict === 'PARABOLIC';
+                const isRunner = g.verdict === 'PRIME_RUNNER';
+                const isDump = g.verdict === 'DUMP_RISK';
+                return (
+                  <tr key={g.address} className="hover:bg-white/[0.03] transition-colors">
+                    <td className="py-2 px-3">
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                        isParabolic ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                        isRunner ? 'bg-neon-green/20 text-neon-green border-neon-green/40' :
+                        isDump ? 'bg-neon-red/20 text-neon-red border-neon-red/40' :
+                        'bg-white/5 text-slate-400 border-white/10'
+                      }`}>
+                        {isParabolic && '🔥 PARABOLIC'}
+                        {isRunner && '🚀 RUNNER'}
+                        {isDump && '⚠️ DUMP'}
+                        {!isParabolic && !isRunner && !isDump && '⚖️ CHOP'}
+                      </span>
+                    </td>
+                    <td className="py-2 px-2">
+                      <div className="font-bold text-white flex items-center gap-1.5">
+                        {g.symbol}
+                        <span className="text-[8px] px-1 py-0.2 rounded bg-white/10 text-slate-400">{g.category}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate max-w-[120px]">{g.name}</div>
+                    </td>
+                    <td className="py-2 px-2 uppercase text-[10px] text-slate-300 font-bold">{g.chain}</td>
+                    <td className="py-2 px-2 font-bold text-white">{fmtPrice(g.price_usd)}</td>
+                    <td className={`py-2 px-2 font-bold ${g.chg_5m >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                      {g.chg_5m >= 0 ? '+' : ''}{g.chg_5m.toFixed(1)}%
+                    </td>
+                    <td className={`py-2 px-2 font-bold ${g.chg_1h >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                      {g.chg_1h >= 0 ? '+' : ''}{g.chg_1h.toFixed(1)}%
+                    </td>
+                    <td className={`py-2 px-2 font-bold ${g.velocity >= 3.0 ? 'text-neon-gold' : 'text-slate-300'}`}>
+                      {g.velocity.toFixed(1)}x
+                    </td>
+                    <td className="py-2 px-2 text-slate-300">{fmtCurrency(g.liquidity)}</td>
+                    <td className="py-2 px-2">
+                      <span className={g.buy_ratio_5m >= 60 ? 'text-neon-green font-bold' : isDump ? 'text-neon-red font-bold' : 'text-slate-300'}>
+                        {g.buy_ratio_5m}%
+                      </span>
+                    </td>
+                    <td className="py-2 px-2">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${g.safety_score >= 80 ? 'bg-neon-green/20 text-neon-green border border-neon-green/30' : 'bg-white/10 text-slate-300'}`}>
+                        {g.safety_score}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {g.audit_url && (
+                          <a href={g.audit_url} target="_blank" rel="noopener noreferrer" className="px-1.5 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold">
+                            Audit
+                          </a>
+                        )}
+                        <button
+                          onClick={() => setPreviewToken(g)}
+                          className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-bold"
+                        >
+                          Chart
+                        </button>
+                        {g.url && (
+                          <a href={g.url} target="_blank" rel="noopener noreferrer" className="p-1 hover:text-amber-300 text-amber-400">
+                            <ExternalLink size={12} />
+                          </a>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -520,6 +632,14 @@ export function EarlyGemRadar() {
                     <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10">
                       {previewToken.chain} · {previewToken.dex}
                     </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                      previewToken.verdict === 'PRIME_RUNNER' ? 'bg-neon-green/20 text-neon-green border-neon-green/40' :
+                      previewToken.verdict === 'PARABOLIC' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                      previewToken.verdict === 'DUMP_RISK' ? 'bg-neon-red/20 text-neon-red border-neon-red/40' :
+                      'bg-white/10 text-slate-300 border-white/10'
+                    }`}>
+                      {previewToken.verdict_label}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
                     <span>CA: {previewToken.address.slice(0, 8)}...{previewToken.address.slice(-6)}</span>
@@ -529,6 +649,16 @@ export function EarlyGemRadar() {
                     >
                       {copiedAddress === previewToken.address ? <Check size={11} className="text-neon-green" /> : <Copy size={11} />}
                     </button>
+                    {previewToken.audit_url && (
+                      <a href={previewToken.audit_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-emerald-400 hover:underline flex items-center gap-0.5">
+                        🛡️ RugCheck <ExternalLink size={10} />
+                      </a>
+                    )}
+                    {previewToken.bubblemaps_url && (
+                      <a href={previewToken.bubblemaps_url} target="_blank" rel="noopener noreferrer" className="ml-1 text-purple-400 hover:underline flex items-center gap-0.5">
+                        🫧 BubbleMaps <ExternalLink size={10} />
+                      </a>
+                    )}
                   </div>
                 </div>
               </div>
