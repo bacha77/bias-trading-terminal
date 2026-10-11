@@ -158,7 +158,8 @@ def compute_smart_intelligence(ticker: str, spot: float, gex: dict, sentiment_sc
     state = load_learning_state()
 
     # 1. Fetch recent bars for statistical learning & volatility distribution
-    tk = yf.Ticker(ticker)
+    yf_symbol = f"{ticker}-USD" if ticker in ("BTC", "ETH", "SOL", "DOGE", "XRP", "AVAX", "LINK", "ADA") or "USD" in ticker else ticker
+    tk = yf.Ticker(yf_symbol)
     hist = tk.history(period="1mo", interval="1d", auto_adjust=False)
     
     if hist.empty or len(hist) < 10:

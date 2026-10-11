@@ -53,3 +53,4 @@ desktop.ini
 
 # App State / Logs
 *.log
+.firebase/

@@ -16,11 +16,14 @@ import { API_BASE as SERVER_URL } from './config';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const API_BASE = `${SERVER_URL}/api`;
-const QUICK = ['SPY', 'QQQ', 'IWM', 'AAPL', 'NVDA', 'TSLA', 'AMD', 'META'];
+const STOCKS_QUICK = ['SPY', 'QQQ', 'IWM', 'AAPL', 'NVDA', 'TSLA', 'AMD', 'META'];
+const CRYPTO_QUICK = ['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'AVAX'];
+const ALL_QUICK = [...STOCKS_QUICK, ...CRYPTO_QUICK];
 
 const fmt = (v: any, d = 2, suf = '') => (v === null || v === undefined ? '--' : `${Number(v).toFixed(d)}${suf}`);
 
 function App() {
+  const [assetClass, setAssetClass] = useState<'EQUITIES' | 'CRYPTO'>('EQUITIES');
   const [breakouts, setBreakouts] = useState<any[]>([]);
   const [scannerSearch, setScannerSearch] = useState('');
   const [scannerFilter, setScannerFilter] = useState<'ALL' | 'MEGA-CAP' | 'SEMIS' | 'MOMENTUM' | 'CALLS' | 'PUTS'>('ALL');
@@ -258,7 +261,7 @@ function App() {
           <span className="text-[10px] text-slate-500">{lastTickTime || '--:--:--'}</span>
         </div>
         <div className="flex gap-4 overflow-x-auto py-0.5 px-3 items-center w-full">
-          {QUICK.map((sym) => {
+          {ALL_QUICK.map((sym: string) => {
             const item = tape[sym];
             const p = item?.price;
             const c = item?.change ?? 0;
@@ -350,35 +353,65 @@ function App() {
         </div>
       )}
 
-      {/* ================= Options command bar ================= */}
+      {/* ================= Options / Asset Command Bar ================= */}
       <section className="glass-panel px-4 py-3 flex flex-wrap items-center gap-3">
-        <Crosshair size={18} className="text-neon-green" />
+        {/* Asset Class Switcher */}
+        <div className="flex bg-black/60 p-0.5 rounded-lg border border-white/10 shrink-0 shadow-inner">
+          <button
+            type="button"
+            onClick={() => { setAssetClass('EQUITIES'); selectTicker('SPY'); }}
+            className={`px-3 py-1 text-xs font-mono font-bold rounded-md transition-all ${assetClass === 'EQUITIES' ? 'bg-neon-green/20 text-neon-green border border-neon-green/40 shadow-[0_0_10px_rgba(0,255,163,0.2)]' : 'text-slate-400 hover:text-white'}`}
+          >
+            📈 STOCKS
+          </button>
+          <button
+            type="button"
+            onClick={() => { setAssetClass('CRYPTO'); selectTicker('BTC'); }}
+            className={`px-3 py-1 text-xs font-mono font-bold rounded-md transition-all flex items-center gap-1.5 ${assetClass === 'CRYPTO' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'text-slate-400 hover:text-white'}`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+            🪙 CRYPTO 24/7
+          </button>
+        </div>
+
+        <Crosshair size={18} className={assetClass === 'CRYPTO' ? 'text-amber-400' : 'text-neon-green'} />
         <form onSubmit={(e) => { e.preventDefault(); selectTicker(optInput); }} className="flex gap-2">
           <input
             id="options-ticker-input"
             value={optInput}
             onChange={(e) => setOptInput(e.target.value.toUpperCase())}
+            placeholder={assetClass === 'CRYPTO' ? 'BTC' : 'SPY'}
             className="w-24 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-mono uppercase outline-none focus:border-neon-green"
           />
-          <button id="options-load-btn" className="bg-neon-green text-black font-bold px-3 py-1.5 rounded-lg text-sm hover:opacity-80">Load</button>
+          <button id="options-load-btn" className={`${assetClass === 'CRYPTO' ? 'bg-amber-400 hover:bg-amber-300' : 'bg-neon-green hover:bg-neon-green/80'} text-black font-bold px-3 py-1.5 rounded-lg text-sm transition-colors`}>Load</button>
         </form>
         <div className="flex gap-1 flex-wrap">
-          {QUICK.map((t) => {
+          {(assetClass === 'CRYPTO' ? CRYPTO_QUICK : STOCKS_QUICK).map((t) => {
             const it = tape[t];
             const f = flash[t];
             const fBorder = f === 'up' ? 'border-neon-green text-neon-green shadow-[0_0_8px_#00ffa3]' : f === 'down' ? 'border-neon-red text-neon-red shadow-[0_0_8px_#ff2a6d]' : '';
+            const p = it?.price;
+            const priceStr = p !== undefined ? (p < 5 ? `$${Number(p).toFixed(3)}` : `$${Number(p).toFixed(1)}`) : '';
             return (
               <button key={t} onClick={() => selectTicker(t)}
-                className={`text-[11px] font-mono px-2 py-1 rounded border transition-all duration-300 ${fBorder || (optTicker === t ? 'border-neon-green text-neon-green bg-neon-green/10' : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white')}`}>
-                {t} {it?.price ? `$${Number(it.price).toFixed(1)}` : ''}
+                className={`text-[11px] font-mono px-2 py-1 rounded border transition-all duration-300 ${fBorder || (optTicker === t ? (assetClass === 'CRYPTO' ? 'border-amber-400 text-amber-300 bg-amber-500/10' : 'border-neon-green text-neon-green bg-neon-green/10') : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white')}`}>
+                {t} {priceStr}
               </button>
             );
           })}
         </div>
-        <select id="expiry-select" value={expiry || opt?.expiry || ''} onChange={(e) => setExpiry(e.target.value)}
-          className="bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white font-mono outline-none focus:border-neon-green">
-          {(opt?.expiries || []).map((e: string) => <option key={e} value={e}>{e}</option>)}
-        </select>
+        {assetClass === 'EQUITIES' && (
+          <select id="expiry-select" value={expiry || opt?.expiry || ''} onChange={(e) => setExpiry(e.target.value)}
+            className="bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white font-mono outline-none focus:border-neon-green">
+            {(opt?.expiries || []).map((e: string) => <option key={e} value={e}>{e}</option>)}
+          </select>
+        )}
+        {assetClass === 'CRYPTO' && (
+          <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+            24/7 SPOT & PERP
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-3 text-[11px] font-mono text-slate-500">
           {optError && <span className="text-neon-red">⚠ {optError}</span>}
           {activeTape && (
