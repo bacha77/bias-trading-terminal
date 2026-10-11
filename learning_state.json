@@ -1,15 +1,15 @@
 {
   "version": "4.0-bayesian-sgd",
-  "total_predictions": 195,
-  "target_hits": 142,
-  "stopped_out": 53,
-  "accuracy_pct": 72.8,
+  "total_predictions": 215,
+  "target_hits": 143,
+  "stopped_out": 72,
+  "accuracy_pct": 66.5,
   "learning_rate": 0.025,
   "feature_weights": {
-    "gamma": 0.419,
-    "flow": 0.415,
-    "momentum": 0.083,
-    "vanna": 0.083
+    "gamma": 0.361,
+    "flow": 0.475,
+    "momentum": 0.082,
+    "vanna": 0.082
   },
   "active_predictions": [
     {
@@ -31,15 +31,33 @@
       }
     },
     {
-      "id": "pred_SPY_1791679922",
+      "id": "pred_SPY_1791724333",
       "ticker": "SPY",
-      "timestamp": 1791679922.1445622,
+      "timestamp": 1791724333.5160234,
+      "spot": 778.6,
+      "target_high": 784.51,
+      "target_low": 772.69,
+      "stop_loss": 775.4,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.0,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      }
+    },
+    {
+      "id": "pred_SPY_1791724934",
+      "ticker": "SPY",
+      "timestamp": 1791724934.9539173,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
       "side": "buy",
-      "confidence": 82,
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
@@ -49,15 +67,69 @@
       }
     },
     {
-      "id": "pred_SPY_1791680522",
+      "id": "pred_SPY_1791725602",
       "ticker": "SPY",
-      "timestamp": 1791680522.937667,
+      "timestamp": 1791725602.392111,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
+      "side": "buy",
+      "confidence": 81,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 0.0,
+        "vanna": 1.4
+      }
+    },
+    {
+      "id": "pred_SPY_1791726262",
+      "ticker": "SPY",
+      "timestamp": 1791726262.8640292,
+      "spot": 778.6,
+      "target_high": 784.51,
+      "target_low": 772.69,
+      "stop_loss": 775.4,
       "side": "buy",
       "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.0,
+        "flow": 1.0,
+        "momentum": 0.0,
+        "vanna": 1.4
+      }
+    },
+    {
+      "id": "pred_SPY_1791726913",
+      "ticker": "SPY",
+      "timestamp": 1791726913.1733515,
+      "spot": 778.6,
+      "target_high": 784.51,
+      "target_low": 772.69,
+      "stop_loss": 775.4,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.0,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      }
+    },
+    {
+      "id": "pred_SPY_1791727527",
+      "ticker": "SPY",
+      "timestamp": 1791727527.2037506,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.62,
+      "side": "buy",
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
@@ -67,15 +139,15 @@
       }
     },
     {
-      "id": "pred_SPY_1791681179",
+      "id": "pred_SPY_1791728176",
       "ticker": "SPY",
-      "timestamp": 1791681179.7899878,
+      "timestamp": 1791728176.6039412,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
       "side": "buy",
-      "confidence": 82,
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
@@ -85,15 +157,15 @@
       }
     },
     {
-      "id": "pred_SPY_1791681779",
+      "id": "pred_SPY_1791728832",
       "ticker": "SPY",
-      "timestamp": 1791681779.798809,
+      "timestamp": 1791728832.0175736,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
       "side": "buy",
-      "confidence": 82,
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
@@ -103,15 +175,15 @@
       }
     },
     {
-      "id": "pred_SPY_1791682441",
+      "id": "pred_SPY_1791729434",
       "ticker": "SPY",
-      "timestamp": 1791682441.7665772,
+      "timestamp": 1791729434.9069989,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
       "side": "buy",
-      "confidence": 82,
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
@@ -121,15 +193,33 @@
       }
     },
     {
-      "id": "pred_SPY_1791683162",
+      "id": "pred_SPY_1791730091",
       "ticker": "SPY",
-      "timestamp": 1791683162.5208106,
+      "timestamp": 1791730091.6739647,
       "spot": 778.6,
-      "target_high": 784.76,
-      "target_low": 772.44,
-      "stop_loss": 773.43,
+      "target_high": 784.51,
+      "target_low": 772.69,
+      "stop_loss": 775.4,
       "side": "buy",
       "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.0,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      }
+    },
+    {
+      "id": "pred_SPY_1791730761",
+      "ticker": "SPY",
+      "timestamp": 1791730761.7013848,
+      "spot": 778.6,
+      "target_high": 787.8,
+      "target_low": 769.4,
+      "stop_loss": 773.01,
+      "side": "buy",
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
@@ -139,94 +229,192 @@
       }
     },
     {
-      "id": "pred_SPY_1791683824",
+      "id": "pred_SPY_1791731424",
       "ticker": "SPY",
-      "timestamp": 1791683824.5611722,
+      "timestamp": 1791731424.5442286,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
       "side": "buy",
-      "confidence": 82,
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
         "flow": 1.0,
-        "momentum": 1.5,
+        "momentum": 0.0,
         "vanna": 1.4
       }
+    }
+  ],
+  "completed_predictions": [
+    {
+      "id": "pred_SPY_1791723672",
+      "ticker": "SPY",
+      "timestamp": 1791723672.6132154,
+      "spot": 778.6,
+      "target_high": 784.51,
+      "target_low": 772.69,
+      "stop_loss": 775.4,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.0,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791730883.3891706,
+      "resolved_price": 778.6
     },
     {
-      "id": "pred_SPY_1791684424",
+      "id": "pred_SPY_1791723013",
       "ticker": "SPY",
-      "timestamp": 1791684424.7130911,
+      "timestamp": 1791723013.026497,
       "spot": 778.6,
-      "target_high": 784.76,
-      "target_low": 772.44,
-      "stop_loss": 773.43,
+      "target_high": 784.51,
+      "target_low": 772.69,
+      "stop_loss": 775.4,
       "side": "buy",
       "confidence": 82,
       "horizon_sec": 7200,
       "features": {
-        "gamma": 1.5,
+        "gamma": 1.0,
         "flow": 1.0,
         "momentum": 1.5,
         "vanna": 1.4
-      }
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791730284.553054,
+      "resolved_price": 778.6
     },
     {
-      "id": "pred_SPY_1791685079",
+      "id": "pred_SPY_1791722941",
       "ticker": "SPY",
-      "timestamp": 1791685079.799469,
-      "spot": 778.6,
-      "target_high": 784.76,
-      "target_low": 772.44,
-      "stop_loss": 773.43,
+      "timestamp": 1791722941.2328255,
+      "spot": 500.0,
+      "target_high": 505.67,
+      "target_low": 494.33,
+      "stop_loss": 496.93,
       "side": "buy",
       "confidence": 82,
       "horizon_sec": 7200,
       "features": {
-        "gamma": 1.5,
+        "gamma": 1.0,
         "flow": 1.0,
-        "momentum": 1.5,
+        "momentum": 0.0,
         "vanna": 1.4
-      }
+      },
+      "resolution": "HIT",
+      "resolved_at": 1791723013.0131652,
+      "resolved_price": 778.6
     },
     {
-      "id": "pred_SPY_1791685741",
+      "id": "pred_SPY_1791722527",
       "ticker": "SPY",
-      "timestamp": 1791685741.8658862,
+      "timestamp": 1791722527.2943363,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
       "side": "buy",
-      "confidence": 82,
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
         "flow": 1.0,
         "momentum": 1.5,
         "vanna": 1.4
-      }
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791722941.2072222,
+      "resolved_price": 500.0
     },
     {
-      "id": "pred_SPY_1791686399",
+      "id": "pred_SPY_1791721926",
       "ticker": "SPY",
-      "timestamp": 1791686399.3885736,
+      "timestamp": 1791721926.3392653,
       "spot": 778.6,
       "target_high": 784.76,
       "target_low": 772.44,
-      "stop_loss": 773.43,
+      "stop_loss": 773.62,
       "side": "buy",
-      "confidence": 82,
+      "confidence": 81,
       "horizon_sec": 7200,
       "features": {
         "gamma": 1.5,
         "flow": 1.0,
         "momentum": 1.5,
         "vanna": 1.4
-      }
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791722941.2072222,
+      "resolved_price": 500.0
+    },
+    {
+      "id": "pred_SPY_1791721325",
+      "ticker": "SPY",
+      "timestamp": 1791721325.8517985,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.62,
+      "side": "buy",
+      "confidence": 81,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791722941.2072222,
+      "resolved_price": 500.0
+    },
+    {
+      "id": "pred_SPY_1791720724",
+      "ticker": "SPY",
+      "timestamp": 1791720724.052489,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.62,
+      "side": "buy",
+      "confidence": 81,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791722941.2072222,
+      "resolved_price": 500.0
+    },
+    {
+      "id": "pred_SPY_1791720101",
+      "ticker": "SPY",
+      "timestamp": 1791720101.4589322,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.62,
+      "side": "buy",
+      "confidence": 81,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791722941.2072222,
+      "resolved_price": 500.0
     },
     {
       "id": "pred_SPY_1791686999",
@@ -244,10 +432,242 @@
         "flow": 1.0,
         "momentum": 1.5,
         "vanna": 1.4
-      }
-    }
-  ],
-  "completed_predictions": [
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791686399",
+      "ticker": "SPY",
+      "timestamp": 1791686399.3885736,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791685741",
+      "ticker": "SPY",
+      "timestamp": 1791685741.8658862,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791685079",
+      "ticker": "SPY",
+      "timestamp": 1791685079.799469,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791684424",
+      "ticker": "SPY",
+      "timestamp": 1791684424.7130911,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791683824",
+      "ticker": "SPY",
+      "timestamp": 1791683824.5611722,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791683162",
+      "ticker": "SPY",
+      "timestamp": 1791683162.5208106,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791682441",
+      "ticker": "SPY",
+      "timestamp": 1791682441.7665772,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791681779",
+      "ticker": "SPY",
+      "timestamp": 1791681779.798809,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791681179",
+      "ticker": "SPY",
+      "timestamp": 1791681179.7899878,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791680522",
+      "ticker": "SPY",
+      "timestamp": 1791680522.937667,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791720101.4503174,
+      "resolved_price": 778.6
+    },
+    {
+      "id": "pred_SPY_1791679922",
+      "ticker": "SPY",
+      "timestamp": 1791679922.1445622,
+      "spot": 778.6,
+      "target_high": 784.76,
+      "target_low": 772.44,
+      "stop_loss": 773.43,
+      "side": "buy",
+      "confidence": 82,
+      "horizon_sec": 7200,
+      "features": {
+        "gamma": 1.5,
+        "flow": 1.0,
+        "momentum": 1.5,
+        "vanna": 1.4
+      },
+      "resolution": "STOP",
+      "resolved_at": 1791687186.5018213,
+      "resolved_price": 778.6
+    },
     {
       "id": "pred_SPY_1791679261",
       "ticker": "SPY",
@@ -877,164 +1297,17 @@
       "resolution": "STOP",
       "resolved_at": 1791593458.564617,
       "resolved_price": 773.93
-    },
-    {
-      "id": "pred_SPY_1791591020",
-      "ticker": "SPY",
-      "timestamp": 1791591020.3455641,
-      "spot": 778.6,
-      "target_high": 784.58,
-      "target_low": 772.62,
-      "stop_loss": 775.36,
-      "side": "buy",
-      "confidence": 82,
-      "horizon_sec": 7200,
-      "features": {
-        "gamma": 1.0,
-        "flow": 1.6,
-        "momentum": 1.5,
-        "vanna": 1.4
-      },
-      "resolution": "STOP",
-      "resolved_at": 1791593458.564617,
-      "resolved_price": 773.93
-    },
-    {
-      "id": "pred_SPY_1791590980",
-      "ticker": "SPY",
-      "timestamp": 1791590980.89209,
-      "spot": 585.0,
-      "target_high": 589.49,
-      "target_low": 580.51,
-      "stop_loss": 582.56,
-      "side": "buy",
-      "confidence": 82,
-      "horizon_sec": 7200,
-      "features": {
-        "gamma": 1.0,
-        "flow": 1.0,
-        "momentum": -1.5,
-        "vanna": 1.4
-      },
-      "resolution": "HIT",
-      "resolved_at": 1791591020.3376923,
-      "resolved_price": 778.6
-    },
-    {
-      "id": "pred_SPY_1791590409",
-      "ticker": "SPY",
-      "timestamp": 1791590409.6392438,
-      "spot": 778.6,
-      "target_high": 784.83,
-      "target_low": 772.37,
-      "stop_loss": 773.24,
-      "side": "buy",
-      "confidence": 82,
-      "horizon_sec": 7200,
-      "features": {
-        "gamma": 1.5,
-        "flow": 1.6,
-        "momentum": 1.5,
-        "vanna": 1.4
-      },
-      "resolution": "STOP",
-      "resolved_at": 1791590938.4953763,
-      "resolved_price": 585.0
-    },
-    {
-      "id": "pred_SPY_1791589739",
-      "ticker": "SPY",
-      "timestamp": 1791589739.639504,
-      "spot": 778.6,
-      "target_high": 784.76,
-      "target_low": 772.44,
-      "stop_loss": 774.1,
-      "side": "buy",
-      "confidence": 81,
-      "horizon_sec": 7200,
-      "features": {
-        "gamma": 1.5,
-        "flow": 1.6,
-        "momentum": 1.5,
-        "vanna": 1.4
-      },
-      "resolution": "STOP",
-      "resolved_at": 1791590938.4953763,
-      "resolved_price": 585.0
-    },
-    {
-      "id": "pred_SPY_1791589102",
-      "ticker": "SPY",
-      "timestamp": 1791589102.6242893,
-      "spot": 778.6,
-      "target_high": 784.76,
-      "target_low": 772.44,
-      "stop_loss": 774.1,
-      "side": "buy",
-      "confidence": 81,
-      "horizon_sec": 7200,
-      "features": {
-        "gamma": 1.5,
-        "flow": 1.6,
-        "momentum": 1.5,
-        "vanna": 1.4
-      },
-      "resolution": "STOP",
-      "resolved_at": 1791590938.4953763,
-      "resolved_price": 585.0
-    },
-    {
-      "id": "pred_SPY_1791588457",
-      "ticker": "SPY",
-      "timestamp": 1791588457.9833627,
-      "spot": 778.6,
-      "target_high": 784.76,
-      "target_low": 772.44,
-      "stop_loss": 774.1,
-      "side": "buy",
-      "confidence": 81,
-      "horizon_sec": 7200,
-      "features": {
-        "gamma": 1.5,
-        "flow": 0.8,
-        "momentum": 1.5,
-        "vanna": 1.4
-      },
-      "resolution": "STOP",
-      "resolved_at": 1791590938.4953763,
-      "resolved_price": 585.0
-    },
-    {
-      "id": "pred_SPY_1791587852",
-      "ticker": "SPY",
-      "timestamp": 1791587852.7037935,
-      "spot": 778.6,
-      "target_high": 784.76,
-      "target_low": 772.44,
-      "stop_loss": 774.1,
-      "side": "buy",
-      "confidence": 81,
-      "horizon_sec": 7200,
-      "features": {
-        "gamma": 1.5,
-        "flow": 1.0,
-        "momentum": 1.5,
-        "vanna": 1.4
-      },
-      "resolution": "STOP",
-      "resolved_at": 1791590938.4953763,
-      "resolved_price": 585.0
     }
   ],
   "learning_insights": [
-    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 41% \u00b7 Flow 41% \u00b7 Trend 8% \u00b7 Vanna 8%.",
-    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 42% \u00b7 Flow 41% \u00b7 Trend 8% \u00b7 Vanna 8%.",
-    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 42% \u00b7 Flow 41% \u00b7 Trend 8% \u00b7 Vanna 8%.",
-    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 42% \u00b7 Flow 40% \u00b7 Trend 8% \u00b7 Vanna 8%.",
-    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 42% \u00b7 Flow 40% \u00b7 Trend 8% \u00b7 Vanna 8%.",
-    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 43% \u00b7 Flow 40% \u00b7 Trend 8% \u00b7 Vanna 8%.",
-    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 43% \u00b7 Flow 40% \u00b7 Trend 8% \u00b7 Vanna 8%.",
-    "Walk-Forward Target HIT ($778.60) on SPY. Adapted weights -> Gamma 43% \u00b7 Flow 40% \u00b7 Trend 8% \u00b7 Vanna 8%."
+    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 36% \u00b7 Flow 47% \u00b7 Trend 8% \u00b7 Vanna 8%.",
+    "Walk-Forward Stopped/Exceeded ($778.60) on SPY. Adapted weights -> Gamma 36% \u00b7 Flow 47% \u00b7 Trend 8% \u00b7 Vanna 8%.",
+    "Walk-Forward Target HIT ($778.60) on SPY. Adapted weights -> Gamma 36% \u00b7 Flow 47% \u00b7 Trend 8% \u00b7 Vanna 8%.",
+    "Walk-Forward Stopped/Exceeded ($500.00) on SPY. Adapted weights -> Gamma 36% \u00b7 Flow 47% \u00b7 Trend 8% \u00b7 Vanna 8%.",
+    "Walk-Forward Stopped/Exceeded ($500.00) on SPY. Adapted weights -> Gamma 36% \u00b7 Flow 46% \u00b7 Trend 8% \u00b7 Vanna 8%.",
+    "Walk-Forward Stopped/Exceeded ($500.00) on SPY. Adapted weights -> Gamma 37% \u00b7 Flow 46% \u00b7 Trend 8% \u00b7 Vanna 8%.",
+    "Walk-Forward Stopped/Exceeded ($500.00) on SPY. Adapted weights -> Gamma 37% \u00b7 Flow 46% \u00b7 Trend 8% \u00b7 Vanna 8%.",
+    "Walk-Forward Stopped/Exceeded ($500.00) on SPY. Adapted weights -> Gamma 37% \u00b7 Flow 45% \u00b7 Trend 8% \u00b7 Vanna 8%."
   ],
   "last_calibration": 1791587852.537936
 }

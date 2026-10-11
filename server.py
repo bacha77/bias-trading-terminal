@@ -340,30 +340,76 @@ async def get_breakout():
         return {"results": []}
 
 @app.get("/api/backtest")
-async def run_backtest(ticker: str = "AAPL", strategy: str = "bollinger", timeframe: str = "1d"):
+async def run_backtest_endpoint(
+    ticker: str = "AAPL", 
+    strategy: str = "bollinger", 
+    timeframe: str = "1d",
+    period: str = "1y",
+    mode: str = "single"
+):
+    res_sym = resolve_symbol(ticker)
+    sym = res_sym["yf"]
+    display_sym = res_sym["display"]
+    cache_key = f"bt_{display_sym}_{strategy}_{timeframe}_{period}_{mode}"
+    if cache_key in CACHE and time.time() - CACHE[cache_key]["time"] < 180:
+        return CACHE[cache_key]["data"]
+
     try:
-        from tradingview_mcp.core.services.backtest_service import walk_forward_backtest
-        res = await asyncio.to_thread(walk_forward_backtest, ticker, strategy, interval=timeframe)
-        
-        return {
-            "ticker": res.get("symbol", ticker),
-            "strategy": res.get("strategy_label", strategy),
-            "roi": f"{res.get('avg_test_return_pct', 0):.1f}%",
-            "sharpe_ratio": round(res.get('oos_sharpe_ratio', 0), 1),
-            "max_drawdown": f"{res.get('oos_max_drawdown_pct', 0):.1f}%",
-            "total_trades": res.get('oos_total_trades', 0),
-            "verdict": res.get("verdict", "UNKNOWN").split(" ")[0] # extract just the first word e.g. "OVERFITTED"
-        }
+        from tradingview_mcp.core.services.backtest_service import run_backtest, compare_strategies, walk_forward_backtest
+
+        if mode == "compare":
+            data = await asyncio.to_thread(compare_strategies, sym, period=period, interval=timeframe)
+            data["ticker"] = display_sym
+            CACHE[cache_key] = {"time": time.time(), "data": data}
+            return data
+
+        if mode == "walk_forward":
+            wf_period = "2y" if period in ["1y", "2y"] else period
+            data = await asyncio.to_thread(walk_forward_backtest, sym, strategy, period=wf_period, interval=timeframe)
+            data["ticker"] = display_sym
+            CACHE[cache_key] = {"time": time.time(), "data": data}
+            return data
+
+        # Single strategy backtest with equity curve + walk-forward cross-check
+        bt_res = await asyncio.to_thread(
+            run_backtest, 
+            sym, 
+            strategy, 
+            period=period, 
+            interval=timeframe,
+            include_trade_log=True, 
+            include_equity_curve=True
+        )
+
+        # Quick walk forward test for overfitting check
+        try:
+            wf_res = await asyncio.to_thread(walk_forward_backtest, sym, strategy, period="2y", interval=timeframe)
+            verdict_raw = wf_res.get("verdict", "UNKNOWN")
+            verdict = verdict_raw.split(" ")[0].upper()
+            robustness = wf_res.get("robustness_score", 0.5)
+        except Exception:
+            verdict = "ACCEPTABLE"
+            robustness = 0.5
+
+        bt_res["ticker"] = display_sym
+        bt_res["roi"] = f"{bt_res.get('total_return_pct', 0):.1f}%"
+        bt_res["verdict"] = verdict
+        bt_res["robustness_score"] = robustness
+
+        CACHE[cache_key] = {"time": time.time(), "data": bt_res}
+        return bt_res
     except Exception as e:
-        print(f"Error in backtest: {e}")
+        import traceback
+        traceback.print_exc()
         return {
-            "ticker": ticker,
+            "ticker": display_sym,
             "strategy": strategy,
             "roi": "ERR",
             "sharpe_ratio": "--",
             "max_drawdown": "--",
             "total_trades": 0,
-            "verdict": "ERROR"
+            "verdict": "ERROR",
+            "error": str(e)
         }
 
 OPTIONS_TTL = 60

@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Activity, Target, BrainCircuit, AlertTriangle, Crosshair, Gauge, 
   Layers, Zap, Waves, ShieldAlert, RefreshCw, Search, 
-  Volume2, VolumeX, Landmark, BellRing 
+  Volume2, VolumeX, Landmark, BellRing, BarChart3
 } from 'lucide-react';
 import { PanelTitle, Metric, GexLadder, Playbook, RegimeCard, OptionsChain, UnusualFlow, VolPanel } from './OptionsPanels';
 import { MultiChartGrid } from './MultiChartGrid';
 import { PositionsDrawer } from './PositionsDrawer';
 import { EarlyGemRadar } from './EarlyGemRadar';
+import { StrategyBacktestLab } from './StrategyBacktestLab';
 import { MacroCalendarModal } from './MacroCalendarModal';
 import { SmartAlgoBoard } from './SmartAlgoBoard';
 import { playInstitutionalChime } from './audioAlerts';
@@ -321,6 +322,16 @@ function App() {
 
           {/* Institutional Macro Catalyst Calendar Modal */}
           <MacroCalendarModal />
+
+          {/* Quick jump to Strategy Lab */}
+          <a
+            href="#strategy-lab"
+            className="text-[10px] font-mono px-2 py-1 rounded border border-white/10 bg-white/5 text-slate-300 hover:text-white hover:border-neon-green/40 flex items-center gap-1.5 transition-all"
+            title="Jump to Quantitative Strategy Lab"
+          >
+            <BarChart3 size={12} className="text-neon-green" />
+            <span>STRATEGY LAB</span>
+          </a>
         </div>
         <div className="flex gap-4 font-mono text-sm">
           {['SPY', 'QQQ', 'AAPL', 'NVDA', 'TSLA'].map((t) => {
@@ -740,38 +751,51 @@ function App() {
           )}
         </div>
 
-        <div className="glass-panel xl:col-span-6 p-4 flex flex-col">
-          <PanelTitle icon={<AlertTriangle size={14} className="text-neon-red" />}>Strategy Lab · Walk-Forward</PanelTitle>
-          <div className="flex gap-2 mb-4">
-            <input type="text" value={backtestTicker} onChange={(e) => setBacktestTicker(e.target.value.toUpperCase())} placeholder="TICKER"
-              className="w-24 bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white font-mono uppercase outline-none focus:border-neon-green" />
-            <select value={selectedStrategy} onChange={(e) => setSelectedStrategy(e.target.value)}
-              className="flex-1 bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-neon-green">
-              <option value="bollinger">Bollinger Mean Reversion</option>
-              <option value="rsi">RSI Pullback</option>
-              <option value="macd">MACD Cross</option>
-              <option value="ema_cross">EMA Cross</option>
-              <option value="supertrend">Supertrend</option>
-            </select>
-            <button id="run-backtest-btn" onClick={runBacktest} className="bg-neon-green text-black font-bold px-4 py-2 rounded-lg hover:opacity-80 transition-opacity">Run</button>
-          </div>
-          <div className="flex-1 bg-black/40 rounded-lg border border-white/5 p-4 flex flex-col justify-center">
-            <div className="grid grid-cols-4 gap-2 mb-4 text-center">
-              <div><div className="text-[10px] text-slate-500 uppercase">Return</div><div className="text-xl font-mono font-bold text-neon-green">{backtest?.roi || '--'}</div></div>
-              <div><div className="text-[10px] text-slate-500 uppercase">Sharpe</div><div className="text-xl font-mono font-bold text-white">{backtest?.sharpe_ratio ?? '--'}</div></div>
-              <div><div className="text-[10px] text-slate-500 uppercase">Drawdown</div><div className="text-xl font-mono font-bold text-neon-red">{backtest?.max_drawdown || '--'}</div></div>
-              <div><div className="text-[10px] text-slate-500 uppercase">Trades</div><div className="text-xl font-mono font-bold text-white">{backtest?.total_trades ?? '--'}</div></div>
+        <div className="glass-panel xl:col-span-6 p-4 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <PanelTitle icon={<AlertTriangle size={14} className="text-neon-red" />}>Strategy Lab · Quick Runner</PanelTitle>
+              <a href="#strategy-lab" className="text-[11px] font-mono text-neon-green hover:underline flex items-center gap-1">
+                Open Full Lab Suite →
+              </a>
             </div>
-            {backtest?.verdict && (
-              <div className={`text-center py-1 text-xs font-bold rounded ${
-                backtest.verdict === 'ROBUST' ? 'bg-neon-green/20 text-neon-green border border-neon-green/30'
-                : backtest.verdict === 'OVERFITTED' ? 'bg-neon-red/20 text-neon-red border border-neon-red/30'
-                : 'bg-white/10 text-slate-300'}`}>
-                VERDICT: {backtest.verdict}{backtest.total_trades !== undefined && backtest.total_trades < 10 && backtest.verdict !== '...' ? ' · LOW SAMPLE' : ''}
+            <div className="flex gap-2 mb-4">
+              <input type="text" value={backtestTicker} onChange={(e) => setBacktestTicker(e.target.value.toUpperCase())} placeholder="TICKER"
+                className="w-24 bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white font-mono uppercase outline-none focus:border-neon-green" />
+              <select value={selectedStrategy} onChange={(e) => setSelectedStrategy(e.target.value)}
+                className="flex-1 bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-neon-green">
+                <option value="bollinger">Bollinger Mean Reversion</option>
+                <option value="rsi">RSI Pullback</option>
+                <option value="macd">MACD Cross</option>
+                <option value="ema_cross">EMA Cross</option>
+                <option value="supertrend">Supertrend</option>
+                <option value="donchian">Donchian Breakout</option>
+              </select>
+              <button id="run-backtest-btn" onClick={runBacktest} className="bg-neon-green text-black font-bold px-4 py-2 rounded-lg hover:opacity-80 transition-opacity">Run</button>
+            </div>
+            <div className="bg-black/40 rounded-lg border border-white/5 p-4 flex flex-col justify-center">
+              <div className="grid grid-cols-4 gap-2 mb-4 text-center">
+                <div><div className="text-[10px] text-slate-500 uppercase">Return</div><div className="text-xl font-mono font-bold text-neon-green">{backtest?.roi || '--'}</div></div>
+                <div><div className="text-[10px] text-slate-500 uppercase">Sharpe</div><div className="text-xl font-mono font-bold text-white">{backtest?.sharpe_ratio ?? '--'}</div></div>
+                <div><div className="text-[10px] text-slate-500 uppercase">Drawdown</div><div className="text-xl font-mono font-bold text-neon-red">{backtest?.max_drawdown || '--'}</div></div>
+                <div><div className="text-[10px] text-slate-500 uppercase">Trades</div><div className="text-xl font-mono font-bold text-white">{backtest?.total_trades ?? '--'}</div></div>
               </div>
-            )}
+              {backtest?.verdict && (
+                <div className={`text-center py-1 text-xs font-bold rounded ${
+                  backtest.verdict === 'ROBUST' ? 'bg-neon-green/20 text-neon-green border border-neon-green/30'
+                  : backtest.verdict === 'OVERFITTED' ? 'bg-neon-red/20 text-neon-red border border-neon-red/30'
+                  : 'bg-white/10 text-slate-300'}`}>
+                  VERDICT: {backtest.verdict}{backtest.total_trades !== undefined && backtest.total_trades < 10 && backtest.verdict !== '...' ? ' · LOW SAMPLE' : ''}
+                </div>
+              )}
+            </div>
           </div>
         </div>
+      </div>
+
+      {/* ================= Quantitative Strategy Lab & Backtest Engine ================= */}
+      <div id="strategy-lab">
+        <StrategyBacktestLab initialTicker={optTicker} onSelectTicker={selectTicker} />
       </div>
 
       {/* ================= Early Gem & Meme Radar ================= */}
