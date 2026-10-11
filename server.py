@@ -1427,6 +1427,9 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
         res = await asyncio.to_thread(_scan)
         CACHE[cache_key] = {"time": time.time(), "data": res}
         return res
+    except Exception as e:
+        return {"gems": [], "error": str(e), "count": 0}
+
 # ------------------------------------------------ Email Notifications & Alert Engine
 from email_notifier import send_email, render_premarket_briefing_html, render_high_conviction_alert_html
 
@@ -1463,6 +1466,11 @@ async def trigger_premarket_briefing(recipient: str = "bacha7@gmail.com"):
             macro_events=macro.get("events", []),
             regime_data=regime
         )
+        res = await asyncio.to_thread(send_email, subject, html, recipient)
+        return res
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 # ------------------------------------------------ Scheduled Alert Monitor Loop
 from email_notifier import get_email_credentials
 
