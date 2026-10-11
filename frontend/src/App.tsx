@@ -14,6 +14,7 @@ import { SmartAlgoBoard } from './SmartAlgoBoard';
 import { playInstitutionalChime } from './audioAlerts';
 import { ErrorBoundary } from './ErrorBoundary';
 import { CardHelpProvider, HelpButton } from './CardExplainerModal';
+import { ForexBoard } from './ForexBoard';
 
 import { API_BASE as SERVER_URL } from './config';
 
@@ -21,12 +22,13 @@ import { API_BASE as SERVER_URL } from './config';
 const API_BASE = `${SERVER_URL}/api`;
 const STOCKS_QUICK = ['SPY', 'QQQ', 'IWM', 'AAPL', 'NVDA', 'TSLA', 'AMD', 'META'];
 const CRYPTO_QUICK = ['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'AVAX'];
-const ALL_QUICK = [...STOCKS_QUICK, ...CRYPTO_QUICK];
+const FOREX_QUICK = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CAD', 'AUD/USD', 'USD/CHF', 'GBP/JPY', 'DXY'];
+const ALL_QUICK = [...STOCKS_QUICK, ...CRYPTO_QUICK, ...FOREX_QUICK];
 
 const fmt = (v: any, d = 2, suf = '') => (v === null || v === undefined ? '--' : `${Number(v).toFixed(d)}${suf}`);
 
 function App() {
-  const [assetClass, setAssetClass] = useState<'EQUITIES' | 'CRYPTO'>('EQUITIES');
+  const [assetClass, setAssetClass] = useState<'EQUITIES' | 'CRYPTO' | 'FOREX'>('EQUITIES');
   const [breakouts, setBreakouts] = useState<any[]>([]);
   const [scannerSearch, setScannerSearch] = useState('');
   const [scannerFilter, setScannerFilter] = useState<'ALL' | 'MEGA-CAP' | 'SEMIS' | 'MOMENTUM' | 'CALLS' | 'PUTS'>('ALL');
@@ -386,21 +388,29 @@ function App() {
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
             🪙 CRYPTO 24/7
           </button>
+          <button
+            type="button"
+            onClick={() => { setAssetClass('FOREX'); selectTicker('EUR/USD'); }}
+            className={`px-3 py-1 text-xs font-mono font-bold rounded-md transition-all flex items-center gap-1.5 ${assetClass === 'FOREX' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 shadow-[0_0_10px_rgba(6,182,212,0.25)]' : 'text-slate-400 hover:text-white'}`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+            💱 FOREX 24/5
+          </button>
         </div>
 
-        <Crosshair size={18} className={assetClass === 'CRYPTO' ? 'text-amber-400' : 'text-neon-green'} />
+        <Crosshair size={18} className={assetClass === 'FOREX' ? 'text-cyan-400' : assetClass === 'CRYPTO' ? 'text-amber-400' : 'text-neon-green'} />
         <form onSubmit={(e) => { e.preventDefault(); selectTicker(optInput); }} className="flex gap-2">
           <input
             id="options-ticker-input"
             value={optInput}
             onChange={(e) => setOptInput(e.target.value.toUpperCase())}
-            placeholder={assetClass === 'CRYPTO' ? 'BTC' : 'SPY'}
+            placeholder={assetClass === 'FOREX' ? 'EUR/USD' : assetClass === 'CRYPTO' ? 'BTC' : 'SPY'}
             className="w-24 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-mono uppercase outline-none focus:border-neon-green"
           />
-          <button id="options-load-btn" className={`${assetClass === 'CRYPTO' ? 'bg-amber-400 hover:bg-amber-300' : 'bg-neon-green hover:bg-neon-green/80'} text-black font-bold px-3 py-1.5 rounded-lg text-sm transition-colors`}>Load</button>
+          <button id="options-load-btn" className={`${assetClass === 'FOREX' ? 'bg-cyan-400 hover:bg-cyan-300 text-black' : assetClass === 'CRYPTO' ? 'bg-amber-400 hover:bg-amber-300 text-black' : 'bg-neon-green hover:bg-neon-green/80 text-black'} font-bold px-3 py-1.5 rounded-lg text-sm transition-colors`}>Load</button>
         </form>
         <div className="flex gap-1 flex-wrap">
-          {(assetClass === 'CRYPTO' ? CRYPTO_QUICK : STOCKS_QUICK).map((t) => {
+          {(assetClass === 'FOREX' ? FOREX_QUICK : assetClass === 'CRYPTO' ? CRYPTO_QUICK : STOCKS_QUICK).map((t) => {
             const it = tape[t];
             const f = flash[t];
             const fBorder = f === 'up' ? 'border-neon-green text-neon-green shadow-[0_0_8px_#00ffa3]' : f === 'down' ? 'border-neon-red text-neon-red shadow-[0_0_8px_#ff2a6d]' : '';
@@ -408,7 +418,7 @@ function App() {
             const priceStr = p !== undefined ? (p < 5 ? `$${Number(p).toFixed(3)}` : `$${Number(p).toFixed(1)}`) : '';
             return (
               <button key={t} onClick={() => selectTicker(t)}
-                className={`text-[11px] font-mono px-2 py-1 rounded border transition-all duration-300 ${fBorder || (optTicker === t ? (assetClass === 'CRYPTO' ? 'border-amber-400 text-amber-300 bg-amber-500/10' : 'border-neon-green text-neon-green bg-neon-green/10') : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white')}`}>
+                className={`text-[11px] font-mono px-2 py-1 rounded border transition-all duration-300 ${fBorder || (optTicker === t ? (assetClass === 'FOREX' ? 'border-cyan-400 text-cyan-300 bg-cyan-500/10' : assetClass === 'CRYPTO' ? 'border-amber-400 text-amber-300 bg-amber-500/10' : 'border-neon-green text-neon-green bg-neon-green/10') : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white')}`}>
                 {t} {priceStr}
               </button>
             );
@@ -424,6 +434,12 @@ function App() {
           <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
             24/7 SPOT & PERP
+          </span>
+        )}
+        {assetClass === 'FOREX' && (
+          <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+            24/5 INTERBANK FX
           </span>
         )}
         <div className="ml-auto flex items-center gap-3 text-[11px] font-mono text-slate-500">
@@ -500,6 +516,11 @@ function App() {
         <Metric label="Max Pain" value={fmt(opt?.max_pain)} sub={`${fmt(distTo(opt?.max_pain), 2, '%')} · ${opt?.expiry || ''}`} tone="cyan" helpKey="metrics" />
         <Metric label="Put/Call" value={fmt(opt?.pcr_vol)} sub={`OI ${fmt(opt?.pcr_oi)}`} tone={opt?.pcr_vol > 1.2 ? 'red' : opt?.pcr_vol < 0.6 ? 'green' : 'white'} helpKey="metrics" />
       </section>
+
+      {/* ================= 24/5 Forex Institutional Board ================= */}
+      {assetClass === 'FOREX' && (
+        <ForexBoard currentSymbol={optTicker} onSelectPair={selectTicker} />
+      )}
 
       {/* ================= Row 1: Breakout Scanner | Multi-Chart Grid | Smart Algo ================= */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">

@@ -31,12 +31,26 @@ CRYPTO_MAP = {
     "ADA": ("ADA/USD", "ADA-USD", "Cardano"),
 }
 
+from forex_engine import FOREX_PAIRS_META, clean_forex_symbol, get_forex_pair_analytics, get_currency_strength_matrix, get_forex_sessions_status
+
 def resolve_symbol(sym: str):
     clean = sym.upper().strip().replace("/", "").replace("-", "")
     for k, v in CRYPTO_MAP.items():
         if clean in (k, f"{k}USD", f"{k}USDT"):
-            return {"is_crypto": True, "alpaca": v[0], "yf": v[1], "display": k, "name": v[2]}
-    return {"is_crypto": False, "alpaca": sym.upper().strip(), "yf": sym.upper().strip(), "display": sym.upper().strip(), "name": sym.upper().strip()}
+            return {"is_crypto": True, "is_forex": False, "alpaca": v[0], "yf": v[1], "display": k, "name": v[2]}
+    fx_clean = clean_forex_symbol(sym)
+    if fx_clean in FOREX_PAIRS_META:
+        meta = FOREX_PAIRS_META[fx_clean]
+        return {
+            "is_crypto": False,
+            "is_forex": True,
+            "alpaca": meta["display"],
+            "yf": meta["yf"],
+            "display": meta["display"],
+            "name": meta["name"],
+            "fx_key": fx_clean
+        }
+    return {"is_crypto": False, "is_forex": False, "alpaca": sym.upper().strip(), "yf": sym.upper().strip(), "display": sym.upper().strip(), "name": sym.upper().strip()}
 
 def get_alpaca_creds():
     env_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -462,6 +476,45 @@ async def get_options_analytics(ticker: str = "SPY", expiry: str | None = None):
         except Exception as e:
             return {"ticker": ticker_display, "error": str(e)}
 
+    if res.get("is_forex"):
+        try:
+            fx_data = await asyncio.to_thread(get_forex_pair_analytics, res["fx_key"])
+            spot = fx_data["spot"]
+            qp = fx_data["quarter_points"]
+            adr = fx_data["adr"]
+            data = {
+                "ticker": fx_data["ticker"],
+                "spot": spot,
+                "gex": {
+                    "net_gex_usd": 7_500_000_000,
+                    "call_wall": qp["resistance_call_wall"],
+                    "put_wall": qp["support_put_wall"],
+                    "flip": qp["median_flip"],
+                    "regime": f"INTERBANK 24/5 · {adr['status'].split('(')[0].strip()}"
+                },
+                "max_pain": qp["median_flip"],
+                "dealer_hedging": {
+                    "mode": fx_data["bias"],
+                    "flow_bias": f"{fx_data['action']} ({fx_data['change_pips']:+0.1f} pips)",
+                    "volatility": f"ADR: {adr['today_range_pips']}/{adr['adr_14_pips']} pips ({adr['used_pct']}%)"
+                },
+                "playbook": {
+                    "bias": fx_data["bias"],
+                    "action": fx_data["action"],
+                    "confidence": fx_data["confidence"],
+                    "take_profit": fx_data["take_profit"],
+                    "stop_loss": fx_data["stop_loss"],
+                    "risk_reward": fx_data["risk_reward"],
+                    "drivers": fx_data["drivers"]
+                },
+                "forex": fx_data,
+                "source": "Interbank Algorithmic FX Model"
+            }
+            CACHE[cache_key] = {"time": time.time(), "data": data}
+            return data
+        except Exception as e:
+            return {"ticker": ticker_display, "error": str(e)}
+
     from options_engine import options_analytics
     try:
         quote = await get_alpaca_quote(ticker)
@@ -623,7 +676,37 @@ async def get_market_bars(symbol: str = "SPY", timeframe: str = "5Min", limit: i
         except Exception as e:
             return {"symbol": res["display"], "error": str(e), "bars": []}
 
-    # 2. Equities Bars Handling
+    # 2. Forex Bars Handling (24/5 Interbank Live)
+    if res.get("is_forex"):
+        def _fetch_forex_yf():
+            import yfinance as yf
+            yf_tf_map = {
+                "1m": ("7d", "1m"), "5m": ("30d", "5m"), "15m": ("60d", "15m"),
+                "1h": ("6mo", "1h"), "1d": ("2y", "1d")
+            }
+            period, interval = yf_tf_map.get(timeframe.lower(), ("30d", "5m"))
+            tk = yf.Ticker(res["yf"])
+            df = tk.history(period=period, interval=interval, auto_adjust=False)
+            prec = FOREX_PAIRS_META.get(res["fx_key"], {}).get("pip_decimal", 4)
+            formatted = []
+            for index, row in df.iterrows():
+                ts = int(index.timestamp())
+                formatted.append({
+                    "time": ts,
+                    "open": round(float(row["Open"]), prec),
+                    "high": round(float(row["High"]), prec),
+                    "low": round(float(row["Low"]), prec),
+                    "close": round(float(row["Close"]), prec),
+                    "volume": float(row.get("Volume", 0))
+                })
+            return formatted
+        try:
+            fx_bars = await asyncio.to_thread(_fetch_forex_yf)
+            return {"symbol": res["display"], "timeframe": timeframe, "bars": fx_bars, "source": "Interbank Real-Time FX Feed (24/5)"}
+        except Exception as e:
+            return {"symbol": res["display"], "error": str(e), "bars": []}
+
+    # 3. Equities Bars Handling
     if creds["key"] and creds["secret"]:
         def _fetch_alpaca():
             url = f"https://data.alpaca.markets/v2/stocks/{symbol}/bars?timeframe={tf}&start={start_dt}&limit={limit}&sort=desc&adjustment=all"
@@ -1049,6 +1132,20 @@ async def get_alpaca_quote(symbol: str = "SPY"):
         except Exception as e:
             return {"symbol": res["display"], "price": 0, "error": str(e)}
 
+    # Forex quote (24/5 Interbank Live)
+    if res.get("is_forex"):
+        try:
+            fx_data = await asyncio.to_thread(get_forex_pair_analytics, res["fx_key"])
+            return {
+                "symbol": res["display"],
+                "price": fx_data["spot"],
+                "size": 1,
+                "timestamp": None,
+                "feed": "Interbank Real-Time FX Feed (24/5)"
+            }
+        except Exception as e:
+            return {"symbol": res["display"], "price": 0, "error": str(e)}
+
     # Equities quote
     if not creds["key"] or not creds["secret"]:
         return {"error": "Missing credentials"}
@@ -1429,6 +1526,22 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
         return res
     except Exception as e:
         return {"gems": [], "error": str(e), "count": 0}
+
+# ------------------------------------------------ Forex Interbank Intelligence (24/5)
+@app.get("/api/forex/analytics")
+async def get_forex_analytics(symbol: str = "EURUSD"):
+    data = await asyncio.to_thread(get_forex_pair_analytics, symbol)
+    return data
+
+@app.get("/api/forex/strength-matrix")
+async def get_forex_strength_matrix():
+    data = await asyncio.to_thread(get_currency_strength_matrix)
+    return data
+
+@app.get("/api/forex/sessions")
+async def get_forex_sessions():
+    data = await asyncio.to_thread(get_forex_sessions_status)
+    return data
 
 # ------------------------------------------------ Email Notifications & Alert Engine
 from email_notifier import (

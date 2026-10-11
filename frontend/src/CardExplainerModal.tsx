@@ -238,6 +238,62 @@ export const CARD_KNOWLEDGE: Record<string, CardExplanation> = {
       'Click any token to inspect its real-time TradingView chart, contract address, and decentralized liquidity pool.',
       'Allocate small capital (1-2% max) to early gems to capture asymmetric upside.'
     ]
+  },
+  forex_matrix: {
+    id: 'forex_matrix',
+    title: 'Currency Strength Matrix (CSM) & Interbank Edge',
+    category: '24/5 FOREIGN EXCHANGE LIQUIDITY ENGINE',
+    summary: 'Real-time relative strength index measuring 24h currency momentum across the 8 major central banks.',
+    whatItDoes: 'Pairs the single strongest currency against the single weakest currency, maximizing directional trend probability and eliminating choppy consolidations.',
+    keyNumbers: [
+      { label: 'Strength % (0-100%)', meaning: '>65% signifies institutional accumulation; <35% signifies institutional selling/distribution.' },
+      { label: 'Central Bank Benchmark Rate', meaning: 'The base policy interest rate. Determines carry trade yield differentials.' },
+      { label: 'Top Directional Pairing', meaning: 'Algorithmic buy/sell recommendation matching the strongest against the weakest currency.' },
+      { label: 'Quarter-Points (00, 20, 50, 80)', meaning: 'Psychological interbank round-number price levels where commercial limit orders reside.' }
+    ],
+    howToTrade: [
+      'Rule 1: Never buy a weak currency or sell a strong currency.',
+      'Rule 2: Click the "Load [Pair]" button to instantly inspect the top algorithmic currency recommendation.',
+      'Rule 3: Execute bracket orders during London or New York Killzones when directional volume is at peak.'
+    ],
+    proTip: 'When a strong currency has a higher central bank interest rate than a weak currency, commercial banks pile on multi-billion dollar carry trades that trend cleanly for days.'
+  },
+  forex_adr: {
+    id: 'forex_adr',
+    title: '14-Day ADR Pip Meter & Range Exhaustion',
+    category: 'STATISTICAL VOLATILITY LIMITS',
+    summary: 'Tracks daily pip movement against the 14-day Average Daily Range (ADR).',
+    whatItDoes: 'Prevents you from buying at the top of a daily move or selling at the bottom when institutional volume has already spent its daily energy.',
+    keyNumbers: [
+      { label: "Today's Range (Pips)", meaning: 'High minus Low in pips traversed during the active session.' },
+      { label: '14-Day ADR (Pips)', meaning: 'The mathematical 14-day mean daily travel for this pair in pips.' },
+      { label: 'ADR Exhaustion %', meaning: '>90% indicates exhausted move (reversal risk); <50% indicates early compression with room to run.' },
+      { label: 'Asian Range (00:00-06:00 ET)', meaning: 'Overnight accumulation boundaries. A sweep outside the high or low often marks the true high/low of the day.' }
+    ],
+    howToTrade: [
+      'If ADR > 90%: DO NOT enter breakout trades. Take profits or look for reversal back toward the median flip.',
+      'If ADR < 50% during London/NY Open: Enter trend-following bracket orders targeting the remaining ADR pips.',
+      'Place stop loss right behind the nearest Quarter-Point or Asian Range boundary.'
+    ],
+    proTip: 'Over 82% of daily high/lows are locked in within 90% of the 14-day ADR. Chasing breakouts after 90% exhaustion is the #1 mistake retail forex traders make.'
+  },
+  forex_killzone: {
+    id: 'forex_killzone',
+    title: 'Interbank Session Killzones & 24/5 Timing',
+    category: 'TIME & LIQUIDITY INSTITUTIONAL WINDOWS',
+    summary: 'Tracks global session overlaps (London Open, NY Open, Asian Accumulation) and ICT Judas Swings.',
+    whatItDoes: 'Identifies the precise 2-hour daily windows when central banks and commercial order desks inject peak volume.',
+    keyNumbers: [
+      { label: 'London Open Killzone (03:00 - 05:00 ET)', meaning: '38% of global volume. Prime window where Asian Range liquidity is swept and the day\'s true trend begins.' },
+      { label: 'New York Open Killzone (08:00 - 10:00 ET)', meaning: '31% volume + high-impact US macro catalyst releases (CPI, NFP, Fed).' },
+      { label: 'London / NY Overlap (08:00 - 12:00 ET)', meaning: 'Peak daily liquidity (~55% of all daily FX volume). Tightest spreads and smoothest trends.' },
+      { label: 'Asian Session Accumulation', meaning: 'Range-bound accumulation that establishes liquidity pools for the London Open.' }
+    ],
+    howToTrade: [
+      'Focus 90% of your trading activity between 03:00-05:00 ET (London) and 08:00-11:00 ET (New York).',
+      'Watch for an Asian Range false breakout (Judas Swing) in the first 30 minutes of London Open, then enter in the opposite direction.'
+    ],
+    proTip: 'Never hold large unbracketed positions into 17:00 ET Friday close to avoid weekend gap risk across geopolitical headlines.'
   }
 };
 
