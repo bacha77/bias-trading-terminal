@@ -499,7 +499,7 @@ async def get_smart_intelligence(ticker: str = "SPY"):
         blocks_data = await get_block_prints(ticker)
         blocks = blocks_data.get("blocks", [])
         
-        data = await asyncio.to_thread(compute_smart_intelligence, ticker, spot, gex, sent_score, blocks)
+        data = await asyncio.to_thread(compute_smart_intelligence, ticker, spot, gex, sent_score, blocks, opt_data)
         CACHE[cache_key] = {"time": time.time(), "data": data}
         return data
     except Exception as e:
