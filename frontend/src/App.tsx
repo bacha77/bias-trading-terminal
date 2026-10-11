@@ -25,7 +25,12 @@ const CRYPTO_QUICK = ['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'AVAX'];
 const FOREX_QUICK = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CAD', 'AUD/USD', 'USD/CHF', 'GBP/JPY', 'DXY'];
 const ALL_QUICK = [...STOCKS_QUICK, ...CRYPTO_QUICK, ...FOREX_QUICK];
 
-const fmt = (v: any, d = 2, suf = '') => (v === null || v === undefined ? '--' : `${Number(v).toFixed(d)}${suf}`);
+const fmt = (v: any, d?: number, suf = '') => {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '--';
+  const n = Number(v);
+  const digits = d ?? (Math.abs(n) > 0 && Math.abs(n) < 10 ? 4 : 2); // forex pairs need pip precision
+  return `${n.toFixed(digits)}${suf}`;
+};
 
 function App() {
   const [assetClass, setAssetClass] = useState<'EQUITIES' | 'CRYPTO' | 'FOREX'>('EQUITIES');
@@ -124,8 +129,8 @@ function App() {
     setOptLoading(true);
     setOptError(null);
     try {
-      const data = await getJSON(`/options/analytics?ticker=${t}${exp ? `&expiry=${exp}` : ''}`);
-      if (data.error) { setOptError(data.error); } else { setOpt(data); }
+      const data = await getJSON(`/options/analytics?ticker=${encodeURIComponent(t)}${exp ? `&expiry=${exp}` : ''}`);
+      if (data.error) { setOptError(data.error); setOpt(null); } else { setOpt(data); }
     } catch (e: any) {
       setOptError(String(e));
     } finally {
@@ -134,13 +139,13 @@ function App() {
   }, []);
 
   const fetchConfluence = useCallback(async (t: string) => {
-    try { setConfluence(await getJSON(`/market-data/confluence?ticker=${t}`)); } catch (e) { console.error(e); }
+    try { setConfluence(await getJSON(`/market-data/confluence?ticker=${encodeURIComponent(t)}`)); } catch (e) { console.error(e); }
   }, []);
 
   const fetchSmartAlgo = useCallback(async (t: string) => {
     setSmartAlgoLoading(true);
     try {
-      const data = await getJSON(`/algo/smart-intelligence?ticker=${t}`);
+      const data = await getJSON(`/algo/smart-intelligence?ticker=${encodeURIComponent(t)}`);
       setSmartAlgo(data);
     } catch (e) {
       console.error('Failed to fetch smart algo:', e);
@@ -152,7 +157,7 @@ function App() {
   const fetchBlocks = useCallback(async (t: string) => {
     setBlockLoading(true);
     try {
-      const data = await getJSON(`/market-data/blocks?symbol=${t}&min_notional=80000`);
+      const data = await getJSON(`/market-data/blocks?symbol=${encodeURIComponent(t)}&min_notional=80000`);
       if (data && data.blocks) {
         setBlockPrints(data.blocks);
       }
@@ -188,6 +193,7 @@ function App() {
     if (!s) return;
     setOptInput(s);
     setExpiry('');
+    if (s !== optTicker) setOpt(null); // don't keep showing the previous symbol's levels
     setOptTicker(s);
     setBacktestTicker(s);
   };
@@ -282,7 +288,7 @@ function App() {
                 className={`flex items-center gap-1.5 px-2 py-0.5 rounded border transition-all duration-300 ${flashCls} hover:bg-white/10 hover:border-white/20 shrink-0`}
               >
                 <span className="font-bold text-white text-[11px]">{sym}</span>
-                <span className="font-bold text-[11px]">{p ? Number(p).toFixed(2) : '--'}</span>
+                <span className="font-bold text-[11px]">{p ? Number(p).toFixed(Number(p) < 10 ? 4 : 2) : '--'}</span>
                 <span className={`text-[10px] ${c >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
                   {c > 0 ? '+' : ''}{Number(c).toFixed(2)}%
                 </span>

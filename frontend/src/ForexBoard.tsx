@@ -12,7 +12,8 @@ import {
   Scale
 } from 'lucide-react';
 import { HelpButton } from './CardExplainerModal';
-import { API_BASE } from './config';
+import { API_BASE as SERVER_URL } from './config';
+const API_BASE = `${SERVER_URL}/api`;
 
 interface ForexBoardProps {
   currentSymbol: string;
@@ -28,13 +29,13 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderStatus, setOrderStatus] = useState<string | null>(null);
 
-  const cleanSym = currentSymbol.replace('/', '').replace('-', '').toUpperCase();
+  const cleanSym = currentSymbol.replace('/', '').replace('-', '').replace('=', '').toUpperCase().trim();
 
   const fetchForexData = async () => {
     setLoading(true);
     try {
       const [anRes, smRes, sessRes] = await Promise.all([
-        fetch(`${API_BASE}/forex/analytics?symbol=${cleanSym}`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/forex/analytics?symbol=${encodeURIComponent(cleanSym)}`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/forex/strength-matrix`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/forex/sessions`).then(r => r.json()).catch(() => null),
       ]);

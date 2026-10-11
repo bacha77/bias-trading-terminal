@@ -121,7 +121,7 @@ export function TradingChart({
       return;
     }
     let active = true;
-    fetch(`${API_BASE}/api/options/analytics?ticker=${ticker}`)
+    fetch(`${API_BASE}/api/options/analytics?ticker=${encodeURIComponent(ticker)}`)
       .then(res => res.json())
       .then(data => {
         if (active && data && data.gex) {
@@ -304,7 +304,7 @@ export function TradingChart({
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/market-data/bars?symbol=${ticker}&timeframe=${timeframe}&limit=1000`);
+      const res = await fetch(`${API_BASE}/api/market-data/bars?symbol=${encodeURIComponent(ticker)}&timeframe=${timeframe}&limit=1000`);
       const data = await res.json();
 
       if (data && data.bars && data.bars.length > 0 && candleSeriesRef.current) {

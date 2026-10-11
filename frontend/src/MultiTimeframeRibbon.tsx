@@ -27,7 +27,7 @@ export function MultiTimeframeRibbon({ ticker }: MultiTimeframeRibbonProps) {
   useEffect(() => {
     let active = true;
     const fetchMTF = () => {
-      fetch(`${API_BASE}/api/algo/multi-timeframe?ticker=${ticker}`)
+      fetch(`${API_BASE}/api/algo/multi-timeframe?ticker=${encodeURIComponent(ticker)}`)
         .then(res => res.json())
         .then(resData => {
           if (active && resData && resData.timeframes) {

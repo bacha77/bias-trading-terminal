@@ -31,7 +31,7 @@ CRYPTO_MAP = {
     "ADA": ("ADA/USD", "ADA-USD", "Cardano"),
 }
 
-from forex_engine import FOREX_PAIRS_META, clean_forex_symbol, get_forex_pair_analytics, get_currency_strength_matrix, get_forex_sessions_status
+from forex_engine import FOREX_PAIRS_META, clean_forex_symbol, get_forex_pair_analytics, get_currency_strength_matrix, get_forex_sessions_status, get_forex_tape
 
 def resolve_symbol(sym: str):
     clean = sym.upper().strip().replace("/", "").replace("-", "")
@@ -485,6 +485,7 @@ async def get_options_analytics(ticker: str = "SPY", expiry: str | None = None):
             data = {
                 "ticker": fx_data["ticker"],
                 "spot": spot,
+                "change_pct": fx_data["change_pct"],
                 "gex": {
                     "net_gex_usd": 7_500_000_000,
                     "call_wall": qp["resistance_call_wall"],
@@ -681,8 +682,9 @@ async def get_market_bars(symbol: str = "SPY", timeframe: str = "5Min", limit: i
         def _fetch_forex_yf():
             import yfinance as yf
             yf_tf_map = {
-                "1m": ("7d", "1m"), "5m": ("30d", "5m"), "15m": ("60d", "15m"),
-                "1h": ("6mo", "1h"), "1d": ("2y", "1d")
+                "1m": ("7d", "1m"), "1min": ("7d", "1m"), "5m": ("30d", "5m"), "5min": ("30d", "5m"),
+                "15m": ("60d", "15m"), "15min": ("60d", "15m"), "1h": ("6mo", "1h"), "1hour": ("6mo", "1h"),
+                "1d": ("2y", "1d"), "1day": ("2y", "1d"), "1w": ("5y", "1wk"), "1week": ("5y", "1wk")
             }
             period, interval = yf_tf_map.get(timeframe.lower(), ("30d", "5m"))
             tk = yf.Ticker(res["yf"])
@@ -1041,6 +1043,14 @@ async def get_alpaca_tape(symbols: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMD,META,IWM"):
             tape.update(cb_tape)
     except Exception as ce:
         print(f"Coinbase tape error: {ce}")
+
+    # 1b. Live 24/5 forex pairs (batched Yahoo feed, cached ~10s)
+    try:
+        fx_tape = await asyncio.to_thread(get_forex_tape)
+        if fx_tape:
+            tape.update(fx_tape)
+    except Exception as fe:
+        print(f"Forex tape error: {fe}")
 
     # 2. Fetch stock snapshots from Alpaca if credentials available
     if creds["key"] and creds["secret"]:
