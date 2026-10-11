@@ -55,6 +55,101 @@ def get_alpaca_creds():
                     elif k == "APCA_API_BASE_URL": creds["base"] = v
     return creds
 
+import concurrent.futures
+
+COINBASE_GRANULARITY_MAP = {
+    "1m": 60, "1min": 60,
+    "5m": 300, "5min": 300,
+    "15m": 900, "15min": 900,
+    "1h": 3600, "1hour": 3600,
+    "1d": 86400, "1day": 86400,
+    "1w": 86400
+}
+
+def fetch_coinbase_crypto_bars(symbol: str, timeframe: str):
+    res = resolve_symbol(symbol)
+    if not res["is_crypto"]:
+        return None
+    product = f"{res['display']}-USD"
+    granularity = COINBASE_GRANULARITY_MAP.get(timeframe.lower(), 300)
+    try:
+        url = f"https://api.exchange.coinbase.com/products/{product}/candles?granularity={granularity}"
+        req = urllib.request.Request(url, headers={"User-Agent": "bias-terminal-live/1.0"})
+        with urllib.request.urlopen(req, timeout=4) as r:
+            raw = json.loads(r.read().decode())
+        if not raw or not isinstance(raw, list):
+            return None
+        raw.reverse()
+        bars = []
+        for c in raw:
+            p_close = float(c[4])
+            prec = 4 if p_close < 5 else 2
+            bars.append({
+                "time": int(c[0]),
+                "low": round(float(c[1]), prec),
+                "high": round(float(c[2]), prec),
+                "open": round(float(c[3]), prec),
+                "close": round(p_close, prec),
+                "volume": round(float(c[5]), 4)
+            })
+        return bars
+    except Exception as e:
+        print(f"Coinbase bars fallback for {product}: {e}")
+        return None
+
+def fetch_coinbase_crypto_ticker(symbol: str):
+    res = resolve_symbol(symbol)
+    if not res["is_crypto"]:
+        return None
+    product = f"{res['display']}-USD"
+    try:
+        url = f"https://api.exchange.coinbase.com/products/{product}/ticker"
+        req = urllib.request.Request(url, headers={"User-Agent": "bias-terminal-live/1.0"})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            d = json.loads(r.read().decode())
+        p = float(d.get("price", 0))
+        if p <= 0: return None
+        prec = 4 if p < 5 else 2
+        return {
+            "symbol": res["display"],
+            "price": round(p, prec),
+            "bid": round(float(d.get("bid", p)), prec),
+            "ask": round(float(d.get("ask", p)), prec),
+            "size": float(d.get("size", 1)),
+            "timestamp": d.get("time"),
+            "feed": "Coinbase Pro Live Liquidity (24/7)"
+        }
+    except Exception:
+        return None
+
+def fetch_coinbase_tape():
+    pairs = [("BTC", "BTC-USD"), ("ETH", "ETH-USD"), ("SOL", "SOL-USD"), 
+             ("DOGE", "DOGE-USD"), ("XRP", "XRP-USD"), ("AVAX", "AVAX-USD"),
+             ("LINK", "LINK-USD"), ("ADA", "ADA-USD")]
+    def _fetch_one(item):
+        short, prod = item
+        try:
+            req = urllib.request.Request(f"https://api.exchange.coinbase.com/products/{prod}/ticker", headers={"User-Agent": "bias-terminal-live/1.0"})
+            with urllib.request.urlopen(req, timeout=2.5) as r:
+                d = json.loads(r.read().decode())
+            p = float(d.get("price", 0))
+            if p <= 0: return short, None
+            prec = 4 if p < 5 else 2
+            return short, {
+                "price": round(p, prec),
+                "bid": round(float(d.get("bid", p)), prec),
+                "ask": round(float(d.get("ask", p)), prec),
+                "size": float(d.get("size", 1)),
+                "change": 0.0,
+                "timestamp": d.get("time")
+            }
+        except Exception:
+            return short, None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        results = dict(ex.map(_fetch_one, pairs))
+    return {k: v for k, v in results.items() if v is not None}
+
 @app.get("/api/market-data/overview")
 async def get_overview():
     cache_key = "overview"
@@ -411,6 +506,10 @@ async def get_market_bars(symbol: str = "SPY", timeframe: str = "5Min", limit: i
 
     # 1. Crypto Bars Handling (24/7 Live)
     if res["is_crypto"]:
+        cb_bars = await asyncio.to_thread(fetch_coinbase_crypto_bars, res["display"], timeframe)
+        if cb_bars and len(cb_bars) > 0:
+            return {"symbol": res["display"], "timeframe": timeframe, "bars": cb_bars, "source": "Coinbase Pro 24/7 Live Liquidity"}
+
         if creds["key"] and creds["secret"]:
             def _fetch_crypto_alpaca():
                 encoded_sym = urllib.parse.quote(res["alpaca"])
@@ -804,67 +903,49 @@ async def get_multi_timeframe(ticker: str = "SPY"):
 @app.get("/api/alpaca/tape")
 async def get_alpaca_tape(symbols: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMD,META,IWM"):
     creds = get_alpaca_creds()
-    if not creds["key"] or not creds["secret"]:
-        return {"error": "Missing credentials"}
-        
-    def _fetch():
-        req = urllib.request.Request(
-            f"https://data.alpaca.markets/v2/stocks/snapshots?symbols={symbols.upper()}",
-            headers={
-                "APCA-API-KEY-ID": creds["key"],
-                "APCA-API-SECRET-KEY": creds["secret"]
-            }
-        )
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            return json.loads(resp.read().decode())
-            
-    try:
-        raw = await asyncio.to_thread(_fetch)
-        tape = {}
-        for s, v in raw.items():
-            trade = v.get("latestTrade", {})
-            quote = v.get("latestQuote", {})
-            prev = v.get("prevDailyBar", {}).get("c", 1)
-            price = trade.get("p", 0)
-            chg = ((price - prev) / prev) * 100 if prev else 0
-            tape[s] = {
-                "price": price,
-                "change": round(chg, 2),
-                "bid": quote.get("bp"),
-                "ask": quote.get("ap"),
-                "size": trade.get("s", 0),
-                "timestamp": trade.get("t")
-            }
+    tape = {}
 
-        # Fetch live 24/7 crypto trades for tape
-        try:
-            crypto_syms = "BTC%2FUSD%2CETH%2FUSD%2CSOL%2FUSD%2CDOGE%2FUSD%2CXRP%2FUSD%2CAVAX%2FUSD"
-            c_req = urllib.request.Request(
-                f"https://data.alpaca.markets/v1beta3/crypto/us/latest/trades?symbols={crypto_syms}",
+    # 1. Fetch live 24/7 crypto rates from Coinbase (updates every second with real trades)
+    try:
+        cb_tape = await asyncio.to_thread(fetch_coinbase_tape)
+        if cb_tape:
+            tape.update(cb_tape)
+    except Exception as ce:
+        print(f"Coinbase tape error: {ce}")
+
+    # 2. Fetch stock snapshots from Alpaca if credentials available
+    if creds["key"] and creds["secret"]:
+        def _fetch_stocks():
+            req = urllib.request.Request(
+                f"https://data.alpaca.markets/v2/stocks/snapshots?symbols={symbols.upper()}",
                 headers={
                     "APCA-API-KEY-ID": creds["key"],
                     "APCA-API-SECRET-KEY": creds["secret"]
                 }
             )
-            with urllib.request.urlopen(c_req, timeout=3) as c_resp:
-                c_raw = json.loads(c_resp.read().decode())
-                for c_pair, t_data in c_raw.get("trades", {}).items():
-                    c_short = c_pair.split("/")[0]
-                    p = float(t_data.get("p", 0))
-                    tape[c_short] = {
-                        "price": round(p, 4 if p < 5 else 2),
-                        "change": 0.0,
-                        "bid": p,
-                        "ask": p,
-                        "size": t_data.get("s", 0),
-                        "timestamp": t_data.get("t")
-                    }
-        except Exception as ce:
-            pass
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                return json.loads(resp.read().decode())
+                
+        try:
+            raw = await asyncio.to_thread(_fetch_stocks)
+            for s, v in raw.items():
+                trade = v.get("latestTrade", {})
+                quote = v.get("latestQuote", {})
+                prev = v.get("prevDailyBar", {}).get("c", 1)
+                price = trade.get("p", 0)
+                chg = ((price - prev) / prev) * 100 if prev else 0
+                tape[s] = {
+                    "price": price,
+                    "change": round(chg, 2),
+                    "bid": quote.get("bp"),
+                    "ask": quote.get("ap"),
+                    "size": trade.get("s", 0),
+                    "timestamp": trade.get("t")
+                }
+        except Exception as se:
+            print(f"Alpaca stock tape error: {se}")
 
-        return {"tape": tape, "time": time.time()}
-    except Exception as e:
-        return {"error": str(e)}
+    return {"tape": tape, "time": time.time()}
 
 @app.get("/api/alpaca/quote")
 async def get_alpaca_quote(symbol: str = "SPY"):
@@ -872,6 +953,11 @@ async def get_alpaca_quote(symbol: str = "SPY"):
     res = resolve_symbol(symbol)
     
     if res["is_crypto"]:
+        # Try Coinbase live ticker first
+        cb_q = await asyncio.to_thread(fetch_coinbase_crypto_ticker, res["display"])
+        if cb_q:
+            return cb_q
+
         if creds["key"] and creds["secret"]:
             def _fetch_crypto_quote():
                 encoded_sym = urllib.parse.quote(res["alpaca"])

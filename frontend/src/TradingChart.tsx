@@ -376,8 +376,13 @@ export function TradingChart({
   useEffect(() => {
     if (viewMode === 'levels') {
       loadBars();
+      const isCrypto = ['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'AVAX', 'LINK', 'ADA'].includes(ticker.toUpperCase());
+      const timer = setInterval(() => {
+        loadBars();
+      }, isCrypto ? 3000 : 10000);
+      return () => clearInterval(timer);
     }
-  }, [viewMode, loadBars]);
+  }, [viewMode, loadBars, ticker]);
 
   // 3. Update Autoscale Info Provider: in 'gex' mode it shows full range; in 'candles' mode it focuses on candles
   useEffect(() => {
@@ -473,30 +478,31 @@ export function TradingChart({
 
   // 5. Move live candle up and down tick-by-tick from 1-second SIP stream (zero flicker)
   useEffect(() => {
-    if (!livePrice || !candleSeriesRef.current || !lastBarRef.current) return;
+    if (livePrice === undefined || livePrice === null || !candleSeriesRef.current || !lastBarRef.current) return;
 
     const lastBar = lastBarRef.current;
     const nowSec = Math.floor(Date.now() / 1000);
     const tfSec = timeframe === '1m' ? 60 : timeframe === '5m' ? 300 : timeframe === '15m' ? 900 : timeframe === '1h' ? 3600 : 86400;
     const currentBarTime = Math.floor(nowSec / tfSec) * tfSec;
+    const targetBarTime = Math.max(lastBar.time, currentBarTime);
 
-    if (currentBarTime > lastBar.time) {
+    if (targetBarTime > lastBar.time) {
       // New candle opened!
       const newBar = {
-        time: currentBarTime as UTCTimestamp,
+        time: targetBarTime as UTCTimestamp,
         open: livePrice,
         high: livePrice,
         low: livePrice,
         close: livePrice,
       };
       lastBarRef.current = {
-        time: currentBarTime,
+        time: targetBarTime,
         open: livePrice,
         high: livePrice,
         low: livePrice,
         close: livePrice,
       };
-      candleSeriesRef.current.update(newBar);
+      try { candleSeriesRef.current.update(newBar); } catch (e) { /* ignore */ }
     } else {
       // Update active candle: high, low, close move in real-time!
       const updatedBar = {
@@ -513,7 +519,7 @@ export function TradingChart({
         low: Math.min(lastBar.low, livePrice),
         close: livePrice,
       };
-      candleSeriesRef.current.update(updatedBar);
+      try { candleSeriesRef.current.update(updatedBar); } catch (e) { /* ignore */ }
     }
   }, [livePrice, timeframe]);
 
