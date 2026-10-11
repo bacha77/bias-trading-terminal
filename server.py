@@ -1053,7 +1053,8 @@ async def get_block_prints(symbol: str = "SPY", min_notional: float = 80000):
                 return json.loads(resp.read().decode())
         try:
             raw = await asyncio.to_thread(_fetch_crypto_trades)
-            trades = raw.get("trades", {}).get(res["alpaca"], [])
+            trades_dict = raw.get("trades") or {}
+            trades = trades_dict.get(res["alpaca"]) or []
             blocks = []
             for t in trades:
                 price = float(t.get("p", 0))
@@ -1072,6 +1073,34 @@ async def get_block_prints(symbol: str = "SPY", min_notional: float = 80000):
                         "is_dark_pool": notional >= 50000,
                         "timestamp": t.get("t"),
                     })
+
+            # If Alpaca has 0 trades, fallback to Coinbase live trades for 24/7 whale prints
+            if not blocks:
+                def _fetch_coinbase_trades():
+                    cb_prod = f"{res['display']}-USD"
+                    cb_url = f"https://api.exchange.coinbase.com/products/{cb_prod}/trades?limit=100"
+                    cb_req = urllib.request.Request(cb_url, headers={"User-Agent": "bias-terminal-live/1.0"})
+                    with urllib.request.urlopen(cb_req, timeout=4) as cb_resp:
+                        return json.loads(cb_resp.read().decode())
+                cb_trades = await asyncio.to_thread(_fetch_coinbase_trades)
+                if isinstance(cb_trades, list):
+                    for ct in cb_trades:
+                        p = float(ct.get("price", 0))
+                        s = float(ct.get("size", 0))
+                        n = p * s
+                        if n >= 5000:
+                            blocks.append({
+                                "id": ct.get("trade_id"),
+                                "symbol": res["display"],
+                                "price": round(p, 2 if p > 5 else 4),
+                                "size": round(s, 4),
+                                "notional": round(n, 2),
+                                "notional_str": f"${n/1_000_000:.2f}M" if n >= 1_000_000 else f"${n/1_000:.0f}K",
+                                "venue": "ON-CHAIN WHALE SWEEP" if n >= 50000 else "COINBASE INSTITUTIONAL",
+                                "is_dark_pool": n >= 50000,
+                                "timestamp": ct.get("time"),
+                            })
+
             return {"symbol": res["display"], "blocks": blocks[:12], "count": len(blocks)}
         except Exception as e:
             return {"symbol": res["display"], "blocks": [], "error": str(e)}
@@ -1091,7 +1120,7 @@ async def get_block_prints(symbol: str = "SPY", min_notional: float = 80000):
 
     try:
         raw = await asyncio.to_thread(_fetch_trades)
-        trades = raw.get("trades", [])
+        trades = raw.get("trades") or []
         blocks = []
         for t in trades:
             price = float(t.get("p", 0))
