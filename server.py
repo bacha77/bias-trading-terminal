@@ -1427,8 +1427,98 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
         res = await asyncio.to_thread(_scan)
         CACHE[cache_key] = {"time": time.time(), "data": res}
         return res
-    except Exception as e:
-        return {"gems": [], "error": str(e), "count": 0}
+# ------------------------------------------------ Email Notifications & Alert Engine
+from email_notifier import send_email, render_premarket_briefing_html, render_high_conviction_alert_html
+
+@app.post("/api/alerts/test-email")
+@app.get("/api/alerts/test-email")
+async def test_email_alert(recipient: str = "bacha7@gmail.com"):
+    subject = "🔔 B.I.A.S. Terminal · Alert Notification Verification"
+    html_content = render_high_conviction_alert_html(
+        ticker="SPY",
+        alert_type="SYSTEM NOTIFICATION TEST",
+        details={
+            "conviction": "94.2%",
+            "price": "585.40",
+            "summary": "Your B.I.A.S. Trading Terminal email alert system is operational. You will receive pre-market GEX briefings at 09:00 AM ET and instant high-conviction triggers (Algo ≥ 80% or Whale Sweep ≥ $1M).",
+            "action": "SYSTEM ONLINE"
+        }
+    )
+    result = await asyncio.to_thread(send_email, subject, html_content, recipient)
+    return result
+
+@app.post("/api/alerts/send-premarket-briefing")
+@app.get("/api/alerts/send-premarket-briefing")
+async def trigger_premarket_briefing(recipient: str = "bacha7@gmail.com"):
+    try:
+        spy_opt = await get_options_analytics("SPY")
+        qqq_opt = await get_options_analytics("QQQ")
+        macro = await get_macro_calendar()
+        regime = await get_market_regime()
+        
+        subject = f"📊 B.I.A.S. Pre-Market Briefing · SPY & QQQ GEX Levels ({datetime.now().strftime('%b %d')})"
+        html = render_premarket_briefing_html(
+            spy_opt=spy_opt,
+            qqq_opt=qqq_opt,
+            macro_events=macro.get("events", []),
+            regime_data=regime
+        )
+# ------------------------------------------------ Scheduled Alert Monitor Loop
+from email_notifier import get_email_credentials
+
+_LAST_BRIEFING_DATE = None
+_ALERT_COOLDOWNS = {}
+
+async def _alerts_background_worker():
+    global _LAST_BRIEFING_DATE
+    while True:
+        try:
+            await asyncio.sleep(60) # check every 60 seconds
+            creds = get_email_credentials()
+            if not creds.get("sender") or not creds.get("password"):
+                continue
+
+            now_utc = datetime.now(timezone.utc)
+            today_str = now_utc.strftime("%Y-%m-%d")
+            weekday = now_utc.weekday() # 0 = Mon, 4 = Fri
+
+            # 1. Pre-market briefing at 09:00 AM ET (13:00 UTC) on weekdays
+            if weekday < 5 and now_utc.hour == 13 and now_utc.minute < 5 and _LAST_BRIEFING_DATE != today_str:
+                _LAST_BRIEFING_DATE = today_str
+                await trigger_premarket_briefing("bacha7@gmail.com")
+
+            # 2. Real-Time High-Conviction Triggers (09:30 AM to 04:00 PM ET)
+            if weekday < 5 and 13 <= now_utc.hour < 21:
+                for sym in ["SPY", "QQQ"]:
+                    try:
+                        algo = await get_smart_intelligence(sym)
+                        score = algo.get("confluence_score", 50)
+                        now_ts = time.time()
+                        last_sent = _ALERT_COOLDOWNS.get(sym, 0)
+
+                        if (score >= 80 or score <= 22) and (now_ts - last_sent > 3600):
+                            _ALERT_COOLDOWNS[sym] = now_ts
+                            is_bull = score >= 80
+                            subj = f"🚨 {sym} HIGH-CONVICTION ALERT ({score}% {'BULL' if is_bull else 'BEAR'})"
+                            html_alert = render_high_conviction_alert_html(
+                                ticker=sym,
+                                alert_type="INSTITUTIONAL BULL CONFLUENCE" if is_bull else "INSTITUTIONAL BEAR CONFLUENCE",
+                                details={
+                                    "conviction": f"{score}%",
+                                    "price": str(algo.get("spot", "--")),
+                                    "summary": algo.get("summary", "Bayesian intelligence confluence exceeded statistical high-conviction threshold."),
+                                    "action": "STRONG BUY CALLS" if is_bull else "STRONG BUY PUTS"
+                                }
+                            )
+                            await asyncio.to_thread(send_email, subj, html_alert, "bacha7@gmail.com")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+@app.on_event("startup")
+async def start_alert_worker():
+    asyncio.create_task(_alerts_background_worker())
 
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.exists(frontend_dist):
