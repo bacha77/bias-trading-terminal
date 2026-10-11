@@ -59,8 +59,10 @@ def send_email(subject: str, html_body: str, recipient: str = RECIPIENT_DEFAULT)
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def render_premarket_briefing_html(spy_opt: dict, qqq_opt: dict, macro_events: list, regime_data: dict) -> str:
+def render_premarket_briefing_html(spy_opt: dict, qqq_opt: dict, macro_events: list, regime_data: dict, breakout_stocks: list = None) -> str:
     now_str = datetime.now().strftime("%A, %B %d, %Y · 09:00 AM ET")
+    if breakout_stocks is None:
+        breakout_stocks = []
     
     def _gex_row(ticker, opt):
         g = opt.get("gex", {})
@@ -90,6 +92,23 @@ def render_premarket_briefing_html(spy_opt: dict, qqq_opt: dict, macro_events: l
         </div>
         """
 
+    # Breakout scanner table rows
+    breakouts_html = ""
+    strong_movers = [b for b in breakout_stocks if b.get("signal") in ["STRONG CALL", "STRONG PUT", "CALL", "PUT"]][:6]
+    for b in strong_movers:
+        sig = b.get("signal", "")
+        is_call = "CALL" in sig
+        sig_color = "#00FF66" if is_call else "#FF3366"
+        breakouts_html += f"""
+        <tr style="border-bottom: 1px solid #1a1e28;">
+            <td style="padding: 8px; font-weight: bold; color: #fff;">{b.get('ticker', '')}</td>
+            <td style="padding: 8px; color: #fff; font-family: monospace;">${b.get('price', 0):.2f}</td>
+            <td style="padding: 8px; color: #FFCC00; font-family: monospace; font-weight: bold;">{b.get('volume_multiplier', '1.0x')}</td>
+            <td style="padding: 8px; color: {sig_color}; font-weight: bold;">{sig}</td>
+            <td style="padding: 8px; color: #888; font-size: 11px;">{b.get('category', 'LIQUID')}</td>
+        </tr>
+        """
+
     regime_str = regime_data.get("regime", "BALANCED / LOW VOLATILITY")
 
     return f"""
@@ -102,7 +121,7 @@ def render_premarket_briefing_html(spy_opt: dict, qqq_opt: dict, macro_events: l
         <div style="max-width: 650px; margin: 0 auto; background-color: #0b0c10; border: 1px solid #1f2430; border-radius: 12px; overflow: hidden;">
             <div style="background: linear-gradient(90deg, #0d1117, #161b22); padding: 20px; border-bottom: 2px solid #00FF66;">
                 <h1 style="margin: 0; color: #ffffff; font-size: 20px; letter-spacing: 1px;">B.I.A.S. TRADING TERMINAL</h1>
-                <p style="margin: 4px 0 0 0; color: #00FF66; font-size: 12px; font-weight: bold;">DAILY PRE-MARKET OPTIONS & GEX BRIEFING</p>
+                <p style="margin: 4px 0 0 0; color: #00FF66; font-size: 12px; font-weight: bold;">DAILY PRE-MARKET OPTIONS, GEX & BREAKOUT SCANNER</p>
                 <p style="margin: 4px 0 0 0; color: #888888; font-size: 11px;">{now_str}</p>
             </div>
 
@@ -112,7 +131,7 @@ def render_premarket_briefing_html(spy_opt: dict, qqq_opt: dict, macro_events: l
                     <div style="color: #58a6ff; font-size: 14px; font-weight: bold; margin-top: 2px;">{regime_str}</div>
                 </div>
 
-                <h3 style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0; text-transform: uppercase;">Institutional Key Levels (Gamma Exposure)</h3>
+                <h3 style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0; text-transform: uppercase;">1. Institutional GEX Levels (Options Battlefield)</h3>
                 <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; margin-bottom: 25px;">
                     <thead>
                         <tr style="border-bottom: 2px solid #333; color: #888; text-transform: uppercase; font-size: 10px;">
@@ -130,7 +149,25 @@ def render_premarket_briefing_html(spy_opt: dict, qqq_opt: dict, macro_events: l
                     </tbody>
                 </table>
 
-                <h3 style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0; text-transform: uppercase;">Upcoming High-Impact Catalysts Today</h3>
+                {f'''
+                <h3 style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0; text-transform: uppercase;">2. Institutional Breakout Scanner (High Volume & Momentum)</h3>
+                <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; margin-bottom: 25px;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid #333; color: #888; text-transform: uppercase; font-size: 10px;">
+                            <th style="padding: 8px;">Symbol</th>
+                            <th style="padding: 8px;">Price</th>
+                            <th style="padding: 8px;">Vol Spike</th>
+                            <th style="padding: 8px;">Breakout Signal</th>
+                            <th style="padding: 8px;">Sector</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {breakouts_html}
+                    </tbody>
+                </table>
+                ''' if breakouts_html else ''}
+
+                <h3 style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0; text-transform: uppercase;">3. Upcoming High-Impact Catalysts Today</h3>
                 {events_html if events_html else '<p style="color: #888; font-size: 12px;">No high-impact macro risk events scheduled for today.</p>'}
 
                 <div style="margin-top: 25px; padding: 14px; background: #0d1117; border-radius: 8px; border: 1px solid #238636; text-align: center;">
@@ -142,6 +179,57 @@ def render_premarket_briefing_html(spy_opt: dict, qqq_opt: dict, macro_events: l
 
             <div style="background-color: #07090e; padding: 12px 20px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #1a1e28;">
                 B.I.A.S. Quantitative Terminal · For personal trading execution · Not financial advice
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+def render_breakout_alert_html(ticker: str, signal: str, price: float, vol_mult: str, category: str) -> str:
+    now_str = datetime.now().strftime("%H:%M:%S ET · %b %d, %Y")
+    is_call = "CALL" in signal.upper()
+    theme_color = "#00FF66" if is_call else "#FF3366"
+    bg_gradient = "#0d2818" if is_call else "#2d1017"
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="background-color: #050508; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 20px; margin: 0;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #0b0c10; border: 1px solid {theme_color}; border-radius: 12px; overflow: hidden; box-shadow: 0 0 20px rgba({ '0,255,102,0.15' if is_call else '255,51,102,0.15' });">
+            <div style="background: {bg_gradient}; padding: 18px; border-bottom: 2px solid {theme_color};">
+                <span style="background: {theme_color}; color: #000; font-weight: bold; font-size: 10px; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">
+                    UNUSUAL VOLUME BREAKOUT ALERT
+                </span>
+                <h1 style="margin: 8px 0 0 0; color: #ffffff; font-size: 22px;">{ticker} · {signal}</h1>
+                <p style="margin: 4px 0 0 0; color: #888888; font-size: 11px;">{now_str}</p>
+            </div>
+
+            <div style="padding: 20px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 15px; background: #161b22; padding: 12px; border-radius: 8px;">
+                    <div>
+                        <div style="font-size: 10px; color: #888; text-transform: uppercase;">Spot Price</div>
+                        <div style="font-size: 18px; font-weight: bold; color: #fff; font-family: monospace;">${price:.2f}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 10px; color: #888; text-transform: uppercase;">Volume Spike</div>
+                        <div style="font-size: 18px; font-weight: bold; color: #FFCC00; font-family: monospace;">{vol_mult}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 10px; color: #888; text-transform: uppercase;">Category</div>
+                        <div style="font-size: 14px; font-weight: bold; color: #58a6ff; margin-top: 3px;">{category}</div>
+                    </div>
+                </div>
+
+                <div style="background: #111; padding: 12px; border-radius: 8px; font-size: 13px; color: #ddd; line-height: 1.5; margin-bottom: 20px; border-left: 3px solid {theme_color};">
+                    <strong>Scanner Detection:</strong> Institutional volume surge detected. Algorithm recommends <strong>{'CALL OPTION ENTRY / BULLISH MOMENTUM' if is_call else 'PUT OPTION ENTRY / BEARISH BREAKDOWN'}</strong> based on multi-timeframe order flow.
+                </div>
+
+                <div style="text-align: center;">
+                    <a href="https://money.maisonrx.life" style="display: inline-block; background: {theme_color}; color: #000; font-weight: bold; padding: 10px 24px; border-radius: 6px; text-decoration: none; font-size: 13px;">
+                        INSPECT {ticker} ON LIVE TERMINAL →
+                    </a>
+                </div>
             </div>
         </div>
     </body>

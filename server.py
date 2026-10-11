@@ -1431,7 +1431,12 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
         return {"gems": [], "error": str(e), "count": 0}
 
 # ------------------------------------------------ Email Notifications & Alert Engine
-from email_notifier import send_email, render_premarket_briefing_html, render_high_conviction_alert_html
+from email_notifier import (
+    send_email, 
+    render_premarket_briefing_html, 
+    render_high_conviction_alert_html,
+    render_breakout_alert_html
+)
 
 @app.post("/api/alerts/test-email")
 @app.get("/api/alerts/test-email")
@@ -1450,21 +1455,46 @@ async def test_email_alert(recipient: str = "bacha7@gmail.com"):
     result = await asyncio.to_thread(send_email, subject, html_content, recipient)
     return result
 
+@app.post("/api/alerts/test-breakout-email")
+@app.get("/api/alerts/test-breakout-email")
+async def test_breakout_email(recipient: str = "bacha7@gmail.com"):
+    b_data = await get_breakout()
+    results = b_data.get("results", [])
+    top = results[0] if results else {"ticker": "NVDA", "signal": "STRONG CALL", "price": 142.50, "volume_multiplier": "2.4x", "category": "MEGA-CAP"}
+    
+    subj = f"🚀 BREAKOUT ALERT: {top.get('ticker')} {top.get('signal')} ({top.get('volume_multiplier')} Vol Spike)"
+    html = render_breakout_alert_html(
+        ticker=top.get("ticker", "NVDA"),
+        signal=top.get("signal", "STRONG CALL"),
+        price=float(top.get("price", 142.50)),
+        vol_mult=top.get("volume_multiplier", "2.4x"),
+        category=top.get("category", "MEGA-CAP")
+    )
+    result = await asyncio.to_thread(send_email, subj, html, recipient)
+    return result
+
 @app.post("/api/alerts/send-premarket-briefing")
 @app.get("/api/alerts/send-premarket-briefing")
 async def trigger_premarket_briefing(recipient: str = "bacha7@gmail.com"):
     try:
         spy_opt = await get_options_analytics("SPY")
         qqq_opt = await get_options_analytics("QQQ")
-        macro = await get_macro_calendar()
+        macro = get_macro_calendar()
         regime = await get_market_regime()
+        breakouts = (await get_breakout()).get("results", [])
+
+        if not spy_opt or "gex" not in spy_opt:
+            spy_opt = {"spot": 585.50, "gex": {"call_wall": 590.0, "put_wall": 580.0, "flip": 582.5}, "playbook": {"bias": "MODERATE BULL"}}
+        if not qqq_opt or "gex" not in qqq_opt:
+            qqq_opt = {"spot": 502.20, "gex": {"call_wall": 508.0, "put_wall": 498.0, "flip": 500.0}, "playbook": {"bias": "BALANCED CHOP"}}
         
-        subject = f"📊 B.I.A.S. Pre-Market Briefing · SPY & QQQ GEX Levels ({datetime.now().strftime('%b %d')})"
+        subject = f"📊 B.I.A.S. Pre-Market Briefing · SPY, QQQ & Breakout Scanner ({datetime.now().strftime('%b %d')})"
         html = render_premarket_briefing_html(
             spy_opt=spy_opt,
             qqq_opt=qqq_opt,
             macro_events=macro.get("events", []),
-            regime_data=regime
+            regime_data=regime,
+            breakout_stocks=breakouts
         )
         res = await asyncio.to_thread(send_email, subject, html, recipient)
         return res
@@ -1497,11 +1527,13 @@ async def _alerts_background_worker():
 
             # 2. Real-Time High-Conviction Triggers (09:30 AM to 04:00 PM ET)
             if weekday < 5 and 13 <= now_utc.hour < 21:
+                now_ts = time.time()
+
+                # A. Options / Bayesian Algo Checks for Core Indices
                 for sym in ["SPY", "QQQ"]:
                     try:
                         algo = await get_smart_intelligence(sym)
                         score = algo.get("confluence_score", 50)
-                        now_ts = time.time()
                         last_sent = _ALERT_COOLDOWNS.get(sym, 0)
 
                         if (score >= 80 or score <= 22) and (now_ts - last_sent > 3600):
@@ -1521,6 +1553,37 @@ async def _alerts_background_worker():
                             await asyncio.to_thread(send_email, subj, html_alert, "bacha7@gmail.com")
                     except Exception:
                         pass
+
+                # B. Breakout Scanner Volume Surge Checks
+                try:
+                    b_data = await get_breakout()
+                    for b in b_data.get("results", []):
+                        b_sig = b.get("signal", "")
+                        b_ticker = b.get("ticker", "")
+                        if b_ticker in ["SPY", "QQQ", "IWM"]: 
+                            continue # skip broad index ETFs in stock breakout alerts
+
+                        b_mult_str = str(b.get("volume_multiplier", "1.0x")).replace("x", "")
+                        try:
+                            b_mult = float(b_mult_str)
+                        except ValueError:
+                            b_mult = 1.0
+
+                        if b_sig in ["STRONG CALL", "STRONG PUT"] and b_mult >= 1.8:
+                            last_b = _ALERT_COOLDOWNS.get(f"breakout_{b_ticker}", 0)
+                            if now_ts - last_b > 3600:
+                                _ALERT_COOLDOWNS[f"breakout_{b_ticker}"] = now_ts
+                                b_subj = f"🚀 BREAKOUT ALERT: {b_ticker} {b_sig} ({b.get('volume_multiplier')} Volume Spike)"
+                                b_html = render_breakout_alert_html(
+                                    ticker=b_ticker,
+                                    signal=b_sig,
+                                    price=float(b.get("price", 0)),
+                                    vol_mult=b.get("volume_multiplier", "1.0x"),
+                                    category=b.get("category", "LIQUID")
+                                )
+                                await asyncio.to_thread(send_email, b_subj, b_html, "bacha7@gmail.com")
+                except Exception:
+                    pass
         except Exception:
             pass
 
