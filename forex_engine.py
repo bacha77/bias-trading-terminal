@@ -11,6 +11,7 @@ Core Quantitative FX Mechanics:
 """
 import math
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -195,34 +196,37 @@ def get_forex_tape() -> dict:
     if not _TAPE_LOCK.acquire(blocking=False):
         return _TAPE_CACHE["data"]
     try:
-        yf_syms = [m["yf"] for m in FOREX_PAIRS_META.values() if not m["yf"].startswith("DX")]
-        intraday = yf.download(yf_syms, period="5d", interval="15m", group_by="ticker",
-                               progress=False, threads=True, auto_adjust=False)
-        daily = yf.download(yf_syms, period="5d", interval="1d", group_by="ticker",
-                            progress=False, threads=True, auto_adjust=False)
-        tape = {}
-        for key, m in FOREX_PAIRS_META.items():
+        def _fetch_pair(item):
+            k, m = item
             if m["yf"].startswith("DX"):
-                continue
+                return None
             try:
-                closes = intraday[m["yf"]]["Close"].dropna()
-                d_closes = daily[m["yf"]]["Close"].dropna()
-                if closes.empty and d_closes.empty:
-                    continue
-                price = float(closes.iloc[-1]) if not closes.empty else float(d_closes.iloc[-1])
-                prev = float(d_closes.iloc[-2]) if len(d_closes) >= 2 else DEFAULT_FOREX_PROFILES.get(key, {}).get("prev", price)
-                chg = ((price - prev) / prev) * 100 if prev else 0.0
-                dec = 5 if m["pip_decimal"] == 4 else 3
-                tape[m["display"]] = {
-                    "price": round(price, dec),
-                    "change": round(chg, 2),
-                    "bid": None,
-                    "ask": None,
-                    "size": 0,
-                    "timestamp": None,
-                }
+                h = yf.Ticker(m["yf"]).history(period="5d", interval="1d")
+                if not h.empty:
+                    c = h["Close"].dropna()
+                    if len(c) >= 1:
+                        price = float(c.iloc[-1])
+                        prev = float(c.iloc[-2]) if len(c) >= 2 else DEFAULT_FOREX_PROFILES.get(k, {}).get("prev", price)
+                        chg = ((price - prev) / prev) * 100 if prev else 0.0
+                        dec = 5 if m["pip_decimal"] == 4 else 3
+                        return m["display"], {
+                            "price": round(price, dec),
+                            "change": round(chg, 2),
+                            "bid": None,
+                            "ask": None,
+                            "size": 0,
+                            "timestamp": None,
+                        }
             except Exception:
-                continue
+                pass
+            return None
+
+        tape = {}
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            results = ex.map(_fetch_pair, FOREX_PAIRS_META.items())
+            for r in results:
+                if r:
+                    tape[r[0]] = r[1]
 
         # Synthetic DXY Index Calculation from institutional currency basket
         try:
