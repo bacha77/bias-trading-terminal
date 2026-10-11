@@ -7,6 +7,7 @@ import {
 import { PanelTitle, Metric, GexLadder, Playbook, RegimeCard, OptionsChain, UnusualFlow, VolPanel } from './OptionsPanels';
 import { MultiChartGrid } from './MultiChartGrid';
 import { PositionsDrawer } from './PositionsDrawer';
+import { EarlyGemRadar } from './EarlyGemRadar';
 import { MacroCalendarModal } from './MacroCalendarModal';
 import { SmartAlgoBoard } from './SmartAlgoBoard';
 import { playInstitutionalChime } from './audioAlerts';
@@ -772,6 +773,9 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* ================= Early Gem & Meme Radar ================= */}
+      <EarlyGemRadar />
 
       {/* ================= Alpaca Live Positions & Portfolio Drawer ================= */}
       <PositionsDrawer alpacaAccount={alpaca} onSelectTicker={selectTicker} />

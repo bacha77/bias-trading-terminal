@@ -1189,6 +1189,143 @@ async def place_bracket_order(req_body: BracketOrderRequest):
     except Exception as e:
         return {"status": "ERROR", "error": str(e)}
 
+@app.get("/api/crypto/gem-radar")
+async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
+    cache_key = f"gem_radar_{chain}_{min_liquidity}"
+    if cache_key in CACHE and time.time() - CACHE[cache_key]["time"] < 25:
+        return CACHE[cache_key]["data"]
+
+    def _scan():
+        all_pairs = []
+        # 1. Fetch DexScreener token-boosts (viral trending)
+        try:
+            req_boost = urllib.request.Request(
+                "https://api.dexscreener.com/token-boosts/latest/v1",
+                headers={"User-Agent": "bias-terminal-gem-radar/1.0"}
+            )
+            with urllib.request.urlopen(req_boost, timeout=3.5) as r:
+                boosts = json.loads(r.read().decode())
+            addrs = [b["tokenAddress"] for b in boosts[:30] if "tokenAddress" in b]
+            if addrs:
+                req_pairs = urllib.request.Request(
+                    f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:30])}",
+                    headers={"User-Agent": "bias-terminal-gem-radar/1.0"}
+                )
+                with urllib.request.urlopen(req_pairs, timeout=4) as r2:
+                    data = json.loads(r2.read().decode())
+                    all_pairs.extend(data.get("pairs", []))
+        except Exception as be:
+            print(f"Gem radar boost error: {be}")
+
+        # 2. Fetch DexScreener search for fresh pump / solana / base tokens
+        for q in ["solana", "base"]:
+            try:
+                req_s = urllib.request.Request(
+                    f"https://api.dexscreener.com/latest/dex/search?q={q}",
+                    headers={"User-Agent": "bias-terminal-gem-radar/1.0"}
+                )
+                with urllib.request.urlopen(req_s, timeout=3.5) as r:
+                    data = json.loads(r.read().decode())
+                    all_pairs.extend(data.get("pairs", []))
+            except Exception:
+                pass
+
+        now_ms = time.time() * 1000
+        seen_addr = set()
+        gems = []
+
+        for p in all_pairs:
+            base = p.get("baseToken", {})
+            addr = base.get("address")
+            if not addr or addr in seen_addr:
+                continue
+            seen_addr.add(addr)
+
+            p_chain = p.get("chainId", "").lower()
+            if chain != "all" and p_chain != chain.lower():
+                continue
+
+            liq = float(p.get("liquidity", {}).get("usd", 0) or 0)
+            if liq < min_liquidity:
+                continue
+
+            vol24 = float(p.get("volume", {}).get("h24", 0) or 0)
+            vol5m = float(p.get("volume", {}).get("m5", 0) or 0)
+            created = p.get("pairCreatedAt", now_ms)
+            age_hours = round((now_ms - created) / (1000 * 3600), 1)
+
+            txns_5m = p.get("txns", {}).get("m5", {})
+            buys_5m = int(txns_5m.get("buys", 0))
+            sells_5m = int(txns_5m.get("sells", 0))
+            total_5m = buys_5m + sells_5m
+            buy_ratio = round((buys_5m / total_5m * 100), 1) if total_5m > 0 else 50.0
+
+            chg_5m = float(p.get("priceChange", {}).get("m5", 0) or 0)
+            chg_1h = float(p.get("priceChange", {}).get("h1", 0) or 0)
+            chg_24h = float(p.get("priceChange", {}).get("h24", 0) or 0)
+
+            velocity = round(vol24 / liq, 1) if liq > 0 else 0
+
+            # Quant safety & breakout score
+            score = 50
+            if liq >= 30000: score += 15
+            elif liq >= 15000: score += 10
+            if age_hours >= 1.5: score += 10
+            if velocity >= 3.0: score += 15
+            if buy_ratio >= 60: score += 10
+            if sells_5m > 0: score += 5
+
+            sym = base.get("symbol", "UNKNOWN").upper().strip()
+            name = base.get("name", "Unknown")
+            if sym in ["SOL", "WSOL", "WETH", "ETH", "USDC", "USDT", "DAI", "WBTC"]:
+                continue
+
+            cat = "MEME"
+            name_lower = f"{name} {sym}".lower()
+            if any(k in name_lower for k in ["ai", "agent", "bot", "gpt", "intel", "mind", "neural", "synth"]):
+                cat = "AI AGENT"
+            elif any(k in name_lower for k in ["swap", "dex", "dao", "net", "chain", "layer", "bridge", "lend"]):
+                cat = "UTILITY"
+
+            gems.append({
+                "symbol": sym,
+                "name": name,
+                "address": addr,
+                "chain": p_chain,
+                "dex": p.get("dexId", "dex"),
+                "price_usd": float(p.get("priceUsd", 0) or 0),
+                "liquidity": round(liq, 2),
+                "volume_24h": round(vol24, 2),
+                "volume_5m": round(vol5m, 2),
+                "fdv": round(float(p.get("fdv", 0) or 0), 2),
+                "age_hours": age_hours,
+                "velocity": velocity,
+                "buys_5m": buys_5m,
+                "sells_5m": sells_5m,
+                "buy_ratio_5m": buy_ratio,
+                "chg_5m": round(chg_5m, 2),
+                "chg_1h": round(chg_1h, 2),
+                "chg_24h": round(chg_24h, 2),
+                "safety_score": min(100, score),
+                "url": p.get("url"),
+                "category": cat
+            })
+
+        gems.sort(key=lambda x: (x["velocity"] >= 3.0, x["volume_24h"]), reverse=True)
+        return {
+            "gems": gems[:40],
+            "count": len(gems),
+            "high_velocity_count": len([g for g in gems if g["velocity"] >= 3.0]),
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        }
+
+    try:
+        res = await asyncio.to_thread(_scan)
+        CACHE[cache_key] = {"time": time.time(), "data": res}
+        return res
+    except Exception as e:
+        return {"gems": [], "error": str(e), "count": 0}
+
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.exists(frontend_dist):
     assets_dir = os.path.join(frontend_dist, "assets")
