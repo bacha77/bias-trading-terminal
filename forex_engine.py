@@ -195,13 +195,15 @@ def get_forex_tape() -> dict:
     if not _TAPE_LOCK.acquire(blocking=False):
         return _TAPE_CACHE["data"]
     try:
-        yf_syms = [m["yf"] for m in FOREX_PAIRS_META.values()]
+        yf_syms = [m["yf"] for m in FOREX_PAIRS_META.values() if not m["yf"].startswith("DX")]
         intraday = yf.download(yf_syms, period="5d", interval="15m", group_by="ticker",
                                progress=False, threads=True, auto_adjust=False)
         daily = yf.download(yf_syms, period="5d", interval="1d", group_by="ticker",
                             progress=False, threads=True, auto_adjust=False)
         tape = {}
         for key, m in FOREX_PAIRS_META.items():
+            if m["yf"].startswith("DX"):
+                continue
             try:
                 closes = intraday[m["yf"]]["Close"].dropna()
                 d_closes = daily[m["yf"]]["Close"].dropna()
@@ -221,6 +223,26 @@ def get_forex_tape() -> dict:
                 }
             except Exception:
                 continue
+
+        # Synthetic DXY Index Calculation from institutional currency basket
+        try:
+            eur_p = tape.get("EUR/USD", {}).get("price", 1.1206)
+            jpy_p = tape.get("USD/JPY", {}).get("price", 158.2)
+            gbp_p = tape.get("GBP/USD", {}).get("price", 1.322)
+            cad_p = tape.get("USD/CAD", {}).get("price", 1.425)
+            chf_p = tape.get("USD/CHF", {}).get("price", 0.830)
+            dxy_spot = round(50.14348112 * pow(eur_p, -0.576) * pow(jpy_p, 0.136) * pow(gbp_p, -0.119) * pow(cad_p, 0.091) * pow(chf_p, 0.036), 2)
+            eur_chg = tape.get("EUR/USD", {}).get("change", 0.0) or 0.0
+            tape["DXY"] = {
+                "price": dxy_spot,
+                "change": round(-eur_chg * 0.6, 2),
+                "bid": None,
+                "ask": None,
+                "size": 0,
+                "timestamp": None,
+            }
+        except Exception:
+            pass
         if tape:
             _TAPE_CACHE = {"time": time.time(), "data": tape}
         return _TAPE_CACHE["data"]
@@ -243,6 +265,10 @@ def get_currency_strength_matrix() -> dict:
 
     scores = {"USD": 50.0, "EUR": 50.0, "GBP": 50.0, "JPY": 50.0, "CAD": 50.0, "AUD": 50.0, "CHF": 50.0, "NZD": 50.0}
     pair_changes = dict(DEFAULT_PAIR_RETURNS)
+    live_tape = get_forex_tape()
+    for k, v in live_tape.items():
+        if isinstance(v, dict) and "change" in v and v["change"] is not None:
+            pair_changes[k] = float(v["change"])
 
     benchmarks = [
         ("EURUSD=X", "EUR", "USD"),
@@ -254,13 +280,14 @@ def get_currency_strength_matrix() -> dict:
         ("NZDUSD=X", "NZD", "USD"),
         ("GBPJPY=X", "GBP", "JPY"),
         ("EURJPY=X", "EUR", "JPY"),
+        ("EURGBP=X", "EUR", "GBP"),
     ]
 
     for yf_sym, base, quote in benchmarks:
         pair_key = f"{base}/{quote}"
-        pct = pair_changes.get(pair_key, 0.2)
-        scores[base] += pct * 12.0
-        scores[quote] -= pct * 12.0
+        pct = pair_changes.get(pair_key, 0.0)
+        scores[base] += pct * 15.0
+        scores[quote] -= pct * 15.0
 
     # Normalize between 5% and 95%
     raw_vals = list(scores.values())
@@ -408,8 +435,21 @@ def get_forex_pair_analytics(symbol: str) -> dict:
         else "NEUTRAL RATE DIFFERENTIAL"
     )
 
-    # 6. Algorithmic Trade Setup with Pip Brackets & Half-Kelly Sizing
-    is_bull = day_chg_pips >= 0 and spot >= gamma_flip
+    # 6. Currency Strength Matrix Confluence
+    csm = get_currency_strength_matrix()
+    base_strength = next((x["strength"] for x in csm["matrix"] if x["currency"] == base_curr), 50.0)
+    quote_strength = next((x["strength"] for x in csm["matrix"] if x["currency"] == quote_curr), 50.0)
+    csm_spread = round(base_strength - quote_strength, 1)
+
+    # Multi-Factor Confluence: Technical Momentum + Quarter Points + CSM Score + Central Bank Carry
+    tech_score = 30.0 if day_chg_pips > 0 else -30.0 if day_chg_pips < 0 else 0.0
+    pivot_score = 25.0 if spot >= gamma_flip else -25.0
+    csm_score = (csm_spread / 90.0) * 35.0
+    carry_score = 10.0 if rate_diff > 0.5 else -10.0 if rate_diff < -0.5 else 0.0
+
+    total_confluence = tech_score + pivot_score + csm_score + carry_score
+    is_bull = total_confluence >= 0
+
     if is_bull:
         bias = "BULLISH EXPANSION"
         action = f"BUY {meta['display']} (LONG)"
@@ -419,7 +459,7 @@ def get_forex_pair_analytics(symbol: str) -> dict:
         take_profit_val = round(spot + (tp_pips / p_mult), p_dec)
         stop_loss_val = round(spot - (sl_pips / p_mult), p_dec)
         rr = round(tp_pips / max(1.0, sl_pips), 1)
-        win_prob = 78
+        win_prob = int(min(92, max(68, 55 + abs(total_confluence) * 0.4)))
     else:
         bias = "BEARISH ACCELERATION"
         action = f"SELL {meta['display']} (SHORT)"
@@ -429,12 +469,13 @@ def get_forex_pair_analytics(symbol: str) -> dict:
         take_profit_val = round(spot - (tp_pips / p_mult), p_dec)
         stop_loss_val = round(spot + (sl_pips / p_mult), p_dec)
         rr = round(tp_pips / max(1.0, sl_pips), 1)
-        win_prob = 76
+        win_prob = int(min(92, max(68, 55 + abs(total_confluence) * 0.4)))
 
     sessions_status = get_forex_sessions_status()
 
     # Drivers list
     drivers = [
+        f"24h Currency Strength (CSM): {base_curr} {base_strength:.1f}% vs {quote_curr} {quote_strength:.1f}% ({'+' if csm_spread > 0 else ''}{csm_spread:.1f}% spread)",
         f"ADR(14) Range: {day_range_pips} / {adr_pips} pips used ({adr_used_pct}%) · {adr_status.split('(')[0].strip()}",
         f"Interest Rate Spread: {base_curr} {base_rate}% vs {quote_curr} {quote_rate}% ({rate_diff:+0.2f}%) · {carry_bias}",
         f"Quarter-Point Levels: Resistance at {call_wall:.{p_dec}f} (+{dist_cw_pips} pips) · Support at {put_wall:.{p_dec}f} (-{dist_pw_pips} pips)",
