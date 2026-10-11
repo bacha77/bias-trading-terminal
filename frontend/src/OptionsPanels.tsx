@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { HelpButton } from './CardExplainerModal';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
@@ -13,12 +14,13 @@ const fmtMoney = (v: Any) => {
   return `$${n.toFixed(0)}`;
 };
 
-export function PanelTitle({ icon, children, right }: { icon?: Any; children: Any; right?: Any }) {
+export function PanelTitle({ icon, children, right, helpKey }: { icon?: Any; children: Any; right?: Any; helpKey?: string }) {
   return (
     <div className="flex justify-between items-center mb-3 pb-2 border-b border-white/5">
       <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-[0.15em] flex items-center gap-2">
         {icon}
-        {children}
+        <span>{children}</span>
+        {helpKey && <HelpButton cardId={helpKey} title={`Explain ${typeof children === 'string' ? children : 'this card'}`} />}
       </h2>
       {right}
     </div>
@@ -26,7 +28,7 @@ export function PanelTitle({ icon, children, right }: { icon?: Any; children: An
 }
 
 /* ---------------------------------------------------------------- Metric tile */
-export function Metric({ label, value, sub, tone = 'white', hint }: { label: string; value: Any; sub?: Any; tone?: string; hint?: string }) {
+export function Metric({ label, value, sub, tone = 'white', hint, helpKey }: { label: string; value: Any; sub?: Any; tone?: string; hint?: string; helpKey?: string }) {
   const toneCls: Record<string, string> = {
     white: 'text-white',
     green: 'text-neon-green',
@@ -35,8 +37,11 @@ export function Metric({ label, value, sub, tone = 'white', hint }: { label: str
     cyan: 'text-cyan-300',
   };
   return (
-    <div title={hint} className="metric-tile rounded-lg bg-black/30 border border-white/5 px-3 py-2 hover:border-neon-green/30 transition-colors">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+    <div title={hint} className="metric-tile rounded-lg bg-black/30 border border-white/5 px-3 py-2 hover:border-neon-green/30 transition-colors relative group">
+      <div className="flex justify-between items-center">
+        <span className="text-[10px] uppercase tracking-wider text-slate-500">{label}</span>
+        {helpKey && <HelpButton cardId={helpKey} title={`Explain ${label}`} />}
+      </div>
       <div className={`font-mono font-bold text-lg leading-tight ${toneCls[tone] || toneCls.white}`}>{value}</div>
       {sub && <div className="text-[10px] font-mono text-slate-400">{sub}</div>}
     </div>

@@ -3,6 +3,7 @@ import {
   BarChart3, TrendingUp, Award, RefreshCw, 
   ArrowUpRight, ArrowDownRight, DollarSign, CheckCircle2 
 } from 'lucide-react';
+import { HelpButton } from './CardExplainerModal';
 import { API_BASE as SERVER_URL } from './config';
 
 const API_BASE = `${SERVER_URL}/api`;
@@ -187,6 +188,7 @@ export const StrategyBacktestLab: React.FC<Props> = ({ initialTicker = 'SPY', on
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white/5 border border-white/10 text-slate-300">
                 WALK-FORWARD v3
               </span>
+              <HelpButton cardId="backtest" title="Explain Strategy Lab & Backtest Metrics" />
             </div>
             <p className="text-xs text-slate-400">
               Institutional algorithmic validation · Realistic slippage & commissions · Overfitting detection

@@ -3,6 +3,7 @@ import {
   Flame, RefreshCw, ExternalLink, Copy, Check, 
   ShieldCheck, ShieldAlert, Search, Zap, Eye, X
 } from 'lucide-react';
+import { HelpButton } from './CardExplainerModal';
 import { API_BASE } from './config';
 
 export interface GemToken {
@@ -150,6 +151,7 @@ export function EarlyGemRadar() {
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
                 24/7 ON-CHAIN
               </span>
+              <HelpButton cardId="gemradar" title="Explain Early Gem & Meme Crypto Radar" />
             </div>
             <p className="text-[11px] text-slate-400 font-sans">
               Algorithmic Breakout Detection · Automated Signal Badges, RWA / DePIN Fundamentals & 1-Click Contract Audits

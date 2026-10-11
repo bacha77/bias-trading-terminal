@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TradingChart } from './TradingChart';
 import { ErrorBoundary } from './ErrorBoundary';
 import { MultiTimeframeRibbon } from './MultiTimeframeRibbon';
+import { HelpButton } from './CardExplainerModal';
 import { 
   BarChart3, 
   Columns, 
@@ -192,6 +193,7 @@ export function MultiChartGrid({
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/10 text-slate-300 border border-white/10 font-normal">
                 {layout === 'single' ? '1-PANE' : layout === 'dual' ? '2-PANE SPLIT' : '4-PANE QUAD'}
               </span>
+              <HelpButton cardId="chart" title="Explain Multi-Chart Matrix & GEX Levels" />
             </span>
           </div>
 

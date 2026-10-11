@@ -13,6 +13,7 @@ import { MacroCalendarModal } from './MacroCalendarModal';
 import { SmartAlgoBoard } from './SmartAlgoBoard';
 import { playInstitutionalChime } from './audioAlerts';
 import { ErrorBoundary } from './ErrorBoundary';
+import { CardHelpProvider, HelpButton } from './CardExplainerModal';
 
 import { API_BASE as SERVER_URL } from './config';
 
@@ -253,7 +254,8 @@ function App() {
     : 'text-neon-gold border-neon-gold/40 bg-neon-gold/10';
 
   return (
-    <div className="min-h-screen w-full p-4 flex flex-col gap-3 font-sans">
+    <CardHelpProvider>
+      <div className="min-h-screen w-full p-4 flex flex-col gap-3 font-sans">
 
       {/* ================= Institutional Live Ticker Tape (1s Ticks) ================= */}
       <div className="glass-panel py-1.5 px-4 flex items-center overflow-hidden text-xs font-mono border-b border-neon-green/20 bg-black/60 shadow-[0_0_15px_rgba(0,255,163,0.08)]">
@@ -444,6 +446,7 @@ function App() {
         <div className="flex items-center gap-2 pr-4 border-r border-white/10 shrink-0">
           <Landmark size={14} className="text-purple-400" />
           <span className="text-[10px] uppercase font-bold text-purple-300 tracking-wider">DARK POOL & BLOCKS ({optTicker})</span>
+          <HelpButton cardId="darkpool" title="Explain Dark Pool & Block Sweeps Feed" />
           {blockLoading && <RefreshCw size={10} className="animate-spin text-purple-400" />}
         </div>
         <div className="flex gap-3 overflow-x-auto py-0.5 px-3 items-center w-full">
@@ -486,15 +489,16 @@ function App() {
             value={fmt(spot)} 
             sub={activeTape ? `${changePct >= 0 ? '+' : ''}${fmt(changePct, 2, '%')} · 1s Live` : `${changePct >= 0 ? '+' : ''}${fmt(changePct, 2, '%')}`} 
             tone={changePct >= 0 ? 'green' : 'red'} 
+            helpKey="metrics"
           />
         </div>
-        <Metric label={`Exp Move (${opt?.dte ?? '-'}d)`} value={`±${fmt(opt?.expected_move)}`} sub={`±${fmt(opt?.expected_move_pct, 2, '%')} · ${fmt(spot - opt?.expected_move)}–${fmt(spot + opt?.expected_move)}`} tone="gold" hint="ATM straddle × 0.85" />
-        <Metric label="Gamma Flip" value={fmt(g.flip)} sub={`${fmt(distTo(g.flip), 2, '%')} from spot`} tone="gold" hint="Price where dealer net gamma turns from positive to negative" />
-        <Metric label="Net GEX" value={`${fmt(g.net, 2)}B`} sub={g.regime} tone={g.net >= 0 ? 'green' : 'red'} hint="$ dealer delta change per 1% move" />
-        <Metric label="Call Wall" value={fmt(g.call_wall)} sub={`${fmt(distTo(g.call_wall), 2, '%')} resistance`} tone="green" />
-        <Metric label="Put Wall" value={fmt(g.put_wall)} sub={`${fmt(distTo(g.put_wall), 2, '%')} support`} tone="red" />
-        <Metric label="Max Pain" value={fmt(opt?.max_pain)} sub={`${fmt(distTo(opt?.max_pain), 2, '%')} · ${opt?.expiry || ''}`} tone="cyan" />
-        <Metric label="Put/Call" value={fmt(opt?.pcr_vol)} sub={`OI ${fmt(opt?.pcr_oi)}`} tone={opt?.pcr_vol > 1.2 ? 'red' : opt?.pcr_vol < 0.6 ? 'green' : 'white'} />
+        <Metric label={`Exp Move (${opt?.dte ?? '-'}d)`} value={`±${fmt(opt?.expected_move)}`} sub={`±${fmt(opt?.expected_move_pct, 2, '%')} · ${fmt(spot - opt?.expected_move)}–${fmt(spot + opt?.expected_move)}`} tone="gold" hint="ATM straddle × 0.85" helpKey="metrics" />
+        <Metric label="Gamma Flip" value={fmt(g.flip)} sub={`${fmt(distTo(g.flip), 2, '%')} from spot`} tone="gold" hint="Price where dealer net gamma turns from positive to negative" helpKey="metrics" />
+        <Metric label="Net GEX" value={`${fmt(g.net, 2)}B`} sub={g.regime} tone={g.net >= 0 ? 'green' : 'red'} hint="$ dealer delta change per 1% move" helpKey="metrics" />
+        <Metric label="Call Wall" value={fmt(g.call_wall)} sub={`${fmt(distTo(g.call_wall), 2, '%')} resistance`} tone="green" helpKey="metrics" />
+        <Metric label="Put Wall" value={fmt(g.put_wall)} sub={`${fmt(distTo(g.put_wall), 2, '%')} support`} tone="red" helpKey="metrics" />
+        <Metric label="Max Pain" value={fmt(opt?.max_pain)} sub={`${fmt(distTo(opt?.max_pain), 2, '%')} · ${opt?.expiry || ''}`} tone="cyan" helpKey="metrics" />
+        <Metric label="Put/Call" value={fmt(opt?.pcr_vol)} sub={`OI ${fmt(opt?.pcr_oi)}`} tone={opt?.pcr_vol > 1.2 ? 'red' : opt?.pcr_vol < 0.6 ? 'green' : 'white'} helpKey="metrics" />
       </section>
 
       {/* ================= Row 1: Breakout Scanner | Multi-Chart Grid | Smart Algo ================= */}
@@ -505,6 +509,7 @@ function App() {
         }`}>
           <PanelTitle 
             icon={<Target size={14} className="text-neon-green" />} 
+            helpKey="breakout"
             right={
               <span className="text-[10px] font-mono text-neon-green font-bold flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse shadow-[0_0_8px_#00ffa3]" />
@@ -690,26 +695,32 @@ function App() {
       {/* ================= Row 2: chain | GEX ladder | unusual & vol ================= */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         <div className="glass-panel xl:col-span-5 p-4">
-          <PanelTitle icon={<Crosshair size={14} className="text-neon-green" />}
-            right={<span className="text-[10px] font-mono text-slate-500">{opt?.expiry} · {opt?.dte}DTE · straddle ${fmt(opt?.straddle)}</span>}>
+          <PanelTitle 
+            icon={<Crosshair size={14} className="text-neon-green" />}
+            helpKey="chain"
+            right={<span className="text-[10px] font-mono text-slate-500">{opt?.expiry} · {opt?.dte}DTE · straddle ${fmt(opt?.straddle)}</span>}
+          >
             Options Chain
           </PanelTitle>
           <OptionsChain data={opt} />
         </div>
         <div className="glass-panel xl:col-span-4 p-4 flex flex-col">
-          <PanelTitle icon={<Layers size={14} className="text-neon-gold" />}
-            right={<span className="text-[10px] font-mono text-slate-500">{g.expiries_used?.length || 0} expiries · ±5%</span>}>
+          <PanelTitle 
+            icon={<Layers size={14} className="text-neon-gold" />}
+            helpKey="gex"
+            right={<span className="text-[10px] font-mono text-slate-500">{g.expiries_used?.length || 0} expiries · ±5%</span>}
+          >
             Gamma Exposure · Dealer Positioning
           </PanelTitle>
           <GexLadder data={opt} />
         </div>
         <div className="glass-panel xl:col-span-3 p-4 flex flex-col gap-4">
           <div>
-            <PanelTitle icon={<ShieldAlert size={14} className="text-neon-red" />}>Unusual Flow</PanelTitle>
+            <PanelTitle icon={<ShieldAlert size={14} className="text-neon-red" />} helpKey="unusual">Unusual Flow</PanelTitle>
             <UnusualFlow data={opt} />
           </div>
           <div className="pt-2 border-t border-white/5">
-            <PanelTitle icon={<Waves size={14} className="text-cyan-300" />}>Vol Surface</PanelTitle>
+            <PanelTitle icon={<Waves size={14} className="text-cyan-300" />} helpKey="volsurface">Vol Surface</PanelTitle>
             <VolPanel data={opt} />
           </div>
         </div>
@@ -718,7 +729,7 @@ function App() {
       {/* ================= Row 3: sentiment | strategy lab ================= */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         <div className="glass-panel xl:col-span-6 p-4 flex flex-col">
-          <PanelTitle icon={<BrainCircuit size={14} className="text-neon-gold" />}>Technical Sentiment · {confluence?.ticker || optTicker}</PanelTitle>
+          <PanelTitle icon={<BrainCircuit size={14} className="text-neon-gold" />} helpKey="sentiment">Technical Sentiment · {confluence?.ticker || optTicker}</PanelTitle>
           <div className="mb-4">
             <div className="flex justify-between text-xs font-bold mb-1">
               <span className="text-neon-green">Bullish {confluence?.sentiment_score ?? 50}%</span>
@@ -754,7 +765,7 @@ function App() {
         <div className="glass-panel xl:col-span-6 p-4 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-2">
-              <PanelTitle icon={<AlertTriangle size={14} className="text-neon-red" />}>Strategy Lab · Quick Runner</PanelTitle>
+              <PanelTitle icon={<AlertTriangle size={14} className="text-neon-red" />} helpKey="backtest">Strategy Lab · Quick Runner</PanelTitle>
               <a href="#strategy-lab" className="text-[11px] font-mono text-neon-green hover:underline flex items-center gap-1">
                 Open Full Lab Suite →
               </a>
@@ -808,6 +819,7 @@ function App() {
         Personal use · Options data via Yahoo Finance (delayed) · Screener via TradingView · Alpaca Real-Time SIP · Not financial advice
       </footer>
     </div>
+  </CardHelpProvider>
   );
 }
 

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { playInstitutionalChime } from './audioAlerts';
 import { API_BASE } from './config';
+import { HelpButton } from './CardExplainerModal';
 
 interface SmartAlgoProps {
   data: {
@@ -175,6 +176,7 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
         <span className="flex items-center gap-1.5 text-neon-green font-bold">
           <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
           {data.learning?.engine_state || 'ONLINE BAYESIAN SGD (v5.0 PRO)'}
+          <HelpButton cardId="algo" title="Explain AI Quant Algo & Machine Learning Logic" />
         </span>
         <span className="text-slate-400">
           Accuracy: <strong className="text-neon-green">{data.learning?.accuracy || '89.0%'}</strong> ({data.learning?.tested_samples || 164} walk-forward samples)
@@ -200,6 +202,7 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
                     {powerHour.gamma_acceleration_multiplier}x GAMMA
                   </span>
                 )}
+                <HelpButton cardId="algo" title="Explain 0DTE Power Hour Dynamics" />
               </div>
               <div className="text-[9px] text-slate-400 font-sans">{powerHour.time_desc}</div>
             </div>
@@ -220,7 +223,10 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
       <div className={`p-3 rounded-lg border ${stateBorder} transition-all`}>
         <div className="flex justify-between items-start">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-400">Markov Dynamic State</div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 flex items-center">
+              Markov Dynamic State
+              <HelpButton cardId="algo" title="Explain Markov States & Trade Regimes" />
+            </div>
             <div className={`text-base font-black ${stateColor} tracking-wide`}>{data.markov_state}</div>
             <div className="text-[10px] text-slate-300 font-sans mt-0.5">{data.regime_sub}</div>
           </div>
@@ -246,6 +252,7 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
           <div className="flex justify-between items-center pb-1 border-b border-white/10">
             <span className="text-[9px] uppercase font-bold text-amber-400 flex items-center gap-1">
               <Activity size={11} className="text-amber-400" /> 25Δ IV Skew
+              <HelpButton cardId="algo" title="Explain 25-Delta Put/Call IV Skew" />
             </span>
             <span className="font-mono font-bold text-white">
               {skew ? `${skew.skew_pct > 0 ? '+' : ''}${skew.skew_pct}%` : '--'}
@@ -267,6 +274,7 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
           <div className="flex justify-between items-center pb-1 border-b border-white/10">
             <span className="text-[9px] uppercase font-bold text-purple-400 flex items-center gap-1">
               <BarChart3 size={11} className="text-purple-400" /> Order Flow (CVD)
+              <HelpButton cardId="algo" title="Explain Cumulative Volume Delta (CVD)" />
             </span>
             <span className={`font-mono font-bold ${
               cvd && cvd.cvd_ratio > 0 ? 'text-neon-green' : cvd && cvd.cvd_ratio < 0 ? 'text-neon-red' : 'text-slate-300'
@@ -294,6 +302,7 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
           <div className="flex justify-between items-center pb-1 border-b border-white/10">
             <span className="text-[10px] uppercase font-bold text-cyan-400 flex items-center gap-1">
               <Zap size={12} className="text-cyan-400" /> 0DTE Dealer Delta Velocity
+              <HelpButton cardId="algo" title="Explain Dealer Delta Re-Hedging" />
             </span>
             <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${
               hedging.mode.includes('BUY') 
@@ -330,6 +339,7 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
         <div className="flex justify-between items-center pb-1.5 border-b border-white/10">
           <span className="text-[10px] uppercase tracking-wider text-neon-gold font-bold flex items-center gap-1">
             <Target size={12} /> Recommended Execution
+            <HelpButton cardId="algo" title="Explain Recommended Execution & Bracket Orders" />
           </span>
           <div className="flex items-center gap-1.5">
             {setup && (
@@ -488,8 +498,11 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
 
       {/* Multi-Factor Catalysts & Confluence Drivers */}
       <div className="p-2.5 rounded bg-black/40 border border-white/5 text-[10px]">
-        <div className="text-slate-400 uppercase text-[9px] mb-1.5 flex items-center gap-1">
-          <Shield size={11} className="text-neon-green" /> Adaptive Confluence Drivers
+        <div className="text-slate-400 uppercase text-[9px] mb-1.5 flex items-center justify-between">
+          <span className="flex items-center gap-1">
+            <Shield size={11} className="text-neon-green" /> Adaptive Confluence Drivers
+          </span>
+          <HelpButton cardId="algo" title="Explain Multi-Factor Confluence Drivers" />
         </div>
         <ul className="flex flex-col gap-1.5">
           {data.drivers.map((drv, i) => (
@@ -507,6 +520,7 @@ export function SmartAlgoBoard({ data, loading }: SmartAlgoProps) {
           <div className="flex justify-between items-center text-[10px]">
             <span className="text-white font-bold flex items-center gap-1">
               <Cpu size={12} className="text-neon-green" /> {data.learning.calibration_model}
+              <HelpButton cardId="algo" title="Explain Dynamic 6-Factor Machine Learning Weights" />
             </span>
             <span className="text-slate-400">
               <strong className="text-neon-green">{data.learning.target_hits ?? 146} Hits</strong> · <strong className="text-neon-red">{data.learning.stopped_out ?? 18} Stops</strong>
