@@ -1,10 +1,22 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Flame, RefreshCw, ExternalLink, Copy, Check, 
-  ShieldCheck, ShieldAlert, Search, Zap, Eye, X
+  ShieldCheck, ShieldAlert, Search, Zap, X, BookOpen,
+  TrendingUp, DollarSign, Target, Award
 } from 'lucide-react';
 import { HelpButton } from './CardExplainerModal';
 import { API_BASE } from './config';
+
+export interface NarrativeSector {
+  category: string;
+  volume_share_pct: number;
+  volume_24h: number;
+  gem_count: number;
+  avg_velocity: number;
+  runner_count: number;
+  top_token: string;
+  trend: string;
+}
 
 export interface GemToken {
   symbol: string;
@@ -27,9 +39,22 @@ export interface GemToken {
   chg_24h: number;
   safety_score: number;
   url?: string;
-  category: 'MEME' | 'AI AGENT' | 'RWA / DePIN' | 'UTILITY';
+  category: 'MEME' | 'AI AGENT' | 'DePIN / COMPUTE' | 'RWA' | 'UTILITY / L2' | string;
   verdict?: 'PARABOLIC' | 'PRIME_RUNNER' | 'DUMP_RISK' | 'ACCUMULATING' | 'NEUTRAL';
   verdict_label?: string;
+  lifecycle_stage?: {
+    stage: string;
+    code: 'PHASE_1' | 'PHASE_2' | 'PHASE_3' | 'RISK_DUMP' | 'NEUTRAL';
+    label: string;
+    desc: string;
+  };
+  profit_ladder?: {
+    tp1: number;
+    tp2: number;
+    tp3: number;
+    sl: number;
+    rr: string;
+  };
   audit_url?: string;
   bubblemaps_url?: string;
 }
@@ -51,6 +76,8 @@ const fmtPrice = (p: number) => {
 
 export function EarlyGemRadar() {
   const [gems, setGems] = useState<GemToken[]>([]);
+  const [narrativeDominance, setNarrativeDominance] = useState<NarrativeSector[]>([]);
+  const [dominantNarrative, setDominantNarrative] = useState<string>('MEME');
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
@@ -67,6 +94,8 @@ export function EarlyGemRadar() {
   // Modal / Preview state
   const [previewToken, setPreviewToken] = useState<GemToken | null>(null);
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+  const [showPlaybook, setShowPlaybook] = useState<boolean>(false);
+  const [simPosition, setSimPosition] = useState<number>(500);
 
   const fetchGems = useCallback(async () => {
     setLoading(true);
@@ -76,6 +105,12 @@ export function EarlyGemRadar() {
       const data = await res.json();
       if (data && data.gems) {
         setGems(data.gems);
+        if (data.narrative_dominance) {
+          setNarrativeDominance(data.narrative_dominance);
+        }
+        if (data.dominant_narrative) {
+          setDominantNarrative(data.dominant_narrative);
+        }
         setLastUpdated(data.timestamp || new Date().toLocaleTimeString());
       } else if (data.error) {
         setError(data.error);
@@ -145,7 +180,7 @@ export function EarlyGemRadar() {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono flex items-center gap-1.5">
-                EARLY GEM & MEME RADAR
+                EARLY GEM & NARRATIVE RADAR
               </h2>
               <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono font-bold flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
@@ -154,13 +189,22 @@ export function EarlyGemRadar() {
               <HelpButton cardId="gemradar" title="Explain Early Gem & Meme Crypto Radar" />
             </div>
             <p className="text-[11px] text-slate-400 font-sans">
-              Algorithmic Breakout Detection · Automated Signal Badges, RWA / DePIN Fundamentals & 1-Click Contract Audits
+              Algorithmic Breakout Detection · Narrative Capital Rotation, Lifecycle Stages & Automated Profit-Taking Ladders
             </p>
           </div>
         </div>
 
-        {/* View Toggle & Refresh */}
+        {/* View Toggle, Playbook & Refresh */}
         <div className="flex items-center gap-2 text-xs font-mono ml-auto">
+          <button
+            onClick={() => setShowPlaybook(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 font-bold transition-all shadow-[0_0_10px_rgba(168,85,247,0.15)]"
+            title="Open High-Probability Crypto Narrative Playbook"
+          >
+            <BookOpen size={12} className="text-purple-400" />
+            <span className="text-[10px]">ALPHA PLAYBOOK</span>
+          </button>
+
           <span className="text-slate-500 text-[10px] hidden sm:inline">Upd {lastUpdated || '--:--:--'}</span>
           <div className="flex bg-black/60 p-0.5 rounded border border-white/10">
             <button
@@ -188,6 +232,55 @@ export function EarlyGemRadar() {
         </div>
       </div>
 
+      {/* ================= Narrative Sector Dominance Ribbon ================= */}
+      {narrativeDominance.length > 0 && (
+        <div className="bg-black/60 p-3 rounded-xl border border-white/10 flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between text-xs font-mono">
+            <div className="flex items-center gap-2">
+              <span className="text-amber-400 font-bold text-[11px] flex items-center gap-1">
+                <TrendingUp size={13} /> NARRATIVE CAPITAL ROTATION:
+              </span>
+              <span className="text-[11px] text-slate-300">
+                Hot Money is concentrating in <strong className="text-neon-green">{dominantNarrative}</strong> ({narrativeDominance[0]?.volume_share_pct}% flow)
+              </span>
+            </div>
+            <span className="text-[10px] text-slate-400">Click a sector below to filter radar</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {narrativeDominance.map((sec) => {
+              const isSelected = selectedCategory === sec.category;
+              return (
+                <button
+                  key={sec.category}
+                  onClick={() => setSelectedCategory(isSelected ? 'all' : sec.category)}
+                  className={`p-2 rounded-lg border text-left font-mono transition-all duration-200 flex flex-col justify-between ${
+                    isSelected
+                      ? 'bg-amber-500/20 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                      : 'bg-black/40 border-white/10 hover:border-white/20 hover:bg-white/[0.02]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-[11px] text-white truncate">{sec.category}</span>
+                    <span className="text-[9px] px-1 py-0.2 rounded bg-white/10 text-slate-300">{sec.trend}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between text-[10px]">
+                    <span className="text-slate-400">Share: <strong className={sec.volume_share_pct >= 30 ? 'text-neon-green' : 'text-white'}>{sec.volume_share_pct}%</strong></span>
+                    <span className="text-slate-500 text-[9px]">{sec.gem_count} gems</span>
+                  </div>
+                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden mt-1.5">
+                    <div 
+                      className={`h-full ${sec.volume_share_pct >= 40 ? 'bg-neon-green' : sec.volume_share_pct >= 20 ? 'bg-amber-400' : 'bg-cyan-400'}`}
+                      style={{ width: `${Math.min(100, sec.volume_share_pct)}%` }}
+                    />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ================= Command / Filter Bar ================= */}
       <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
         {/* Chain Filters */}
@@ -213,14 +306,14 @@ export function EarlyGemRadar() {
           ))}
         </div>
 
-        {/* Category Filters (Includes RWA / DePIN Real-World Utility!) */}
+        {/* Category Filters */}
         <div className="flex bg-black/50 p-0.5 rounded-lg border border-white/10 shrink-0">
           {[
-            { id: 'all', label: 'ALL TYPES' },
+            { id: 'all', label: 'ALL NARRATIVES' },
             { id: 'MEME', label: '🔥 MEMES' },
             { id: 'AI AGENT', label: '🤖 AI AGENTS' },
-            { id: 'RWA / DePIN', label: '🌐 RWA / DePIN' },
-            { id: 'UTILITY', label: '⚙️ UTILITY' },
+            { id: 'DePIN / COMPUTE', label: '⚡ DePIN / COMPUTE' },
+            { id: 'RWA', label: '🏦 RWA' },
           ].map((cat) => (
             <button
               key={cat.id}
@@ -369,11 +462,11 @@ export function EarlyGemRadar() {
                         <div className="overflow-hidden">
                           <div className="flex items-center gap-1.5">
                             <span className="font-bold text-sm text-white font-mono truncate">{g.symbol}</span>
-                            <span className={`text-[8px] px-1 py-0.2 rounded font-bold uppercase tracking-wider shrink-0 ${
-                              g.category === 'AI AGENT' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' :
-                              g.category === 'RWA / DePIN' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
-                              g.category === 'UTILITY' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' :
-                              'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            <span className={`text-[8px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider shrink-0 border ${
+                              g.category === 'AI AGENT' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
+                              g.category === 'DePIN / COMPUTE' ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' :
+                              g.category === 'RWA' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' :
+                              'bg-amber-500/20 text-amber-300 border-amber-500/40'
                             }`}>
                               {g.category}
                             </span>
@@ -382,6 +475,21 @@ export function EarlyGemRadar() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Lifecycle Stage Badge */}
+                    {g.lifecycle_stage && (
+                      <div className="mb-2 px-2 py-1 rounded-md bg-white/[0.03] border border-white/5 flex items-center justify-between text-[9px] font-mono">
+                        <span className="text-slate-400">LIFECYCLE:</span>
+                        <span className={`font-bold ${
+                          g.lifecycle_stage.code === 'PHASE_2' ? 'text-neon-green' :
+                          g.lifecycle_stage.code === 'PHASE_1' ? 'text-cyan-300' :
+                          g.lifecycle_stage.code === 'PHASE_3' ? 'text-amber-400' :
+                          'text-neon-red'
+                        }`}>
+                          {g.lifecycle_stage.label}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Price & 5m / 1h Returns */}
                     <div className="flex items-baseline justify-between mb-2">
@@ -496,16 +604,16 @@ export function EarlyGemRadar() {
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => setPreviewToken(g)}
-                          className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 text-[10px] font-bold flex items-center gap-1"
+                          className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold flex items-center gap-1 border border-amber-500/30 transition-all"
                         >
-                          <Eye size={10} /> Chart
+                          <Target size={11} /> Plan Trade
                         </button>
                         {g.url && (
                           <a
                             href={g.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1 rounded hover:bg-white/10 text-amber-400 hover:text-amber-300"
+                            className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
                             title="Open DexScreener"
                           >
                             <ExternalLink size={12} />
@@ -528,12 +636,13 @@ export function EarlyGemRadar() {
             <thead className="bg-white/5 border-b border-white/10 text-[10px] text-slate-400 uppercase">
               <tr>
                 <th className="py-2.5 px-3">Signal</th>
+                <th className="py-2.5 px-2">Lifecycle</th>
                 <th className="py-2.5 px-2">Token</th>
                 <th className="py-2.5 px-2">Chain</th>
                 <th className="py-2.5 px-2">Price</th>
                 <th className="py-2.5 px-2">5m Chg</th>
                 <th className="py-2.5 px-2">1h Chg</th>
-                <th className="py-2.5 px-2">Velocity (V/L)</th>
+                <th className="py-2.5 px-2">Velocity</th>
                 <th className="py-2.5 px-2">Liquidity</th>
                 <th className="py-2.5 px-2">5m Buy Flow</th>
                 <th className="py-2.5 px-2">Safety</th>
@@ -558,6 +667,16 @@ export function EarlyGemRadar() {
                         {isRunner && '🚀 RUNNER'}
                         {isDump && '⚠️ DUMP'}
                         {!isParabolic && !isRunner && !isDump && '⚖️ CHOP'}
+                      </span>
+                    </td>
+                    <td className="py-2 px-2">
+                      <span className={`text-[9px] font-bold ${
+                        g.lifecycle_stage?.code === 'PHASE_2' ? 'text-neon-green' :
+                        g.lifecycle_stage?.code === 'PHASE_1' ? 'text-cyan-300' :
+                        g.lifecycle_stage?.code === 'PHASE_3' ? 'text-amber-400' :
+                        'text-slate-400'
+                      }`}>
+                        {g.lifecycle_stage?.label || 'Neutral'}
                       </span>
                     </td>
                     <td className="py-2 px-2">
@@ -591,16 +710,11 @@ export function EarlyGemRadar() {
                     </td>
                     <td className="py-2 px-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {g.audit_url && (
-                          <a href={g.audit_url} target="_blank" rel="noopener noreferrer" className="px-1.5 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold">
-                            Audit
-                          </a>
-                        )}
                         <button
                           onClick={() => setPreviewToken(g)}
-                          className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-bold"
+                          className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold flex items-center gap-1 border border-amber-500/30"
                         >
-                          Chart
+                          <Target size={10} /> Plan
                         </button>
                         {g.url && (
                           <a href={g.url} target="_blank" rel="noopener noreferrer" className="p-1 hover:text-amber-300 text-amber-400">
@@ -617,22 +731,25 @@ export function EarlyGemRadar() {
         </div>
       )}
 
-      {/* ================= Interactive Live Chart Modal Preview ================= */}
+      {/* ================= Interactive Live Chart & Profit-Ladder Modal ================= */}
       {previewToken && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
-          <div className="glass-panel w-full max-w-5xl h-[85vh] flex flex-col border border-amber-500/40 bg-black/95 shadow-[0_0_40px_rgba(245,158,11,0.25)] rounded-2xl overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-4 border-b border-white/10 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in">
+          <div className="glass-panel w-full max-w-6xl h-[90vh] flex flex-col border border-amber-500/40 bg-[#070b14] shadow-[0_0_50px_rgba(245,158,11,0.25)] rounded-2xl overflow-hidden">
+            {/* Modal Top Header */}
+            <div className="p-3 sm:p-4 border-b border-white/10 flex items-center justify-between bg-black/80">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center font-bold text-amber-300 font-mono">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center font-bold text-amber-300 font-mono text-sm">
                   {previewToken.symbol.slice(0, 3)}
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-bold text-lg text-white font-mono">{previewToken.symbol}</h3>
                     <span className="text-xs text-slate-400 font-normal">({previewToken.name})</span>
                     <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10">
                       {previewToken.chain} · {previewToken.dex}
+                    </span>
+                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                      {previewToken.category}
                     </span>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
                       previewToken.verdict === 'PRIME_RUNNER' ? 'bg-neon-green/20 text-neon-green border-neon-green/40' :
@@ -643,7 +760,7 @@ export function EarlyGemRadar() {
                       {previewToken.verdict_label}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400 mt-0.5">
                     <span>CA: {previewToken.address.slice(0, 8)}...{previewToken.address.slice(-6)}</span>
                     <button 
                       onClick={() => copyToClipboard(previewToken.address)} 
@@ -652,12 +769,12 @@ export function EarlyGemRadar() {
                       {copiedAddress === previewToken.address ? <Check size={11} className="text-neon-green" /> : <Copy size={11} />}
                     </button>
                     {previewToken.audit_url && (
-                      <a href={previewToken.audit_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-emerald-400 hover:underline flex items-center gap-0.5">
+                      <a href={previewToken.audit_url} target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:underline flex items-center gap-0.5">
                         🛡️ RugCheck <ExternalLink size={10} />
                       </a>
                     )}
                     {previewToken.bubblemaps_url && (
-                      <a href={previewToken.bubblemaps_url} target="_blank" rel="noopener noreferrer" className="ml-1 text-purple-400 hover:underline flex items-center gap-0.5">
+                      <a href={previewToken.bubblemaps_url} target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline flex items-center gap-0.5">
                         🫧 BubbleMaps <ExternalLink size={10} />
                       </a>
                     )}
@@ -666,7 +783,7 @@ export function EarlyGemRadar() {
               </div>
 
               <div className="flex items-center gap-3">
-                <div className="text-right font-mono hidden sm:block">
+                <div className="text-right font-mono hidden md:block">
                   <div className="text-base font-bold text-white">{fmtPrice(previewToken.price_usd)}</div>
                   <div className="text-[11px] text-slate-400">
                     Liq: <strong className="text-white">{fmtCurrency(previewToken.liquidity)}</strong> · 
@@ -692,17 +809,245 @@ export function EarlyGemRadar() {
               </div>
             </div>
 
-            {/* Embedded Live DexScreener Chart */}
-            <div className="flex-1 bg-black w-full h-full relative">
-              <iframe
-                src={`https://dexscreener.com/${previewToken.chain}/${previewToken.address}?embed=1&theme=dark&trades=0&info=0`}
-                title={`${previewToken.symbol} DexScreener Live Chart`}
-                className="w-full h-full border-0"
-              />
+            {/* Modal Body: Split Live Chart + Quant Profit-Ladder Execution Card */}
+            <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-black">
+              {/* Left / Top: Live Embedded DexScreener Chart */}
+              <div className="flex-1 h-[45vh] lg:h-full bg-black relative border-b lg:border-b-0 lg:border-r border-white/10">
+                <iframe
+                  src={`https://dexscreener.com/${previewToken.chain}/${previewToken.address}?embed=1&theme=dark&trades=0&info=0`}
+                  title={`${previewToken.symbol} DexScreener Live Chart`}
+                  className="w-full h-full border-0"
+                />
+              </div>
+
+              {/* Right: Institutional Profit-Ladder & Trade Plan Panel */}
+              <div className="w-full lg:w-[380px] p-4 flex flex-col gap-3 overflow-y-auto bg-[#0a0f1d] border-l border-white/5 font-mono text-xs">
+                
+                {/* Lifecycle Stage Header */}
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
+                  <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
+                    <span>NARRATIVE LIFECYCLE STAGE</span>
+                    <span className="text-amber-400 font-bold">STAGE {previewToken.lifecycle_stage?.code === 'PHASE_1' ? '1/4' : previewToken.lifecycle_stage?.code === 'PHASE_2' ? '2/4' : previewToken.lifecycle_stage?.code === 'PHASE_3' ? '3/4' : 'RISK'}</span>
+                  </div>
+                  <div className={`font-bold text-sm ${
+                    previewToken.lifecycle_stage?.code === 'PHASE_2' ? 'text-neon-green' :
+                    previewToken.lifecycle_stage?.code === 'PHASE_1' ? 'text-cyan-300' :
+                    previewToken.lifecycle_stage?.code === 'PHASE_3' ? 'text-amber-400' :
+                    'text-neon-red'
+                  }`}>
+                    {previewToken.lifecycle_stage?.label}
+                  </div>
+                  <p className="text-[11px] text-slate-300 font-sans mt-1">
+                    {previewToken.lifecycle_stage?.desc}
+                  </p>
+                </div>
+
+                {/* Automated Profit Ladder (The Anti-Roundtrip Rule) */}
+                <div className="p-3 rounded-xl bg-black/60 border border-amber-500/30 flex flex-col gap-2">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
+                    <span className="text-amber-400 font-bold flex items-center gap-1 text-[11px]">
+                      <Target size={13} /> PROFIT-TAKING LADDER
+                    </span>
+                    <span className="text-[10px] text-slate-400">R:R {previewToken.profit_ladder?.rr || '3.5 : 1'}</span>
+                  </div>
+
+                  {/* Entry */}
+                  <div className="flex items-center justify-between p-2 rounded bg-white/[0.03]">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">CURRENT ENTRY</span>
+                      <span className="font-bold text-white text-xs">{fmtPrice(previewToken.price_usd)}</span>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300">Market Price</span>
+                  </div>
+
+                  {/* TP 1: 2x Take Out Principal */}
+                  <div className="flex items-center justify-between p-2 rounded bg-emerald-500/10 border border-emerald-500/30">
+                    <div>
+                      <span className="text-emerald-400 font-bold text-[10px] flex items-center gap-1">
+                        🎯 TP 1: 2.0x (+100%)
+                      </span>
+                      <span className="font-bold text-white text-xs">{fmtPrice(previewToken.profit_ladder?.tp1 || previewToken.price_usd * 2)}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[9px] font-bold text-emerald-300 block">SELL 50%</span>
+                      <span className="text-[8px] text-slate-400">100% Principal Out</span>
+                    </div>
+                  </div>
+
+                  {/* TP 2: 3.5x Profit Harvest */}
+                  <div className="flex items-center justify-between p-2 rounded bg-cyan-500/10 border border-cyan-500/30">
+                    <div>
+                      <span className="text-cyan-400 font-bold text-[10px] flex items-center gap-1">
+                        🎯 TP 2: 3.5x (+250%)
+                      </span>
+                      <span className="font-bold text-white text-xs">{fmtPrice(previewToken.profit_ladder?.tp2 || previewToken.price_usd * 3.5)}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[9px] font-bold text-cyan-300 block">SELL 25%</span>
+                      <span className="text-[8px] text-slate-400">Bank Pure Profit</span>
+                    </div>
+                  </div>
+
+                  {/* TP 3: 5.0x Moonbag */}
+                  <div className="flex items-center justify-between p-2 rounded bg-purple-500/10 border border-purple-500/30">
+                    <div>
+                      <span className="text-purple-400 font-bold text-[10px] flex items-center gap-1">
+                        🚀 TP 3: 5.0x (+400%)
+                      </span>
+                      <span className="font-bold text-white text-xs">{fmtPrice(previewToken.profit_ladder?.tp3 || previewToken.price_usd * 5)}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[9px] font-bold text-purple-300 block">RIDE MOONBAG (25%)</span>
+                      <span className="text-[8px] text-slate-400">Trail 1h swing low</span>
+                    </div>
+                  </div>
+
+                  {/* Stop Loss Floor */}
+                  <div className="flex items-center justify-between p-2 rounded bg-neon-red/10 border border-neon-red/30">
+                    <div>
+                      <span className="text-neon-red font-bold text-[10px]">🛑 INVALIDATION FLOOR (-25%)</span>
+                      <span className="font-bold text-white text-xs">{fmtPrice(previewToken.profit_ladder?.sl || previewToken.price_usd * 0.75)}</span>
+                    </div>
+                    <span className="text-[9px] text-neon-red font-bold">Hard Cut</span>
+                  </div>
+                </div>
+
+                {/* Interactive Position Payout Simulator */}
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1">
+                      <DollarSign size={13} className="text-neon-green" /> PAYOUT SIMULATOR
+                    </span>
+                    <div className="flex gap-1">
+                      {[100, 250, 500, 1000].map((amt) => (
+                        <button
+                          key={amt}
+                          onClick={() => setSimPosition(amt)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                            simPosition === amt ? 'bg-neon-green text-black' : 'bg-white/10 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          ${amt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[10px] pt-1">
+                    <div className="p-1.5 rounded bg-black/40 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">AT 2.0x (TP 1)</span>
+                      <span className="font-bold text-emerald-400">+${simPosition.toFixed(0)}</span>
+                      <span className="text-[8px] text-slate-400 block">(Full principal returned)</span>
+                    </div>
+                    <div className="p-1.5 rounded bg-black/40 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">AT 3.5x (TP 2)</span>
+                      <span className="font-bold text-cyan-400">+${(simPosition * 0.875).toFixed(0)}</span>
+                      <span className="text-[8px] text-slate-400 block">(Net profit harvested)</span>
+                    </div>
+                    <div className="col-span-2 p-1.5 rounded bg-black/40 border border-white/5 flex items-center justify-between">
+                      <div>
+                        <span className="text-slate-500 block text-[9px]">TOTAL ESTIMATED VALUE AT TP3:</span>
+                        <span className="font-bold text-neon-green text-xs">${(simPosition * 3.25).toFixed(0)} Net Return</span>
+                      </div>
+                      <span className="text-[9px] px-2 py-1 rounded bg-neon-green/20 text-neon-green font-bold">
+                        +{((3.25 - 1) * 100).toFixed(0)}% ROI
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* ================= Strategic Alpha Playbook Modal ================= */}
+      {showPlaybook && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
+          <div className="glass-panel w-full max-w-3xl flex flex-col border border-purple-500/40 bg-[#070b14] shadow-[0_0_50px_rgba(168,85,247,0.25)] rounded-2xl overflow-hidden max-h-[90vh]">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/80">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/50 flex items-center justify-center text-purple-400">
+                  <Award size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-white font-mono flex items-center gap-2">
+                    CRYPTO NARRATIVE ALPHA PLAYBOOK
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-sans">
+                    Institutional Rules for Asymmetric On-Chain Breakouts & Zero-Loss Capital Protection
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowPlaybook(false)}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 flex flex-col gap-4 overflow-y-auto text-xs font-mono text-slate-300">
+              {/* Step 1 */}
+              <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/30">
+                <div className="flex items-center gap-2 font-bold text-sm text-purple-300 mb-1">
+                  <span>1. THE BARBELL PORTFOLIO RULE (PRESERVE PRINCIPAL)</span>
+                </div>
+                <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                  Never risk your entire balance on microcap tokens. Hold <strong>70%–80%</strong> of your portfolio in core reserves (SOL, BTC, USDC). Allocate only <strong>20%–30%</strong> into a diversified basket of 5 to 10 narrative runners (2% to 3% per coin). One 10x carry covers all small losses.
+                </p>
+              </div>
+
+              {/* Step 2 */}
+              <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+                <div className="flex items-center gap-2 font-bold text-sm text-emerald-300 mb-1">
+                  <span>2. THE 4-FILTER ENTRY CHECKLIST (NEVER BUY WITHOUT ALL 4)</span>
+                </div>
+                <ul className="text-[11px] text-slate-300 font-sans space-y-1.5 list-disc pl-4 mt-2">
+                  <li><strong>Velocity Multiplier $\ge 3.0x$:</strong> 24h volume must be at least 3× liquidity pool size (proves active capital turnover).</li>
+                  <li><strong>5-Minute Buy Pressure $\ge 60\%$:</strong> Buys must strongly outnumber sells on live ticks.</li>
+                  <li><strong>Safety Score $\ge 70$ & Audit Passed:</strong> Mint authority revoked, freeze disabled, LP burned or locked {'>'}90%.</li>
+                  <li><strong>Holder Distribution Clean:</strong> Check Bubblemaps — top 10 holders must own under 20%–25% of supply to avoid insider dumps.</li>
+                </ul>
+              </div>
+
+              {/* Step 3 */}
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                <div className="flex items-center gap-2 font-bold text-sm text-amber-300 mb-1">
+                  <span>3. THE ANTI-ROUNDTRIP PROFIT FORMULA (HOW TO NEVER LOSE GAINS)</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                  <div className="p-2 rounded bg-black/40 border border-white/10">
+                    <strong className="text-emerald-400 block text-xs">AT 2.0x (+100%)</strong>
+                    <span className="text-[11px] text-slate-300">Sell 50% immediately. Your original investment is back in USDC. Position is now 100% risk-free.</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-white/10">
+                    <strong className="text-cyan-400 block text-xs">AT 3.5x (+250%)</strong>
+                    <span className="text-[11px] text-slate-300">Sell 25% to lock in real cash profits.</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-white/10">
+                    <strong className="text-purple-400 block text-xs">AT 5.0x+ (MOONBAG)</strong>
+                    <span className="text-[11px] text-slate-300">Let the remaining 25% ride with a trailing stop under the 1-hour swing low.</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 4 */}
+              <div className="p-3.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+                <div className="flex items-center gap-2 font-bold text-sm text-cyan-300 mb-1">
+                  <span>4. NARRATIVE LIFECYCLES: ROTATE BEFORE THE DUMP</span>
+                </div>
+                <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                  Crypto narratives last 2 to 6 weeks. When a token reaches <strong>Phase 3 (Retail Euphoria / Tier-1 CEX Listings)</strong>, smart money sells to late buyers. Never "marry" a narrative coin. Take your profits and rotate into the next emerging sector shown in the Narrative Dominance Ribbon.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </section>
   );
 }
+

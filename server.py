@@ -1387,7 +1387,7 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
             )
             with urllib.request.urlopen(req_boost, timeout=3.5) as r:
                 boosts = json.loads(r.read().decode())
-            addrs = [b["tokenAddress"] for b in boosts[:30] if "tokenAddress" in b]
+            addrs = [b["tokenAddress"] for b in boosts[:35] if "tokenAddress" in b]
             if addrs:
                 req_pairs = urllib.request.Request(
                     f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:30])}",
@@ -1399,8 +1399,8 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
         except Exception as be:
             print(f"Gem radar boost error: {be}")
 
-        # 2. Fetch DexScreener search for fresh tokens, RWA, DePIN, and AI infrastructure
-        for q in ["solana", "base", "rwa", "depin"]:
+        # 2. Fetch DexScreener search across core narrative sectors: AI, DePIN, RWA, Memes & Ecosystems
+        for q in ["solana", "base", "agent", "ai16z", "virtual", "depin", "compute", "rwa", "ondo", "pump"]:
             try:
                 req_s = urllib.request.Request(
                     f"https://api.dexscreener.com/latest/dex/search?q={q}",
@@ -1462,14 +1462,16 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
             if sym in ["SOL", "WSOL", "WETH", "ETH", "USDC", "USDT", "DAI", "WBTC"]:
                 continue
 
-            # Category classification
+            # Granular Narrative Category Classification
             name_lower = f"{name} {sym}".lower()
-            if any(k in name_lower for k in ["rwa", "depin", "yield", "asset", "credit", "sensor", "mesh", "wifi", "storage", "compute", "cloud"]):
-                cat = "RWA / DePIN"
-            elif any(k in name_lower for k in ["ai", "agent", "bot", "gpt", "intel", "mind", "neural", "synth"]):
+            if any(k in name_lower for k in ["agent", "ai16z", "virtual", "eliza", "neural", "synth", "mind", "intel", "gpt", "bot", "swarm", "autonomous", "bitten"]):
                 cat = "AI AGENT"
+            elif any(k in name_lower for k in ["depin", "compute", "gpu", "render", "akash", "mesh", "wifi", "storage", "cloud", "sensor", "node", "grass", "iot"]):
+                cat = "DePIN / COMPUTE"
+            elif any(k in name_lower for k in ["rwa", "ondo", "credit", "treasury", "bond", "yield", "asset", "real world", "invoice", "gold"]):
+                cat = "RWA"
             elif any(k in name_lower for k in ["swap", "dex", "dao", "net", "chain", "layer", "bridge", "lend", "perp", "oracle"]):
-                cat = "UTILITY"
+                cat = "UTILITY / L2"
             else:
                 cat = "MEME"
 
@@ -1490,6 +1492,50 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
                 verdict = "NEUTRAL"
                 verdict_label = "NEUTRAL / CHOP"
 
+            # Narrative Lifecycle Stage Classification
+            if chg_1h < -20.0 or (buy_ratio < 40.0 and total_5m >= 5):
+                lifecycle_stage = {
+                    "stage": "RISK: DUMP / WASHOUT",
+                    "code": "RISK_DUMP",
+                    "label": "Phase 4: Distribution / Dump",
+                    "desc": "Heavy selling pressure or insider unlock. Avoid fresh longs."
+                }
+            elif chg_24h > 150.0 or (velocity >= 15.0 and (chg_5m < 0 or buy_ratio < 45.0)):
+                lifecycle_stage = {
+                    "stage": "PHASE 3: OVERHEATED / EXIT",
+                    "code": "PHASE_3",
+                    "label": "Phase 3: Parabolic Top (Exit Zone)",
+                    "desc": "Retail euphoria peak. Take profits into USDC/SOL now; do not initiate new positions."
+                }
+            elif velocity >= 3.0 and buy_ratio >= 60.0 and chg_1h >= 0:
+                lifecycle_stage = {
+                    "stage": "PHASE 2: VELOCITY BREAKOUT",
+                    "code": "PHASE_2",
+                    "label": "Phase 2: Momentum Ignition (Prime Buy)",
+                    "desc": "Volume exceeds liquidity with aggressive buy delta. Optimal asymmetric entry."
+                }
+            elif liq >= 20000 and buy_ratio >= 48.0 and age_hours >= 1.0:
+                lifecycle_stage = {
+                    "stage": "PHASE 1: ACCUMULATION",
+                    "code": "PHASE_1",
+                    "label": "Phase 1: Smart Money Accumulation",
+                    "desc": "Quiet on-chain accumulation with stable liquidity. Early bird stage."
+                }
+            else:
+                lifecycle_stage = {
+                    "stage": "NEUTRAL / CHOP",
+                    "code": "NEUTRAL",
+                    "label": "Neutral Consolidation",
+                    "desc": "Awaiting fresh volume or social catalyst."
+                }
+
+            # Automated Profit-Ladder Targets (The Anti-Roundtrip Formula)
+            current_price = float(p.get("priceUsd", 0) or 0)
+            tp1_price = round(current_price * 2.0, 8) if current_price > 0 else 0
+            tp2_price = round(current_price * 3.5, 8) if current_price > 0 else 0
+            tp3_price = round(current_price * 5.0, 8) if current_price > 0 else 0
+            sl_price = round(current_price * 0.75, 8) if current_price > 0 else 0
+
             # Audit and Bubblemaps links
             audit_url = f"https://rugcheck.xyz/tokens/{addr}" if p_chain == "solana" else f"https://tokensniffer.com/token/{p_chain}/{addr}"
             bubblemaps_url = f"https://app.bubblemaps.io/{p_chain}/token/{addr}"
@@ -1500,7 +1546,7 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
                 "address": addr,
                 "chain": p_chain,
                 "dex": p.get("dexId", "dex"),
-                "price_usd": float(p.get("priceUsd", 0) or 0),
+                "price_usd": current_price,
                 "liquidity": round(liq, 2),
                 "volume_24h": round(vol24, 2),
                 "volume_5m": round(vol5m, 2),
@@ -1518,14 +1564,65 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
                 "category": cat,
                 "verdict": verdict,
                 "verdict_label": verdict_label,
+                "lifecycle_stage": lifecycle_stage,
+                "profit_ladder": {
+                    "tp1": tp1_price,
+                    "tp2": tp2_price,
+                    "tp3": tp3_price,
+                    "sl": sl_price,
+                    "rr": "3.5 : 1"
+                },
                 "audit_url": audit_url,
                 "bubblemaps_url": bubblemaps_url
             })
 
         gems.sort(key=lambda x: (x["verdict"] in ["PARABOLIC", "PRIME_RUNNER"], x["velocity"] >= 3.0, x["volume_24h"]), reverse=True)
+
+        # 3. Calculate Narrative Sector Dominance Matrix (Share of Capital Flow)
+        cat_stats = {}
+        total_market_vol = sum(g["volume_24h"] for g in gems) or 1.0
+
+        for g in gems:
+            c = g["category"]
+            if c not in cat_stats:
+                cat_stats[c] = {
+                    "category": c,
+                    "volume_24h": 0.0,
+                    "count": 0,
+                    "velocities": [],
+                    "runners": 0,
+                    "top_token": g["symbol"]
+                }
+            cat_stats[c]["volume_24h"] += g["volume_24h"]
+            cat_stats[c]["count"] += 1
+            cat_stats[c]["velocities"].append(g["velocity"])
+            if g["verdict"] in ["PRIME_RUNNER", "PARABOLIC"]:
+                cat_stats[c]["runners"] += 1
+
+        narrative_dominance = []
+        for c, s in cat_stats.items():
+            vol_share = round((s["volume_24h"] / total_market_vol) * 100, 1)
+            avg_vel = round(sum(s["velocities"]) / len(s["velocities"]), 1) if s["velocities"] else 0.0
+            trend = "SURGING 🔥" if vol_share >= 35.0 else ("STRONG ⚡" if vol_share >= 20.0 else "ACCUMULATING 📈")
+            narrative_dominance.append({
+                "category": c,
+                "volume_share_pct": vol_share,
+                "volume_24h": round(s["volume_24h"], 2),
+                "gem_count": s["count"],
+                "avg_velocity": avg_vel,
+                "runner_count": s["runners"],
+                "top_token": s["top_token"],
+                "trend": trend
+            })
+
+        narrative_dominance.sort(key=lambda x: x["volume_share_pct"], reverse=True)
+        dominant_cat = narrative_dominance[0]["category"] if narrative_dominance else "MEME"
+
         return {
-            "gems": gems[:40],
+            "gems": gems[:50],
             "count": len(gems),
+            "narrative_dominance": narrative_dominance,
+            "dominant_narrative": dominant_cat,
             "high_velocity_count": len([g for g in gems if g["velocity"] >= 3.0]),
             "timestamp": datetime.now().strftime("%H:%M:%S")
         }
@@ -1535,7 +1632,7 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
         CACHE[cache_key] = {"time": time.time(), "data": res}
         return res
     except Exception as e:
-        return {"gems": [], "error": str(e), "count": 0}
+        return {"gems": [], "error": str(e), "count": 0, "narrative_dominance": []}
 
 # ------------------------------------------------ Forex Interbank Intelligence (24/5)
 @app.get("/api/forex/analytics")
