@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Activity, Target, BrainCircuit, AlertTriangle, Crosshair, Gauge, 
   Layers, Zap, Waves, ShieldAlert, RefreshCw, Search, 
-  Volume2, VolumeX, Landmark, BellRing, BarChart3
+  Volume2, VolumeX, Landmark, BellRing, BarChart3, Flame
 } from 'lucide-react';
 import { PanelTitle, Metric, GexLadder, Playbook, RegimeCard, OptionsChain, UnusualFlow, VolPanel } from './OptionsPanels';
 import { MultiChartGrid } from './MultiChartGrid';
@@ -342,6 +342,16 @@ function App() {
             <BarChart3 size={12} className="text-neon-green" />
             <span>STRATEGY LAB</span>
           </a>
+
+          {/* Quick jump to Crypto Narrative Radar */}
+          <a
+            href="#narrative-radar"
+            className="text-[10px] font-mono px-2.5 py-1 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:text-white hover:bg-amber-500/20 flex items-center gap-1.5 transition-all shadow-[0_0_10px_rgba(245,158,11,0.15)]"
+            title="Jump to Crypto Early Gem & Narrative Radar"
+          >
+            <Flame size={12} className="text-amber-400 animate-pulse" />
+            <span>🔥 NARRATIVE RADAR</span>
+          </a>
         </div>
         <div className="flex gap-4 font-mono text-sm">
           {['SPY', 'QQQ', 'AAPL', 'NVDA', 'TSLA'].map((t) => {
@@ -437,10 +447,19 @@ function App() {
           </select>
         )}
         {assetClass === 'CRYPTO' && (
-          <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
-            24/7 SPOT & PERP
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+              24/7 SPOT & PERP
+            </span>
+            <a
+              href="#narrative-radar"
+              className="text-[11px] font-mono px-2.5 py-1 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 hover:bg-amber-500/30 font-bold flex items-center gap-1.5 transition-all shadow-[0_0_10px_rgba(245,158,11,0.2)]"
+            >
+              <Flame size={12} className="text-amber-400" />
+              <span>EXPLORE NARRATIVE GEMS ↓</span>
+            </a>
+          </div>
         )}
         {assetClass === 'FOREX' && (
           <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 flex items-center gap-1.5">
@@ -837,7 +856,9 @@ function App() {
       </div>
 
       {/* ================= Early Gem & Meme Radar ================= */}
-      <EarlyGemRadar />
+      <div id="narrative-radar">
+        <EarlyGemRadar />
+      </div>
 
       {/* ================= Alpaca Live Positions & Portfolio Drawer ================= */}
       <PositionsDrawer alpacaAccount={alpaca} onSelectTicker={selectTicker} />
