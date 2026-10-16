@@ -169,9 +169,13 @@ def close_alpaca_position(symbol: str, qty: Optional[str] = None, creds: Optiona
     base = creds["base"].rstrip("/")
     headers = {"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
     
+    del_url = f"{base}/v2/positions/{symbol}"
+    if qty:
+        del_url = f"{del_url}?qty={qty}"
+
     try:
         del_req = urllib.request.Request(
-            f"{base}/v2/positions/{symbol}",
+            del_url,
             headers=headers,
             method="DELETE"
         )
@@ -3346,46 +3350,30 @@ async def _copilot_autonomous_worker():
                                     pass
                             continue
 
-                        # B) TAKE PROFIT TRIGGER: +40% for options, +4% for equities
-                        tp_thresh = 0.40 if is_opt else 0.04
-                        if plpc >= tp_thresh:
-                            print(f"[ALGO TAKE-PROFIT] Locking Profit for {psym} on Alpaca: PnL {plpc*100:.1f}% >= +{tp_thresh*100:.1f}% (+${pl_dollars:.2f})")
-                            closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
-                            if closed_ok:
-                                exit_ticket = {
-                                    "id": f"tp_{psym}_{int(time.time())}",
-                                    "timestamp": time.time(),
-                                    "time": datetime.now().strftime("%H:%M:%S"),
-                                    "symbol": psym,
-                                    "side": "TAKE_PROFIT_CLOSED",
-                                    "price": float(p.get("current_price") or 0.0),
-                                    "pnl_pct": f"{plpc*100:+.1f}%",
-                                    "pnl_dollars": round(pl_dollars, 2),
-                                    "reason": f"Target Profit Locked (+{plpc*100:.1f}%)",
-                                    "mode": "ALPACA_PAPER",
-                                    "status": "TAKE_PROFIT_CLOSED"
-                                }
-                                cop_state["last_trades"].insert(0, exit_ticket)
-                                cop_state["last_trades"] = cop_state["last_trades"][:50]
-                                save_copilot_state(cop_state)
-                                try:
-                                    from email_notifier import send_email
-                                    subj = f"🎯 TAKE PROFIT LOCKED: {psym} Closed at +{plpc*100:.1f}%"
-                                    html = f"<div style='background:#111;color:#fff;padding:16px;'><h3>🎯 Autonomous Take Profit Executed</h3><p>Symbol: {psym}</p><p>Gain: +{plpc*100:.1f}% (+${pl_dollars:.2f})</p><p>Profit secured into cash.</p></div>"
-                                    asyncio.create_task(asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com"))
-                                except Exception:
-                                    pass
-                            continue
+                        # -------------------------------------------------------------
+                        # PROFIT MAXIMIZATION ENGINE: Multi-Stage Scaling & Trailing Runner
+                        # Rule 1: Never let a winner turn into a loss (Breakeven at +15%).
+                        # Rule 2: Trim 50% at +35% to bank cash profit immediately.
+                        # Rule 3: Never choke a runner at a fixed cap; let high-water mark trail it!
+                        # -------------------------------------------------------------
+                        hwm_key = f"hwm_{psym}"
+                        prev_hwm = float(cop_state.get(hwm_key, 0.0))
+                        if plpc > prev_hwm:
+                            cop_state[hwm_key] = plpc
+                            prev_hwm = plpc
+                            save_copilot_state(cop_state)
+                            
+                        pos_qty_num = abs(float(qty or 1.0))
+                        trimmed_key = f"trimmed_{psym}"
+                        is_trimmed = bool(cop_state.get(trimmed_key, False))
 
-                        # C) BREAKEVEN RATCHET: Peak >= +15%, pull back <= +2%
-                        if r_active:
-                            hwm_key = f"hwm_{psym}"
-                            prev_hwm = float(cop_state.get(hwm_key, 0.0))
-                            if plpc > prev_hwm:
-                                cop_state[hwm_key] = plpc
-                                save_copilot_state(cop_state)
-                            elif prev_hwm >= 0.15 and plpc <= 0.02:
-                                print(f"[ALGO RATCHET] Breakeven Exit for {psym}: Peak was +{prev_hwm*100:.1f}%, now {plpc*100:.1f}%")
+                        trim_thresh = 0.35 if is_opt else 0.035
+                        be_thresh = 0.15 if is_opt else 0.015
+
+                        # 1. Stage 1: Breakeven Defense (Active if peaked >= +15%, but not yet at Stage 2)
+                        if r_active and prev_hwm >= be_thresh and prev_hwm < trim_thresh:
+                            if plpc <= 0.02:
+                                print(f"[ALGO RATCHET] Breakeven Exit for {psym}: Peak was +{prev_hwm*100:.1f}%, closed at +{plpc*100:.1f}%")
                                 closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
                                 if closed_ok:
                                     cop_state.pop(hwm_key, None)
@@ -3405,6 +3393,83 @@ async def _copilot_autonomous_worker():
                                     cop_state["last_trades"].insert(0, exit_ticket)
                                     cop_state["last_trades"] = cop_state["last_trades"][:50]
                                     save_copilot_state(cop_state)
+                                continue
+
+                        # 2. Stage 2: Scale Trim 50% at +35% (if holding 2+ contracts and not yet trimmed)
+                        if plpc >= trim_thresh and pos_qty_num >= 2 and not is_trimmed:
+                            trim_qty = int(math.ceil(pos_qty_num / 2))
+                            print(f"[ALGO PROFIT SCALING] Trimming 50% ({trim_qty}/{int(pos_qty_num)}) on {psym} at +{plpc*100:.1f}% (+${pl_dollars:.2f})")
+                            trim_ok = close_alpaca_position(psym, qty=str(trim_qty), creds=alp_creds)
+                            if trim_ok:
+                                cop_state[trimmed_key] = True
+                                trim_ticket = {
+                                    "id": f"trim_{psym}_{int(time.time())}",
+                                    "timestamp": time.time(),
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "symbol": psym,
+                                    "side": "SCALE_TRIM_50%",
+                                    "qty_closed": trim_qty,
+                                    "qty_remaining": int(pos_qty_num - trim_qty),
+                                    "price": float(p.get("current_price") or 0.0),
+                                    "pnl_pct": f"{plpc*100:+.1f}%",
+                                    "reason": f"Multi-Stage Scale: Banked 50% Cash at +{plpc*100:.1f}%, letting runner ride",
+                                    "mode": "ALPACA_PAPER",
+                                    "status": "PARTIAL_TRIM_FILLED"
+                                }
+                                cop_state["last_trades"].insert(0, trim_ticket)
+                                cop_state["last_trades"] = cop_state["last_trades"][:50]
+                                save_copilot_state(cop_state)
+                                try:
+                                    from email_notifier import send_email
+                                    subj = f"💰 SCALED 50% PROFIT: {psym} Trimmed at +{plpc*100:.1f}%"
+                                    html = f"<div style='background:#111;color:#fff;padding:16px;'><h3>💰 50% Profit Trim Executed</h3><p>Symbol: {psym}</p><p>Closed: {trim_qty} contracts at +{plpc*100:.1f}%</p><p>Remaining {int(pos_qty_num - trim_qty)} contracts trailing risk-free as runner.</p></div>"
+                                    asyncio.create_task(asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com"))
+                                except Exception:
+                                    pass
+
+                        # 3. Stage 3: Parabolic High-Water Mark Trailing Stop on Runner (or single contract past +35%)
+                        if prev_hwm >= trim_thresh:
+                            # Dynamic trailing buffer based on how high the runner has surged
+                            if prev_hwm >= 1.00:
+                                # Multi-bagger (> +100% gain): lock trailing stop 22% below peak
+                                trailing_floor = prev_hwm - 0.22
+                            elif prev_hwm >= 0.60:
+                                # High momentum (+60% to +100% gain): lock trailing stop 18% below peak
+                                trailing_floor = prev_hwm - 0.18
+                            else:
+                                # Mid momentum (+35% to +60% gain): lock trailing stop 14% below peak (min +20% floor)
+                                trailing_floor = max(0.20, prev_hwm - 0.14)
+
+                            if plpc <= trailing_floor:
+                                print(f"[ALGO RUNNER TRAILING EXIT] Closing Runner {psym}: Peak was +{prev_hwm*100:.1f}%, closed at +{plpc*100:.1f}% (Floor: +{trailing_floor*100:.1f}%)")
+                                closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
+                                if closed_ok:
+                                    cop_state.pop(hwm_key, None)
+                                    cop_state.pop(trimmed_key, None)
+                                    exit_ticket = {
+                                        "id": f"runner_{psym}_{int(time.time())}",
+                                        "timestamp": time.time(),
+                                        "time": datetime.now().strftime("%H:%M:%S"),
+                                        "symbol": psym,
+                                        "side": "RUNNER_PROFIT_CLOSED",
+                                        "price": float(p.get("current_price") or 0.0),
+                                        "pnl_pct": f"{plpc*100:+.1f}%",
+                                        "pnl_dollars": round(pl_dollars, 2),
+                                        "reason": f"High-Water Runner Locked (+{plpc*100:.1f}% vs Peak +{prev_hwm*100:.1f}%)",
+                                        "mode": "ALPACA_PAPER",
+                                        "status": "RUNNER_PROFIT_CLOSED"
+                                    }
+                                    cop_state["last_trades"].insert(0, exit_ticket)
+                                    cop_state["last_trades"] = cop_state["last_trades"][:50]
+                                    save_copilot_state(cop_state)
+                                    try:
+                                        from email_notifier import send_email
+                                        subj = f"🚀 RUNNER PROFIT LOCKED: {psym} Closed at +{plpc*100:.1f}% (Peak +{prev_hwm*100:.1f}%)"
+                                        html = f"<div style='background:#111;color:#fff;padding:16px;'><h3>🚀 Runner Profit Secured</h3><p>Symbol: {psym}</p><p>Closed at: +{plpc*100:.1f}% (+${pl_dollars:.2f})</p><p>Peak reached was +{prev_hwm*100:.1f}%.</p></div>"
+                                        asyncio.create_task(asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com"))
+                                    except Exception:
+                                        pass
+                                continue
             except Exception as alp_bracket_err:
                 print(f"[ALGO BRACKET MONITOR] Error: {alp_bracket_err}")
 

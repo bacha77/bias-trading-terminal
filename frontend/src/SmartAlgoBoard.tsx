@@ -384,9 +384,9 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
       console.error(e);
     }
     if (next) {
-      speakInstitutionalVoice('Breakeven Ratchet armed. +20% moves stop to breakeven.');
+      speakInstitutionalVoice('Multi-Stage Scaling armed: Trim 50% at +35%, and trail remaining runner.');
     } else {
-      speakInstitutionalVoice('Breakeven Ratchet disarmed.');
+      speakInstitutionalVoice('Multi-Stage Scaling disarmed.');
     }
   };
 
@@ -1022,8 +1022,8 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
               <div className="flex items-center gap-1.5">
                 <ShieldCheck size={12} className={breakevenRatchetEnabled ? 'text-purple-400' : 'text-slate-500'} />
                 <div>
-                  <strong className="block text-[8px] uppercase tracking-wider">Breakeven Ratchet</strong>
-                  <span className="text-[7.5px] text-slate-400 block">+20% → Breakeven | +30% → +15% Lock</span>
+                  <strong className="block text-[8px] uppercase tracking-wider">Multi-Stage Scaling &amp; Runner Trail</strong>
+                  <span className="text-[7.5px] text-slate-400 block">+15% → Breakeven | +35% → Trim 50% | High-Water Trail</span>
                 </div>
               </div>
               <span className={`text-[8px] px-1 py-0.2 rounded font-bold uppercase ${
