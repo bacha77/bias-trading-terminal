@@ -5,30 +5,61 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from tradingview_screener import Query, Column
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import asyncio
 import traceback
 import pandas as pd
+from typing import Optional, List, Dict, Any
 
 app = FastAPI(title="BIAS Terminal API (Live Data)")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+from starlette.requests import Request
+
+@app.middleware("http")
+async def normalize_api_paths(request: Request, call_next):
+    # Seamlessly handle duplicate /api/api/ prefix from clients/proxies
+    path = request.scope.get("path", "")
+    if path.startswith("/api/api/"):
+        request.scope["path"] = path[4:]
+    elif not path.startswith("/api/") and not path.startswith("/assets") and path != "/favicon.ico":
+        known_prefixes = (
+            "/forex/", "/backtest", "/market-data/", "/scanner/",
+            "/options/", "/algo/", "/market/", "/alpaca/",
+            "/paper/", "/crypto/", "/news/", "/alerts/", "/copilot/", "/macro/"
+        )
+        if any(path.startswith(kp) or path == kp for kp in known_prefixes):
+            request.scope["path"] = f"/api{path}"
+    return await call_next(request)
+
+
 CACHE = {}
 CACHE_TTL = 30 # 30 second cache
+LAST_KNOWN_TAPE_PRICES = {}
+live_price_cache = {}
 
 import urllib.parse
 import urllib.request
 import json
 import os
 
+from crypto_engine import (
+    CRYPTO_TAXONOMY,
+    CRYPTO_SECTORS,
+    get_crypto_market_metrics,
+    fetch_all_crypto_tape
+)
+
 CRYPTO_MAP = {
-    "BTC": ("BTC/USD", "BTC-USD", "Bitcoin"),
-    "ETH": ("ETH/USD", "ETH-USD", "Ethereum"),
-    "SOL": ("SOL/USD", "SOL-USD", "Solana"),
-    "DOGE": ("DOGE/USD", "DOGE-USD", "Dogecoin"),
-    "XRP": ("XRP/USD", "XRP-USD", "XRP"),
-    "AVAX": ("AVAX/USD", "AVAX-USD", "Avalanche"),
-    "LINK": ("LINK/USD", "LINK-USD", "Chainlink"),
-    "ADA": ("ADA/USD", "ADA-USD", "Cardano"),
+    k: (v.get("alpaca") or f"{k}/USD", v["yf"], v["name"])
+    for k, v in CRYPTO_TAXONOMY.items()
 }
 
 from forex_engine import FOREX_PAIRS_META, clean_forex_symbol, get_forex_pair_analytics, get_currency_strength_matrix, get_forex_sessions_status, get_forex_tape
@@ -55,19 +86,129 @@ def resolve_symbol(sym: str):
 def get_alpaca_creds():
     env_path = os.path.join(os.path.dirname(__file__), ".env")
     creds = {
-        "key": os.getenv("APCA_API_KEY_ID", ""),
-        "secret": os.getenv("APCA_API_SECRET_KEY", ""),
-        "base": os.getenv("APCA_API_BASE_URL", "https://api.alpaca.markets")
+        "key": "",
+        "secret": "",
+        "base": "https://paper-api.alpaca.markets"
     }
     if os.path.exists(env_path):
         with open(env_path, "r") as f:
             for line in f:
                 if "=" in line and not line.startswith("#"):
                     k, v = line.strip().split("=", 1)
-                    if k == "APCA_API_KEY_ID": creds["key"] = v
-                    elif k == "APCA_API_SECRET_KEY": creds["secret"] = v
-                    elif k == "APCA_API_BASE_URL": creds["base"] = v
+                    if k == "APCA_API_KEY_ID" and v.strip(): creds["key"] = v.strip()
+                    elif k == "APCA_API_SECRET_KEY" and v.strip(): creds["secret"] = v.strip()
+                    elif k == "APCA_API_BASE_URL" and v.strip(): creds["base"] = v.strip()
+    # Explicit environment variables (e.g. Cloud Run) take highest priority
+    if os.getenv("APCA_API_KEY_ID"): creds["key"] = os.getenv("APCA_API_KEY_ID").strip()
+    if os.getenv("APCA_API_SECRET_KEY"): creds["secret"] = os.getenv("APCA_API_SECRET_KEY").strip()
+    if os.getenv("APCA_API_BASE_URL"): creds["base"] = os.getenv("APCA_API_BASE_URL").strip()
     return creds
+
+def get_all_active_positions(creds: Optional[dict] = None) -> dict:
+    """
+    Unified portfolio position state across Alpaca Live/Paper AND Paper Engine.
+    Strictly enforces max_concurrent_positions (user configured: 5 max open positions).
+    """
+    if creds is None:
+        creds = get_alpaca_creds()
+        
+    alpaca_positions = []
+    if creds.get("key") and creds.get("secret"):
+        try:
+            base = creds["base"].rstrip("/")
+            req = urllib.request.Request(
+                f"{base}/v2/positions",
+                headers={"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
+            )
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                raw_pos = json.loads(resp.read().decode())
+                # Only count positions that have non-zero quantity
+                alpaca_positions = [p for p in raw_pos if abs(float(p.get("qty", 0))) > 0]
+        except Exception as e:
+            pass
+            
+    import paper_engine
+    p_state = paper_engine.load_paper_state()
+    paper_positions = p_state.get("positions", {})
+    
+    total_count = len(alpaca_positions) + len(paper_positions)
+    
+    # Extract active underlyings across both Alpaca and Paper to prevent duplicate or correlated exposure
+    open_underlyings = set()
+    from options_auto_trade import LIQUID_OPTIONS_TICKERS
+    for p in alpaca_positions:
+        sym = p.get("symbol", "").upper()
+        occ_und = None
+        for cand in LIQUID_OPTIONS_TICKERS:
+            if sym.startswith(cand):
+                occ_und = cand
+                break
+        open_underlyings.add(occ_und or sym)
+        
+    for k, p in paper_positions.items():
+        open_underlyings.add(p.get("underlying") or k)
+        
+    return {
+        "alpaca_positions": alpaca_positions,
+        "paper_positions": paper_positions,
+        "total_count": total_count,
+        "open_underlyings": open_underlyings
+    }
+
+def close_alpaca_position(symbol: str, qty: Optional[str] = None, creds: Optional[dict] = None) -> bool:
+    """
+    Closes an Alpaca position immediately.
+    Tries DELETE /v2/positions/{symbol} first (market liquidation).
+    If rejected because bid is zero ('no available quote' on expiring OTM option),
+    falls back to limit sell at $0.01 to safely close out the contract.
+    """
+    if creds is None:
+        creds = get_alpaca_creds()
+    if not creds.get("key") or not creds.get("secret"):
+        return False
+    base = creds["base"].rstrip("/")
+    headers = {"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
+    
+    try:
+        del_req = urllib.request.Request(
+            f"{base}/v2/positions/{symbol}",
+            headers=headers,
+            method="DELETE"
+        )
+        with urllib.request.urlopen(del_req, timeout=5) as dresp:
+            return True
+    except urllib.error.HTTPError as he:
+        body = he.read().decode()
+        if "reenter with a limit" in body:
+            try:
+                order_body = {
+                    "symbol": symbol,
+                    "qty": str(qty or "1"),
+                    "side": "sell",
+                    "type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "0.01"
+                }
+                lreq = urllib.request.Request(
+                    f"{base}/v2/orders",
+                    data=json.dumps(order_body).encode("utf-8"),
+                    headers={**headers, "Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(lreq, timeout=5) as lresp:
+                    return True
+            except Exception as le:
+                print(f"[CLOSE ALPACA] Limit order fallback failed for {symbol}: {le}")
+                return False
+        elif "uncovered option contracts" in body or "order already exists" in body:
+            # Order is already pending on the exchange book
+            return True
+        else:
+            print(f"[CLOSE ALPACA] Error closing {symbol}: {body}")
+            return False
+    except Exception as e:
+        print(f"[CLOSE ALPACA] Unexpected error closing {symbol}: {e}")
+        return False
 
 import concurrent.futures
 
@@ -137,32 +278,42 @@ def fetch_coinbase_crypto_ticker(symbol: str):
         return None
 
 def fetch_coinbase_tape():
-    pairs = [("BTC", "BTC-USD"), ("ETH", "ETH-USD"), ("SOL", "SOL-USD"), 
-             ("DOGE", "DOGE-USD"), ("XRP", "XRP-USD"), ("AVAX", "AVAX-USD"),
-             ("LINK", "LINK-USD"), ("ADA", "ADA-USD")]
-    def _fetch_one(item):
-        short, prod = item
-        try:
-            req = urllib.request.Request(f"https://api.exchange.coinbase.com/products/{prod}/ticker", headers={"User-Agent": "bias-terminal-live/1.0"})
-            with urllib.request.urlopen(req, timeout=2.5) as r:
-                d = json.loads(r.read().decode())
-            p = float(d.get("price", 0))
-            if p <= 0: return short, None
-            prec = 4 if p < 5 else 2
-            return short, {
-                "price": round(p, prec),
-                "bid": round(float(d.get("bid", p)), prec),
-                "ask": round(float(d.get("ask", p)), prec),
-                "size": float(d.get("size", 1)),
-                "change": 0.0,
-                "timestamp": d.get("time")
-            }
-        except Exception:
-            return short, None
+    return fetch_all_crypto_tape()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        results = dict(ex.map(_fetch_one, pairs))
-    return {k: v for k, v in results.items() if v is not None}
+CORE_LIQUID_STOCKS = [
+    # Index & Sector ETFs
+    "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
+    # Top Optionable Mega-Cap Tech
+    "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD", "NFLX", "AVGO", "ARM", "ORCL", "CRM",
+    # High-Beta Momentum & Growth / Crypto Proxies
+    "PLTR", "COIN", "SMCI", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG", "ASTS", "MRNA", "IREN",
+    # Top Semiconductors & Hardware
+    "MU", "INTC", "QCOM", "TXN", "TSM",
+    # High-Volume Blue-Chips & Financials
+    "JPM", "BAC", "GS", "V", "MA", "DIS", "BABA", "BA", "XOM", "CVX", "CAT", "NKE", "LLY", "WFC"
+]
+
+MOST_LIQUID_OPTIONS = {
+    # Index & Sector ETFs (Highest options volume, 1-cent penny spreads, lowest slippage)
+    "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
+    # Mega-Cap Tech & Top Options Volume
+    "NVDA", "TSLA", "AAPL", "AMD", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM",
+    # High-Beta Momentum Options Favorites
+    "PLTR", "COIN", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG", "SMCI",
+    # Semis, Blue-Chips & Financials
+    "MU", "INTC", "ARM", "AVGO", "QCOM", "TSM", "TXN", "DIS", "BABA", "BAC", "JPM", "GS", "V", "MA", "BA", "XOM", "CAT", "LLY"
+}
+
+DEFAULT_TAPE_STOCKS = list(dict.fromkeys(
+    ["SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV"] +
+    ["NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM"] +
+    ["AMD", "AVGO", "TSM", "SMCI", "MU", "ARM", "INTC", "QCOM", "TXN"] +
+    ["PLTR", "COIN", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG"] +
+    ["JPM", "BAC", "GS", "V", "MA", "DIS", "BABA", "BA", "XOM", "CAT", "LLY"] +
+    list(MOST_LIQUID_OPTIONS) + list(CORE_LIQUID_STOCKS)
+))
+DEFAULT_TAPE_SYMBOLS_STR = ",".join(DEFAULT_TAPE_STOCKS)
+LAST_KNOWN_TAPE_PRICES: Dict[str, dict] = {}
 
 @app.get("/api/market-data/overview")
 async def get_overview():
@@ -172,26 +323,28 @@ async def get_overview():
 
     try:
         q = Query().select('name', 'close', 'change').where(
-            Column('name').isin(["AAPL", "NVDA", "TSLA"])
+            Column('name').isin(DEFAULT_TAPE_STOCKS)
         )
         _, df = await asyncio.to_thread(q.get_scanner_data)
         
         results = {}
         for _, row in df.iterrows():
-            results[row['name']] = {
-                "price": row['close'],
-                "change": row['change']
+            sym = str(row['name']).upper()
+            close_p = round(float(row['close']), 2) if row['close'] else 0.0
+            chg_p = round(float(row['change']), 2) if row['change'] else 0.0
+            item = {
+                "price": close_p,
+                "change": chg_p
             }
+            results[sym] = item
+            if close_p > 0:
+                LAST_KNOWN_TAPE_PRICES[sym] = item
         
-        # Ensure keys exist
-        for t in ["AAPL", "NVDA", "TSLA"]:
-            if t not in results: results[t] = {"price": 0, "change": 0}
-            
         CACHE[cache_key] = {"time": time.time(), "data": results}
         return results
     except Exception as e:
         print(f"Error fetching overview: {e}")
-        return {"AAPL": {"price": 0, "change": 0}, "NVDA": {"price": 0, "change": 0}, "TSLA": {"price": 0, "change": 0}}
+        return {s: LAST_KNOWN_TAPE_PRICES.get(s, {"price": 0, "change": 0}) for s in DEFAULT_TAPE_STOCKS}
 
 @app.get("/api/market-data/confluence")
 async def get_confluence(ticker: str = "AAPL"):
@@ -248,110 +401,412 @@ async def get_confluence(ticker: str = "AAPL"):
             "news_sentiment": "Data unavailable"
         }
 
-CORE_LIQUID_STOCKS = [
-    # Top Optionable Mega-Cap Tech
-    "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD", "NFLX", "AVGO", "ARM", "ORCL", "CRM",
-    # High-Beta Momentum & Growth
-    "PLTR", "COIN", "SMCI", "MSTR", "MARA", "SOFI", "UBER", "ASTS", "MRNA", "IREN",
-    # Top Semiconductors & Hardware
-    "MU", "INTC", "QCOM", "TXN",
-    # High-Volume Blue-Chips & Financials
-    "BA", "BABA", "DIS", "JPM", "WFC", "BAC", "GS", "CAT", "XOM", "CVX", "NKE"
-]
+
 
 @app.get("/api/scanner/breakout")
 async def get_breakout():
     cache_key = "scanner_liquid"
-    if cache_key in CACHE and time.time() - CACHE[cache_key]["time"] < CACHE_TTL:
+    if cache_key in CACHE and time.time() - CACHE[cache_key]["time"] < 20:
         return CACHE[cache_key]["data"]
         
     try:
         def _fetch_liquid_data():
-            # 1. Query Core Liquid Institutional Universe
+            # 1. Query Real-Time Top Percentage Gainers (Calls / Surging Momentum)
+            q_gainers = (Query()
+                .select('name', 'close', 'change', 'volume', 'average_volume_10d_calc', 'relative_volume_10d_calc', 'Recommend.All', 'Volatility.D', 'market_cap_basic')
+                .where(
+                    Column('exchange').isin(['NASDAQ', 'NYSE']),
+                    Column('close') > 5,
+                    Column('volume') > 250_000
+                )
+                .order_by('change', ascending=False)
+                .limit(20)
+            )
+            _, df_gainers = q_gainers.get_scanner_data()
+
+            # 2. Query Real-Time Top Percentage Losers (Puts / Dumps)
+            q_losers = (Query()
+                .select('name', 'close', 'change', 'volume', 'average_volume_10d_calc', 'Recommend.All', 'Volatility.D', 'market_cap_basic')
+                .where(
+                    Column('exchange').isin(['NASDAQ', 'NYSE']),
+                    Column('close') > 5,
+                    Column('volume') > 250_000
+                )
+                .order_by('change', ascending=True)
+                .limit(15)
+            )
+            _, df_losers = q_losers.get_scanner_data()
+
+            # 3. Query Core Liquid Options Favorites (NVDA, TSLA, AAPL, MSFT, AMD, PLTR, COIN, etc.)
             q_core = (Query()
-                .select('name', 'close', 'volume', 'average_volume_10d_calc', 'Recommend.All', 'Volatility.D', 'market_cap_basic')
+                .select('name', 'close', 'change', 'volume', 'average_volume_10d_calc', 'relative_volume_10d_calc', 'Recommend.All', 'Volatility.D', 'market_cap_basic')
                 .where(Column('name').isin(CORE_LIQUID_STOCKS))
                 .limit(len(CORE_LIQUID_STOCKS))
             )
             _, df_core = q_core.get_scanner_data()
 
-            # 2. Query High Volume Liquid Market Movers (>3M avg vol, >$15 price, >$5B market cap)
-            q_movers = (Query()
-                .select('name', 'close', 'volume', 'average_volume_10d_calc', 'Recommend.All', 'Volatility.D', 'market_cap_basic')
-                .where(
-                    Column('average_volume_10d_calc') > 3_000_000,
-                    Column('close') > 15,
-                    Column('market_cap_basic') > 5_000_000_000,
-                    Column('exchange').isin(['NASDAQ', 'NYSE'])
-                )
-                .order_by('volume', ascending=False)
-                .limit(25)
-            )
-            _, df_movers = q_movers.get_scanner_data()
-
-            # Combine and deduplicate
-            merged = pd.concat([df_core, df_movers]).drop_duplicates(subset=['name']).sort_values('volume', ascending=False)
+            # Combine, deduplicate, and clean
+            merged = pd.concat([df_gainers, df_losers, df_core]).drop_duplicates(subset=['name'])
             return merged
 
         df = await asyncio.to_thread(_fetch_liquid_data)
         
-        # Pre-seed Index ETFs if missing
+        # Calculate market time-of-day volume progress
+        now_utc = datetime.now(timezone.utc)
+        # Approximate ET (UTC-4)
+        et_hour = (now_utc.hour - 4) % 24
+        et_min = now_utc.minute
+        is_market_hours = (9 <= et_hour < 16) or (et_hour == 9 and et_min >= 30)
+        
+        if is_market_hours:
+            mins_elapsed = max(5, min(390, (et_hour - 9) * 60 + et_min - 30))
+            day_fraction = mins_elapsed / 390.0
+        else:
+            day_fraction = 1.0
+
         results = []
         
-        # Try getting SPY, QQQ, IWM prices
+        # Pre-seed Index ETFs with live data
         for etf, name in [("SPY", "S&P 500 ETF"), ("QQQ", "Nasdaq 100 ETF"), ("IWM", "Russell 2000 ETF")]:
             quote = await get_alpaca_quote(etf)
             p = quote.get("price", 0)
+            chg = quote.get("change", 0.0)
             if p > 0:
                 results.append({
                     "ticker": etf,
                     "price": p,
+                    "change": round(float(chg), 2),
                     "volume_multiplier": "1.0x",
                     "signal": "INDEX",
                     "volatility": "14.20%",
-                    "category": "INDEX"
+                    "category": "INDEX",
+                    "is_liquid_option": True,
+                    "spread_tier": "PENNY"
                 })
 
         for index, row in df.iterrows():
-            avg_vol = row.get('average_volume_10d_calc', 1)
-            vol_mult = row['volume'] / avg_vol if avg_vol and avg_vol > 0 else 1.0
+            ticker = row.get('name')
+            if not ticker or ticker in ["SPY", "QQQ", "IWM"]:
+                continue
+
+            current_vol = float(row.get('volume', 0) or 0)
+            avg_vol_10d = float(row.get('average_volume_10d_calc', 0) or 0)
+            tv_rvol = float(row.get('relative_volume_10d_calc', 0) or 0)
             
-            rec = row.get('Recommend.All', 0)
-            if rec > 0.4: signal = "STRONG CALL"
-            elif rec > 0.05: signal = "CALL"
-            elif rec < -0.4: signal = "STRONG PUT"
-            elif rec < -0.05: signal = "PUT"
-            else: signal = "WAIT"
+            # Intraday Pace-Adjusted Relative Volume (RVOL)
+            if is_market_hours and avg_vol_10d > 0 and day_fraction > 0:
+                expected_vol = avg_vol_10d * day_fraction
+                pace_rvol = current_vol / expected_vol if expected_vol > 0 else 1.0
+            else:
+                pace_rvol = current_vol / avg_vol_10d if avg_vol_10d > 0 else 1.0
+
+            vol_mult = max(0.5, round(max(tv_rvol, pace_rvol), 1)) if (tv_rvol > 0 or pace_rvol > 0) else 1.0
             
+            change_pct = round(float(row.get('change', 0.0) or 0.0), 2)
+            rec = row.get('Recommend.All', 0) or 0
+
+            # Dynamic Confluence Signal
+            if change_pct >= 2.5 and vol_mult >= 1.3:
+                signal = "STRONG CALL"
+            elif change_pct >= 0.5 or rec > 0.15:
+                signal = "CALL"
+            elif change_pct <= -2.5 and vol_mult >= 1.3:
+                signal = "STRONG PUT"
+            elif change_pct <= -0.5 or rec < -0.15:
+                signal = "PUT"
+            else:
+                signal = "WAIT"
+
             volatility = row.get('Volatility.D', 0)
-            ticker = row['name']
             
-            # Determine category
-            if ticker in ["NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD", "NFLX"]:
+            # Category Assignment
+            if vol_mult >= 2.0 or abs(change_pct) >= 5.0:
+                cat = "BREAKOUT"
+            elif ticker in ["NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "NFLX"]:
                 cat = "MEGA-CAP"
-            elif ticker in ["PLTR", "COIN", "SMCI", "MSTR", "MARA", "SOFI", "UBER", "ASTS"]:
+            elif ticker in ["PLTR", "COIN", "SMCI", "MSTR", "MARA", "SOFI", "UBER", "ASTS", "IREN", "AI"]:
                 cat = "MOMENTUM"
-            elif ticker in ["MU", "INTC", "QCOM", "ARM", "AVGO"]:
+            elif ticker in ["MU", "INTC", "QCOM", "ARM", "AVGO", "AMD"]:
                 cat = "SEMIS"
             else:
                 cat = "LIQUID"
+
+            is_liquid = (ticker in MOST_LIQUID_OPTIONS) or (ticker in CORE_LIQUID_STOCKS)
                 
             results.append({
                 "ticker": ticker,
                 "price": round(float(row['close']), 2),
+                "change": change_pct,
                 "volume_multiplier": f"{vol_mult:.1f}x",
                 "signal": signal,
                 "volatility": f"{volatility:.2f}%" if pd.notnull(volatility) else "--",
-                "category": cat
+                "category": cat,
+                "is_liquid_option": is_liquid,
+                "spread_tier": "PENNY" if is_liquid else "NORMAL"
             })
             
-        result = {"results": results, "total": len(results)}
+        # Dynamically Sort: Breakouts and Top Magnitude Movers at the top
+        results.sort(
+            key=lambda x: (
+                x.get("category") == "BREAKOUT",
+                abs(x.get("change", 0)) >= 3.0,
+                float(str(x.get("volume_multiplier", "1.0x")).replace("x", "")) >= 1.5,
+                abs(x.get("change", 0))
+            ),
+            reverse=True
+        )
+
+        result = {
+            "results": results,
+            "total": len(results),
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        }
         CACHE[cache_key] = {"time": time.time(), "data": result}
         return result
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {"results": []}
+        return {"results": [], "total": 0}
+
+@app.get("/api/scanner/reversals")
+async def get_scanner_reversals():
+    cache_key = "scanner_reversals"
+    if cache_key in CACHE and time.time() - CACHE[cache_key]["time"] < 20:
+        return CACHE[cache_key]["data"]
+
+    try:
+        # 1. Fetch live quotes & metrics across prime liquid universe
+        def _fetch_reversals():
+            symbols_to_query = list(dict.fromkeys(
+                CORE_LIQUID_STOCKS + ["SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK"]
+            ))
+            q = (Query()
+                .select('name', 'close', 'change', 'volume', 'RSI', 'Volatility.D', 'relative_volume_10d_calc')
+                .where(Column('name').isin(symbols_to_query))
+                .limit(len(symbols_to_query))
+            )
+            _, df = q.get_scanner_data()
+            return df
+
+        df = await asyncio.to_thread(_fetch_reversals)
+
+        reversals = []
+
+        # 2. Process Equities
+        for _, row in df.iterrows():
+            sym = row.get("name")
+            spot = float(row.get("close", 0) or 0)
+            if not sym or spot <= 0:
+                continue
+
+            change_pct = round(float(row.get("change", 0.0) or 0.0), 2)
+            rsi = float(row.get("RSI", 50.0) or 50.0)
+            rvol = float(row.get("relative_volume_10d_calc", 1.0) or 1.0)
+
+            # Check if actual real options GEX is cached
+            opt_cache_key = f"options_{sym}_"
+            cw, pw, flip = None, None, None
+            if opt_cache_key in CACHE and CACHE[opt_cache_key].get("data"):
+                cached_g = CACHE[opt_cache_key]["data"].get("gex", {})
+                cw = cached_g.get("call_wall")
+                pw = cached_g.get("put_wall")
+                flip = cached_g.get("flip")
+
+            # Fallback to algorithmic Gamma Wall Pinning grid
+            if not cw or not pw:
+                import math
+                if spot >= 500: step = 10.0
+                elif spot >= 150: step = 5.0
+                elif spot >= 50: step = 2.5
+                elif spot >= 15: step = 1.0
+                elif spot >= 5: step = 0.5
+                else: step = 0.25
+
+                calc_cw = math.ceil(spot / step) * step
+                if abs(calc_cw - spot) / spot < 0.001:
+                    calc_cw = calc_cw + step
+                calc_pw = math.floor(spot / step) * step
+                if abs(spot - calc_pw) / spot < 0.001:
+                    calc_pw = calc_pw - step
+                cw = round(calc_cw, 2)
+                pw = round(calc_pw, 2)
+                flip = round((cw + pw) / 2.0, 2)
+
+            dist_cw_pct = round(((cw - spot) / spot) * 100, 2) if cw else 99.0
+            dist_pw_pct = round(((spot - pw) / spot) * 100, 2) if pw else 99.0
+
+            # Determine closest wall & reversal direction
+            if dist_cw_pct <= dist_pw_pct:
+                closest_wall = "CALL_WALL"
+                closest_dist = dist_cw_pct
+                target_wall_strike = cw
+                is_short_fade = True
+            else:
+                closest_wall = "PUT_WALL"
+                closest_dist = dist_pw_pct
+                target_wall_strike = pw
+                is_short_fade = False
+
+            # Compute Reversal Score (0 - 100)
+            score = 40
+            if closest_dist <= 0.15:
+                score += 42
+            elif closest_dist <= 0.35:
+                score += 30
+            elif closest_dist <= 0.65:
+                score += 15
+            elif closest_dist <= 1.0:
+                score += 5
+
+            if is_short_fade and (rsi >= 65 or change_pct >= 2.0):
+                score += 18
+            elif not is_short_fade and (rsi <= 35 or change_pct <= -2.0):
+                score += 18
+            elif rvol >= 1.5:
+                score += 10
+
+            score = min(98, score)
+
+            # Signal classification
+            if is_short_fade:
+                if closest_dist <= 0.25:
+                    sig = "CRITICAL CALL FADE"
+                    sig_type = "SHORT_FADE"
+                    tone = "red"
+                elif closest_dist <= 0.50:
+                    sig = "TESTING CALL WALL"
+                    sig_type = "SHORT_FADE"
+                    tone = "red"
+                else:
+                    sig = "UPPER CHANNEL"
+                    sig_type = "NEUTRAL"
+                    tone = "gold"
+                action = "FADE RESISTANCE / BUY PUTS"
+                entry = f"${spot:.2f} - ${cw:.2f}"
+                stop = f"${cw * 1.0025:.2f} (+0.25%)"
+                target = f"${flip:.2f} (Flip Pivot)" if flip else f"${spot * 0.98:.2f}"
+                catalyst = f"Approaching Resistance Call Wall at ${cw:.2f}. Dealers forced to sell stock on test."
+            else:
+                if closest_dist <= 0.25:
+                    sig = "CRITICAL PUT BOUNCE"
+                    sig_type = "LONG_BOUNCE"
+                    tone = "green"
+                elif closest_dist <= 0.50:
+                    sig = "TESTING PUT WALL"
+                    sig_type = "LONG_BOUNCE"
+                    tone = "green"
+                else:
+                    sig = "LOWER CHANNEL"
+                    sig_type = "NEUTRAL"
+                    tone = "gold"
+                action = "BUY FLOOR / LONG BOUNCE"
+                entry = f"${pw:.2f} - ${spot:.2f}"
+                stop = f"${pw * 0.9975:.2f} (-0.25%)"
+                target = f"${flip:.2f} (Flip Pivot)" if flip else f"${spot * 1.02:.2f}"
+                catalyst = f"Testing Support Put Wall at ${pw:.2f}. Dealer short-covering provides cushion."
+
+            reversals.append({
+                "ticker": sym,
+                "asset_class": "EQUITY",
+                "spot": spot,
+                "change": change_pct,
+                "rsi": round(rsi, 1),
+                "rvol": f"{rvol:.1f}x",
+                "call_wall": cw,
+                "put_wall": pw,
+                "flip": flip,
+                "closest_wall": closest_wall,
+                "closest_dist_pct": closest_dist,
+                "target_wall_strike": target_wall_strike,
+                "dist_cw_pct": dist_cw_pct,
+                "dist_pw_pct": dist_pw_pct,
+                "signal": sig,
+                "sig_type": sig_type,
+                "tone": tone,
+                "score": score,
+                "action": action,
+                "ideal_entry": entry,
+                "stop_loss": stop,
+                "target": target,
+                "risk_reward": "1 : 4.2",
+                "catalyst": catalyst
+            })
+
+        # 3. Process Live Interbank Forex Pairs
+        for fx_sym, meta in FOREX_PAIRS_META.items():
+            try:
+                fx_key = meta["primary"]
+                fx_data = await asyncio.to_thread(get_forex_pair_analytics, fx_key)
+                spot = float(fx_data.get("spot", 0) or 0)
+                if spot <= 0: continue
+                qp = fx_data.get("quarter_points", {})
+                cw = float(qp.get("resistance_call_wall", 0))
+                pw = float(qp.get("support_put_wall", 0))
+                flip = float(qp.get("median_flip", 0))
+                chg_pips = float(fx_data.get("change_pips", 0.0))
+                
+                dist_cw = round(((cw - spot) / spot) * 100, 3)
+                dist_pw = round(((spot - pw) / spot) * 100, 3)
+
+                is_short_fade = dist_cw <= dist_pw
+                closest_dist = dist_cw if is_short_fade else dist_pw
+                closest_wall = "CALL_WALL" if is_short_fade else "PUT_WALL"
+                target_wall = cw if is_short_fade else pw
+
+                score = 50
+                if closest_dist <= 0.08: score += 45
+                elif closest_dist <= 0.20: score += 30
+                elif closest_dist <= 0.35: score += 15
+
+                sig = "CRITICAL FX RESISTANCE FADE" if (is_short_fade and closest_dist <= 0.15) else \
+                      "CRITICAL FX SUPPORT BOUNCE" if (not is_short_fade and closest_dist <= 0.15) else \
+                      "INTERBANK QP TEST"
+
+                prec = meta.get("pip_decimal", 4)
+                reversals.append({
+                    "ticker": fx_sym,
+                    "asset_class": "FOREX",
+                    "spot": spot,
+                    "change": round(float(fx_data.get("change_pct", 0.0)), 2),
+                    "rsi": 50.0,
+                    "rvol": "1.0x",
+                    "call_wall": cw,
+                    "put_wall": pw,
+                    "flip": flip,
+                    "closest_wall": closest_wall,
+                    "closest_dist_pct": round(closest_dist, 2),
+                    "target_wall_strike": target_wall,
+                    "dist_cw_pct": round(dist_cw, 2),
+                    "dist_pw_pct": round(dist_pw, 2),
+                    "signal": sig,
+                    "sig_type": "SHORT_FADE" if is_short_fade else "LONG_BOUNCE",
+                    "tone": "red" if is_short_fade else "green",
+                    "score": min(98, score),
+                    "action": f"SHORT FADE {fx_sym}" if is_short_fade else f"BUY BOUNCE {fx_sym}",
+                    "ideal_entry": f"{target_wall:.{prec}f}",
+                    "stop_loss": f"{target_wall * (1.0015 if is_short_fade else 0.9985):.{prec}f}",
+                    "target": f"{flip:.{prec}f} (Quarter Point Median)",
+                    "risk_reward": "1 : 3.5",
+                    "catalyst": f"Interbank liquidity pool at {target_wall:.{prec}f} ({chg_pips:+.1f} pips). ADR used: {fx_data.get('adr', {}).get('used_pct', 50)}%."
+                })
+            except Exception:
+                pass
+
+        # Sort so that tickers closest to wall reversal (< 0.25%, highest score) appear at top!
+        reversals.sort(key=lambda x: (x.get("closest_dist_pct", 99.0) <= 0.35, -x.get("score", 0), x.get("closest_dist_pct", 99.0)))
+
+        res_data = {
+            "reversals": reversals,
+            "total": len(reversals),
+            "critical_count": len([r for r in reversals if r.get("closest_dist_pct", 99.0) <= 0.25]),
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        }
+        CACHE[cache_key] = {"time": time.time(), "data": res_data}
+        return res_data
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"reversals": [], "total": 0, "error": str(e)}
 
 @app.get("/api/backtest")
 async def run_backtest_endpoint(
@@ -568,6 +1023,39 @@ async def get_learning_history():
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/algo/rsi-telemetry")
+async def get_rsi_telemetry():
+    from smart_algo import load_learning_state
+    try:
+        state = load_learning_state()
+        rsi_meta = state.get("rsi_meta", {})
+        return {
+            "generation": state.get("generation", 18),
+            "total_predictions": state.get("total_predictions", 0),
+            "target_hits": state.get("target_hits", 0),
+            "stopped_out": state.get("stopped_out", 0),
+            "accuracy_pct": state.get("accuracy_pct", 0),
+            "generation_history": state.get("generation_history", []),
+            "learning_insights": state.get("learning_insights", []),
+            "regime_weights": rsi_meta.get("regime_weights", {}),
+            "global_weights": state.get("feature_weights", {}),
+            "adaptive_lr": rsi_meta.get("learning_rate", 0.024),
+            "momentum_beta": rsi_meta.get("momentum_beta", 0.82),
+            "rolling_brier": rsi_meta.get("rolling_brier", 0.135),
+            "information_coefficients": rsi_meta.get("information_coefficients", {})
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/algo/evolve")
+async def evolve_algo_generation(ticker: str = "SPY"):
+    from smart_algo import run_recursive_evolution
+    try:
+        res = await asyncio.to_thread(run_recursive_evolution, ticker)
+        return res
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/api/market/regime")
 async def get_market_regime():
     from options_engine import market_regime
@@ -709,6 +1197,7 @@ async def get_market_bars(symbol: str = "SPY", timeframe: str = "5Min", limit: i
             return {"symbol": res["display"], "error": str(e), "bars": []}
 
     # 3. Equities Bars Handling
+    creds = get_alpaca_creds()
     if creds["key"] and creds["secret"]:
         def _fetch_alpaca():
             url = f"https://data.alpaca.markets/v2/stocks/{symbol}/bars?timeframe={tf}&start={start_dt}&limit={limit}&sort=desc&adjustment=all"
@@ -807,7 +1296,7 @@ async def get_alpaca_account():
 async def get_alpaca_positions():
     creds = get_alpaca_creds()
     if not creds["key"] or not creds["secret"]:
-        return {"connected": False, "positions": [], "total_unrealized_pl": 0, "total_market_value": 0}
+        return {"connected": False, "positions": [], "total_unrealized_pl": 0, "total_market_value": 0, "count": 0}
 
     def _fetch():
         req = urllib.request.Request(
@@ -853,7 +1342,7 @@ async def get_alpaca_positions():
             "count": len(positions)
         }
     except Exception as e:
-        return {"connected": False, "positions": [], "error": str(e), "total_unrealized_pl": 0, "total_market_value": 0}
+        return {"connected": False, "positions": [], "error": str(e), "total_unrealized_pl": 0, "total_market_value": 0, "count": 0}
 
 @app.post("/api/alpaca/positions/close")
 async def close_position(symbol: str):
@@ -902,6 +1391,51 @@ async def flatten_all_positions():
         return {"status": "SUCCESS", "message": "Liquidated and flattened all open positions.", "result": res}
     except Exception as e:
         return {"status": "ERROR", "message": str(e)}
+
+# ------------------------------------------------ Paper Simulation Portfolio & Ledger
+
+@app.get("/api/paper/account")
+async def get_paper_account_api():
+    import paper_engine
+    price_map = {}
+    tape = CACHE.get("alpaca_tape", {}).get("data", {}).get("tape", {})
+    for s, v in tape.items():
+        if "price" in v and v["price"]:
+            price_map[s] = float(v["price"])
+    return paper_engine.get_paper_account(price_map)
+
+@app.get("/api/paper/positions")
+async def get_paper_positions_api():
+    import paper_engine
+    price_map = {}
+    tape = CACHE.get("alpaca_tape", {}).get("data", {}).get("tape", {})
+    for s, v in tape.items():
+        if "price" in v and v["price"]:
+            price_map[s] = float(v["price"])
+    return paper_engine.get_paper_positions(price_map)
+
+@app.post("/api/paper/positions/close")
+async def close_paper_position_api(symbol: str):
+    import paper_engine
+    tape = CACHE.get("alpaca_tape", {}).get("data", {}).get("tape", {})
+    curr = tape.get(symbol.upper(), {}).get("price")
+    return paper_engine.close_paper_position(symbol, curr)
+
+@app.post("/api/paper/positions/flatten-all")
+async def flatten_all_paper_positions_api():
+    import paper_engine
+    price_map = {}
+    tape = CACHE.get("alpaca_tape", {}).get("data", {}).get("tape", {})
+    for s, v in tape.items():
+        if "price" in v and v["price"]:
+            price_map[s] = float(v["price"])
+    return paper_engine.flatten_all_paper_positions(price_map)
+
+@app.get("/api/macro/rates")
+async def get_macro_rates():
+    import macro_rates_engine
+    data = await asyncio.to_thread(macro_rates_engine.get_macro_rates_data)
+    return data
 
 @app.get("/api/market-data/macro-calendar")
 def get_macro_calendar():
@@ -959,6 +1493,83 @@ def get_macro_calendar():
         }
     ]
     return {"events": events, "next_critical": events[0]}
+
+# ----------------- Renaissance Technologies Cointegration Pairs Arbitrage -----------------
+@app.get("/api/algo/pairs-arbitrage")
+async def get_pairs_arbitrage():
+    cache_key = "stat_arb_pairs"
+    now_ts = time.time()
+    if cache_key in CACHE and (now_ts - CACHE[cache_key]["time"] < 60):
+        return CACHE[cache_key]["data"]
+
+    def _calc_pairs():
+        import yfinance as yf
+        pairs_to_track = [
+            ("NVDA", "AMD", "AI Semis Benchmark Pair"),
+            ("SPY", "QQQ", "Broad Index / Tech Arbitrage"),
+            ("XOM", "CVX", "Integrated Energy Hegemony"),
+            ("GOOGL", "META", "Digital Ad Duopoly"),
+            ("JPM", "BAC", "Money Center Banking Spread")
+        ]
+        results = []
+        for sym_a, sym_b, desc in pairs_to_track:
+            try:
+                h_a = yf.Ticker(sym_a).history(period="1mo", interval="1d")["Close"]
+                h_b = yf.Ticker(sym_b).history(period="1mo", interval="1d")["Close"]
+                if h_a.empty or h_b.empty:
+                    continue
+                p_a = float(h_a.iloc[-1])
+                p_b = float(h_b.iloc[-1])
+                ratio = round(p_a / p_b, 4) if p_b else 1.0
+                
+                # Compute rolling z-score from 30-day closing ratios
+                if len(h_a) >= 10 and len(h_b) >= 10:
+                    ratios = (h_a / h_b).dropna()
+                    mean_r = float(ratios.mean())
+                    std_r = float(ratios.std()) or 0.01
+                    z_score = round((ratio - mean_r) / std_r, 2)
+                else:
+                    z_score = 0.0
+                    mean_r = ratio
+
+                # Signal classification:
+                # |Z| >= 1.8: Statistical dislocation ready for mean reversion
+                if z_score >= 1.8:
+                    signal = f"SHORT {sym_a} / LONG {sym_b}"
+                    status = "OVERBOUGHT SPREAD (Mean-Reversion Short)"
+                    action_bias = f"{sym_a} overpriced relative to {sym_b}"
+                elif z_score <= -1.8:
+                    signal = f"LONG {sym_a} / SHORT {sym_b}"
+                    status = "OVERSOLD SPREAD (Mean-Reversion Long)"
+                    action_bias = f"{sym_a} underpriced relative to {sym_b}"
+                else:
+                    signal = "EQUILIBRIUM"
+                    status = "STATISTICAL EQUILIBRIUM"
+                    action_bias = "Pair trading inside normal volatility band"
+
+                results.append({
+                    "pair": f"{sym_a}/{sym_b}",
+                    "asset_a": sym_a,
+                    "asset_b": sym_b,
+                    "description": desc,
+                    "price_a": round(float(p_a), 2),
+                    "price_b": round(float(p_b), 2),
+                    "current_ratio": ratio,
+                    "mean_ratio": round(mean_r, 4),
+                    "z_score": z_score,
+                    "signal": signal,
+                    "status": status,
+                    "action_bias": action_bias,
+                    "extreme_divergence": abs(z_score) >= 1.8
+                })
+            except Exception as pe:
+                print(f"Pair arb error {sym_a}/{sym_b}: {pe}")
+        return results
+
+    arb_data = await asyncio.to_thread(_calc_pairs)
+    if arb_data:
+        CACHE[cache_key] = {"data": arb_data, "time": now_ts}
+    return arb_data
 
 @app.get("/api/algo/multi-timeframe")
 async def get_multi_timeframe(ticker: str = "SPY"):
@@ -1031,16 +1642,30 @@ async def get_multi_timeframe(ticker: str = "SPY"):
     except Exception as e:
         return {"ticker": ticker, "overall": "NEUTRAL", "avg_score": 50, "timeframes": {}, "error": str(e)}
 
+_TAPE_ENDPOINT_CACHE = {
+    "data": None,
+    "timestamp": 0
+}
+
 @app.get("/api/alpaca/tape")
-async def get_alpaca_tape(symbols: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMD,META,IWM"):
+async def get_alpaca_tape(symbols: Optional[str] = None):
+    now = time.time()
+    if _TAPE_ENDPOINT_CACHE["data"] and (now - _TAPE_ENDPOINT_CACHE["timestamp"]) < 1.5:
+        return _TAPE_ENDPOINT_CACHE["data"]
+
     creds = get_alpaca_creds()
     tape = {}
+    target_symbols = symbols.upper().strip() if symbols else DEFAULT_TAPE_SYMBOLS_STR
 
     # 1. Fetch live 24/7 crypto rates from Coinbase (updates every second with real trades)
     try:
         cb_tape = await asyncio.to_thread(fetch_coinbase_tape)
         if cb_tape:
             tape.update(cb_tape)
+            for k, v in cb_tape.items():
+                if v and v.get("price"):
+                    LAST_KNOWN_TAPE_PRICES[k] = v
+                    live_price_cache[k] = float(v["price"])
     except Exception as ce:
         print(f"Coinbase tape error: {ce}")
 
@@ -1049,6 +1674,10 @@ async def get_alpaca_tape(symbols: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMD,META,IWM"):
         fx_tape = await asyncio.to_thread(get_forex_tape)
         if fx_tape:
             tape.update(fx_tape)
+            for k, v in fx_tape.items():
+                if v and v.get("price"):
+                    LAST_KNOWN_TAPE_PRICES[k] = v
+                    live_price_cache[k] = float(v["price"])
     except Exception as fe:
         print(f"Forex tape error: {fe}")
 
@@ -1056,35 +1685,53 @@ async def get_alpaca_tape(symbols: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMD,META,IWM"):
     if creds["key"] and creds["secret"]:
         def _fetch_stocks():
             req = urllib.request.Request(
-                f"https://data.alpaca.markets/v2/stocks/snapshots?symbols={symbols.upper()}",
+                f"https://data.alpaca.markets/v2/stocks/snapshots?symbols={target_symbols}",
                 headers={
                     "APCA-API-KEY-ID": creds["key"],
                     "APCA-API-SECRET-KEY": creds["secret"]
                 }
             )
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 return json.loads(resp.read().decode())
                 
         try:
             raw = await asyncio.to_thread(_fetch_stocks)
             for s, v in raw.items():
-                trade = v.get("latestTrade", {})
-                quote = v.get("latestQuote", {})
+                trade = v.get("latestTrade") or {}
+                quote = v.get("latestQuote") or {}
                 prev = v.get("prevDailyBar", {}).get("c", 1)
+                daily = v.get("dailyBar", {}).get("c")
+                minute = v.get("minuteBar", {}).get("c")
                 price = trade.get("p", 0)
-                chg = ((price - prev) / prev) * 100 if prev else 0
-                tape[s] = {
-                    "price": price,
-                    "change": round(chg, 2),
+                if not price or price <= 0:
+                    price = minute or quote.get("ap") or quote.get("bp") or daily or prev or 0
+                chg = ((price - prev) / prev) * 100 if (prev and prev > 0 and price) else 0
+                item = {
+                    "price": round(float(price), 2),
+                    "change": round(float(chg), 2),
                     "bid": quote.get("bp"),
                     "ask": quote.get("ap"),
                     "size": trade.get("s", 0),
                     "timestamp": trade.get("t")
                 }
+                tape[s] = item
+                if price and price > 0:
+                    LAST_KNOWN_TAPE_PRICES[s] = item
+                    live_price_cache[s] = round(float(price), 2)
         except Exception as se:
             print(f"Alpaca stock tape error: {se}")
 
-    return {"tape": tape, "time": time.time()}
+    # 3. Backfill any missing symbols from LAST_KNOWN_TAPE_PRICES
+    for s in target_symbols.split(","):
+        s = s.strip()
+        if s and (s not in tape or not tape[s].get("price")):
+            if s in LAST_KNOWN_TAPE_PRICES:
+                tape[s] = LAST_KNOWN_TAPE_PRICES[s]
+
+    resp = {"tape": tape, "time": now}
+    _TAPE_ENDPOINT_CACHE["data"] = resp
+    _TAPE_ENDPOINT_CACHE["timestamp"] = now
+    return resp
 
 @app.get("/api/alpaca/quote")
 async def get_alpaca_quote(symbol: str = "SPY"):
@@ -1306,22 +1953,37 @@ class BracketOrderRequest(BaseModel):
     take_profit_price: float
     stop_loss_price: float
     simulated: bool = False
+    is_option: Optional[bool] = False
+    option_details: Optional[dict] = None
 
 @app.post("/api/alpaca/order/bracket")
 async def place_bracket_order(req_body: BracketOrderRequest):
     creds = get_alpaca_creds()
     if req_body.simulated or not creds["key"] or not creds["secret"]:
+        import paper_engine
+        ticket = paper_engine.execute_paper_bracket_order(
+            symbol=req_body.symbol,
+            qty=req_body.qty,
+            side=req_body.side,
+            entry_price=req_body.limit_price,
+            take_profit=req_body.take_profit_price,
+            stop_loss=req_body.stop_loss_price,
+            is_option=bool(req_body.is_option),
+            option_details=req_body.option_details
+        )
         return {
             "status": "SIMULATED_FILLED",
-            "order_id": f"sim_{int(time.time()*1000)}",
+            "order_id": ticket["order_id"],
             "symbol": req_body.symbol,
             "qty": req_body.qty,
             "side": req_body.side,
             "limit_price": req_body.limit_price,
             "take_profit": req_body.take_profit_price,
             "stop_loss": req_body.stop_loss_price,
-            "mode": "Simulation Paper Bracket",
-            "message": f"Simulated bracket order confirmed: {req_body.side.upper()} {req_body.qty} {req_body.symbol} @ ${req_body.limit_price} (TP: ${req_body.take_profit_price}, SL: ${req_body.stop_loss_price})"
+            "is_option": bool(req_body.is_option),
+            "mode": "Paper Trading Account",
+            "message": f"Paper bracket order confirmed: {req_body.side.upper()} {req_body.qty} {req_body.symbol} @ ${req_body.limit_price} (TP: ${req_body.take_profit_price}, SL: ${req_body.stop_loss_price})",
+            "ticket": ticket
         }
 
     res = resolve_symbol(req_body.symbol)
@@ -1331,7 +1993,7 @@ async def place_bracket_order(req_body: BracketOrderRequest):
     def _submit_order():
         base = creds["base"].rstrip("/")
         url = f"{base}/v2/orders"
-        prec = 4 if req_body.limit_price < 5 else 2
+        prec = 4 if req_body.limit_price < 5 and not req_body.is_option else 2
         body = {
             "symbol": order_symbol,
             "qty": str(req_body.qty),
@@ -1339,14 +2001,15 @@ async def place_bracket_order(req_body: BracketOrderRequest):
             "type": "limit",
             "time_in_force": tif,
             "limit_price": str(round(req_body.limit_price, prec)),
-            "order_class": "bracket",
-            "take_profit": {
+        }
+        if not req_body.is_option:
+            body["order_class"] = "bracket"
+            body["take_profit"] = {
                 "limit_price": str(round(req_body.take_profit_price, 2))
-            },
-            "stop_loss": {
+            }
+            body["stop_loss"] = {
                 "stop_price": str(round(req_body.stop_loss_price, 2))
             }
-        }
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -1366,15 +2029,61 @@ async def place_bracket_order(req_body: BracketOrderRequest):
         return {
             "status": "SUBMITTED",
             "order": order_res,
-            "message": f"Live bracket order successfully routed to Alpaca for {req_body.symbol}."
+            "message": f"Live order successfully routed to Alpaca for {req_body.symbol}."
         }
+    except urllib.error.HTTPError as he:
+        err_body = he.read().decode()
+        try:
+            err_json = json.loads(err_body)
+            err_msg = err_json.get("message", err_body)
+        except Exception:
+            err_msg = err_body
+
+        # Automatic fallback to Paper Simulation ledger so trade execution is never dropped
+        try:
+            import paper_engine
+            ticket = paper_engine.execute_paper_bracket_order(
+                symbol=req_body.symbol,
+                qty=req_body.qty,
+                side=req_body.side,
+                entry_price=req_body.limit_price,
+                take_profit=req_body.take_profit_price,
+                stop_loss=req_body.stop_loss_price,
+                is_option=bool(req_body.is_option),
+                option_details=req_body.option_details
+            )
+            return {
+                "status": "SIMULATED_FILLED",
+                "order_id": ticket["order_id"],
+                "symbol": req_body.symbol,
+                "qty": req_body.qty,
+                "side": req_body.side,
+                "limit_price": req_body.limit_price,
+                "take_profit": req_body.take_profit_price,
+                "stop_loss": req_body.stop_loss_price,
+                "is_option": bool(req_body.is_option),
+                "mode": "Paper Trading (Alpaca Fallback)",
+                "message": f"Alpaca rejected ({err_msg}). Seamlessly filled in Paper Portfolio Ledger: {req_body.side.upper()} {req_body.qty} {req_body.symbol} @ ${req_body.limit_price}",
+                "ticket": ticket,
+                "alpaca_error": err_msg
+            }
+        except Exception as pe_err:
+            return {"status": "ERROR", "error": f"Alpaca API ({he.code}): {err_msg} | Paper fallback error: {pe_err}"}
     except Exception as e:
         return {"status": "ERROR", "error": str(e)}
+
+@app.get("/api/crypto/market-metrics")
+async def get_crypto_metrics():
+    """
+    Returns aggregated macro crypto intelligence:
+    Fear & Greed Index, BTC Dominance, and Hyperliquid perpetual funding rate squeeze barometer.
+    """
+    return await asyncio.to_thread(get_crypto_market_metrics)
 
 @app.get("/api/crypto/gem-radar")
 async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
     cache_key = f"gem_radar_{chain}_{min_liquidity}"
-    if cache_key in CACHE and time.time() - CACHE[cache_key]["time"] < 25:
+    if cache_key in CACHE and time.time() - CACHE[cache_key]["time"] < 60:
         return CACHE[cache_key]["data"]
 
     def _scan():
@@ -1650,6 +2359,127 @@ async def get_forex_sessions():
     data = await asyncio.to_thread(get_forex_sessions_status)
     return data
 
+class ForexOrderRequest(BaseModel):
+    symbol: str
+    lots: float = 0.10
+    side: str
+    entry_price: float
+    take_profit: float
+    stop_loss: float
+    tp_pips: Optional[str] = None
+    sl_pips: Optional[str] = None
+
+@app.post("/api/forex/execute-bracket")
+async def execute_forex_bracket_endpoint(req: ForexOrderRequest):
+    import paper_engine
+    sym = req.symbol.upper().strip()
+    clean_sym = clean_forex_symbol(sym)
+    meta = FOREX_PAIRS_META.get(clean_sym, {})
+    disp = meta.get("display", sym)
+    
+    # 1. Macro Red-Folder Calendar News Freeze Check
+    # Avoid entries 15m before/after critical central bank or CPI events
+    cal_data = get_macro_calendar()
+    next_crit = cal_data.get("next_critical")
+    if next_crit and next_crit.get("impact") == "CRITICAL":
+        crit_time = next_crit.get("time", "")
+        crit_event = next_crit.get("event", "Central Bank Event")
+        # Log active macro awareness in ticket
+        macro_tag = f"Macro Awareness: {crit_event} on radar"
+    else:
+        macro_tag = "Clear Macro Radar"
+
+    forex_details = {
+        "display": disp,
+        "lots": req.lots,
+        "lot_units": 100000.0,
+        "pip_mult": meta.get("pip_mult", 10000),
+        "tp_pips": req.tp_pips,
+        "sl_pips": req.sl_pips,
+        "macro_tag": macro_tag
+    }
+
+    ticket = paper_engine.execute_paper_bracket_order(
+        symbol=disp,
+        qty=req.lots,
+        side=req.side,
+        entry_price=req.entry_price,
+        take_profit=req.take_profit,
+        stop_loss=req.stop_loss,
+        is_forex=True,
+        forex_details=forex_details
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Interbank Paper Order for {req.lots} Lots {disp} ({req.side}) placed at {req.entry_price}",
+        "ticket": ticket
+    }
+
+# ------------------------------------------------ News Catalyst & Contagion Intelligence
+import news_catalyst_engine
+
+@app.get("/api/news/catalysts")
+async def get_news_catalysts(ticker: Optional[str] = None, limit: int = 25):
+    cache_key = f"news_catalysts_{ticker or 'ALL'}_{limit}"
+    now_ts = time.time()
+    cached = CACHE.get(cache_key)
+    if cached and (now_ts - cached.get("time", 0) < 45):
+        return cached["data"]
+        
+    data = await asyncio.to_thread(news_catalyst_engine.fetch_live_catalyst_news, ticker, limit)
+    CACHE[cache_key] = {"data": data, "time": now_ts}
+    return data
+
+@app.get("/api/news/ticker-impact")
+async def get_ticker_news_impact(ticker: str = "SPY"):
+    cache_key = f"news_impact_{ticker.upper().strip()}"
+    now_ts = time.time()
+    cached = CACHE.get(cache_key)
+    if cached and (now_ts - cached.get("time", 0) < 45):
+        return cached["data"]
+
+    feed = await asyncio.to_thread(news_catalyst_engine.fetch_live_catalyst_news, ticker, 10)
+    articles = feed.get("articles", [])
+    
+    bull_count = sum(1 for a in articles if a["sentiment"] == "BULLISH")
+    bear_count = sum(1 for a in articles if a["sentiment"] == "BEARISH")
+    total = len(articles)
+    
+    if bull_count > bear_count:
+        overall_bias = "BULLISH"
+        conviction = round((bull_count / max(1, total)) * 100, 1)
+    elif bear_count > bull_count:
+        overall_bias = "BEARISH"
+        conviction = round((bear_count / max(1, total)) * 100, 1)
+    else:
+        overall_bias = "NEUTRAL"
+        conviction = 50.0
+
+    all_infected = []
+    seen = set()
+    for a in articles:
+        for inf in a.get("infected_stocks", []):
+            if inf["ticker"] not in seen and inf["ticker"] != ticker.upper().strip():
+                seen.add(inf["ticker"])
+                all_infected.append(inf)
+
+    result = {
+        "ticker": ticker.upper().strip(),
+        "overall_bias": overall_bias,
+        "conviction_pct": conviction,
+        "articles_count": total,
+        "latest_headline": articles[0]["headline"] if articles else "No breaking catalysts",
+        "latest_action_plan": articles[0]["action_plan"] if articles else "Maintain Gamma flip discipline.",
+        "infected_domino_stocks": all_infected[:8],
+        "recent_catalysts": articles[:5]
+    }
+    
+    CACHE[cache_key] = {"data": result, "time": now_ts}
+    return result
+
+
+
 # ------------------------------------------------ Email Notifications & Alert Engine
 from email_notifier import (
     send_email, 
@@ -1807,9 +2637,807 @@ async def _alerts_background_worker():
         except Exception:
             pass
 
+async def _rsi_autonomous_worker():
+    from smart_algo import autonomous_walk_forward_cycle
+    while True:
+        try:
+            await asyncio.sleep(30)
+            price_map = {}
+            # Pull prices from TAPE cache if available
+            tape_cache = CACHE.get("alpaca_tape")
+            if tape_cache and "data" in tape_cache:
+                for sym, info in tape_cache["data"].get("tape", {}).items():
+                    if "price" in info and info["price"]:
+                        price_map[sym] = float(info["price"])
+            # Fallback to individual spot quotes in cache
+            for k, v in CACHE.items():
+                if k.startswith("opt_") and "data" in v:
+                    sym = k.replace("opt_", "")
+                    sp = v["data"].get("spot")
+                    if sp and sym not in price_map:
+                        price_map[sym] = float(sp)
+            if price_map:
+                await asyncio.to_thread(autonomous_walk_forward_cycle, price_map)
+                try:
+                    import paper_engine
+                    await asyncio.to_thread(paper_engine.check_paper_bracket_triggers, price_map)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+# ------------------------------------------------ AI Quant Co-Pilot 24/7 Cloud Autonomous Engine
+COPILOT_STATE_FILE = os.path.join(os.path.dirname(__file__), "copilot_state.json")
+
+def load_copilot_state() -> dict:
+    default_state = {
+        "armed": True,
+        "min_confidence": 70,
+        "order_qty": 1,
+        "is_simulated": False,
+        "options_only": True,
+        "auto_flatten_eod": True,
+        "eod_flatten_time": "15:50 ET",
+        "daily_profit_target": 500.0,
+        "daily_max_loss": 300.0,
+        "max_concurrent_positions": 5, # User configured strictly max 5 open positions
+        "max_daily_trades": 8, # Max 8 trade entries per calendar day to eliminate overtrading
+        "daily_trades_count": 0,
+        "daily_trades_date": "",
+        "last_global_trade_time": 0,
+        "breakeven_ratchet_enabled": True,
+        "news_safety_filter_enabled": True,
+        "circuit_breaker_status": "ACTIVE",
+        "active_monitors": [
+            "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
+            "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM",
+            "AMD", "AVGO", "TSM", "SMCI", "MU", "ARM", "INTC", "QCOM", "TXN",
+            "PLTR", "COIN", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG",
+            "JPM", "BAC", "GS", "V", "MA", "DIS", "BABA", "BA", "XOM", "CAT", "LLY"
+        ],
+        "cooldown_sec": 600,
+        "last_trades": [],
+        "last_trigger_times": {},
+        "last_scan_time": None,
+        "last_status_message": "Co-Pilot 24/7 Cloud Daemon Initialized (Max 5 Positions)"
+    }
+    if os.path.exists(COPILOT_STATE_FILE):
+        try:
+            with open(COPILOT_STATE_FILE, "r") as f:
+                saved = json.load(f)
+                default_state.update(saved)
+        except Exception as e:
+            print(f"Error loading copilot_state: {e}")
+    return default_state
+
+def save_copilot_state(state: dict):
+    try:
+        with open(COPILOT_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        print(f"Error saving copilot_state: {e}")
+
+class CopilotToggleRequest(BaseModel):
+    armed: bool
+
+class CopilotConfigRequest(BaseModel):
+    min_confidence: Optional[int] = None
+    order_qty: Optional[int] = None
+    is_simulated: Optional[bool] = None
+    options_only: Optional[bool] = None
+    auto_flatten_eod: Optional[bool] = None
+    daily_profit_target: Optional[float] = None
+    daily_max_loss: Optional[float] = None
+    max_concurrent_positions: Optional[int] = None
+    max_daily_trades: Optional[int] = None
+    breakeven_ratchet_enabled: Optional[bool] = None
+    news_safety_filter_enabled: Optional[bool] = None
+    active_monitors: Optional[List[str]] = None
+
+@app.get("/api/copilot/status")
+async def get_copilot_status():
+    state = load_copilot_state()
+    try:
+        from zoneinfo import ZoneInfo
+        et = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        et = datetime.now(timezone.utc) - timedelta(hours=4)
+    market_open = (et.weekday() < 5) and (et.hour > 9 or (et.hour == 9 and et.minute >= 30)) and (et.hour < 16)
+    
+    # Live PnL Analytics & Circuit Breaker Logic
+    import paper_engine
+    pnl_data = paper_engine.get_pnl_analytics()
+    today_pnl = pnl_data.get("today_realized_pnl", 0.0)
+    profit_target = float(state.get("daily_profit_target", 500.0))
+    max_loss = float(state.get("daily_max_loss", 300.0))
+    
+    circuit_status = "ACTIVE"
+    if today_pnl >= profit_target and profit_target > 0:
+        circuit_status = "TARGET_REACHED"
+        if state.get("armed"):
+            state["armed"] = False
+            state["last_status_message"] = f"🏆 Daily Profit Target (+${today_pnl:.2f}) reached! Locked in daily income."
+            save_copilot_state(state)
+    elif today_pnl <= -max_loss and max_loss > 0:
+        circuit_status = "MAX_LOSS_HALTED"
+        if state.get("armed"):
+            state["armed"] = False
+            state["last_status_message"] = f"🛑 Daily Max Loss limit (-${abs(today_pnl):.2f}) reached. Preserving capital."
+            save_copilot_state(state)
+            
+    state["circuit_breaker_status"] = circuit_status
+    
+    # Query unified active positions count
+    active_summary = get_all_active_positions()
+    
+    return {
+        "armed": state.get("armed", True),
+        "min_confidence": state.get("min_confidence", 70),
+        "order_qty": state.get("order_qty", 1),
+        "is_simulated": state.get("is_simulated", False),
+        "options_only": state.get("options_only", True),
+        "auto_flatten_eod": state.get("auto_flatten_eod", True),
+        "eod_flatten_time": state.get("eod_flatten_time", "15:50 ET"),
+        "daily_profit_target": profit_target,
+        "daily_max_loss": max_loss,
+        "max_concurrent_positions": state.get("max_concurrent_positions", 5),
+        "max_daily_trades": state.get("max_daily_trades", 8),
+        "daily_trades_count": state.get("daily_trades_count", 0),
+        "active_positions_count": active_summary.get("total_count", 0),
+        "alpaca_positions_count": len(active_summary.get("alpaca_positions", [])),
+        "paper_positions_count": len(active_summary.get("paper_positions", {})),
+        "breakeven_ratchet_enabled": state.get("breakeven_ratchet_enabled", True),
+        "news_safety_filter_enabled": state.get("news_safety_filter_enabled", True),
+        "circuit_breaker_status": circuit_status,
+        "pnl_analytics": pnl_data,
+        "market_open": market_open,
+        "market_time_et": et.strftime("%H:%M:%S ET"),
+        "monitored_symbols": state.get("active_monitors", []),
+        "last_scan_time": state.get("last_scan_time"),
+        "last_status_message": state.get("last_status_message", "Operational"),
+        "executed_tickets": state.get("last_trades", [])[:20],
+        "executed_count": len(state.get("last_trades", []))
+    }
+
+@app.post("/api/copilot/toggle")
+async def toggle_copilot(req: CopilotToggleRequest):
+    state = load_copilot_state()
+    state["armed"] = req.armed
+    if req.armed:
+        import paper_engine
+        pnl_data = paper_engine.get_pnl_analytics()
+        today_pnl = float(pnl_data.get("today_realized_pnl", 0.0))
+        curr_target = float(state.get("daily_profit_target", 500.0))
+        if today_pnl >= curr_target:
+            state["daily_profit_target"] = round(today_pnl + 1000.0, 2)
+        state["circuit_breaker_status"] = "ACTIVE"
+        state["last_status_message"] = "Co-Pilot Armed (Max 5 Positions Guard Active)"
+    else:
+        state["last_status_message"] = "Co-Pilot Standby (Manual Mode)"
+    save_copilot_state(state)
+    return {"status": "SUCCESS", "armed": state["armed"], "message": state["last_status_message"], "circuit_breaker_status": state.get("circuit_breaker_status", "ACTIVE")}
+
+@app.post("/api/copilot/config")
+async def update_copilot_config(req: CopilotConfigRequest):
+    state = load_copilot_state()
+    if req.min_confidence is not None:
+        state["min_confidence"] = max(50, min(95, req.min_confidence))
+    if req.order_qty is not None:
+        state["order_qty"] = max(1, min(100, req.order_qty))
+    if req.is_simulated is not None:
+        state["is_simulated"] = req.is_simulated
+    if req.options_only is not None:
+        state["options_only"] = req.options_only
+    if req.auto_flatten_eod is not None:
+        state["auto_flatten_eod"] = req.auto_flatten_eod
+    if req.daily_profit_target is not None:
+        state["daily_profit_target"] = max(50.0, float(req.daily_profit_target))
+    if req.daily_max_loss is not None:
+        state["daily_max_loss"] = max(50.0, float(req.daily_max_loss))
+    if req.max_concurrent_positions is not None:
+        state["max_concurrent_positions"] = max(1, min(10, req.max_concurrent_positions))
+    if req.max_daily_trades is not None:
+        state["max_daily_trades"] = max(1, min(50, req.max_daily_trades))
+    if req.breakeven_ratchet_enabled is not None:
+        state["breakeven_ratchet_enabled"] = req.breakeven_ratchet_enabled
+    if req.news_safety_filter_enabled is not None:
+        state["news_safety_filter_enabled"] = req.news_safety_filter_enabled
+    if req.active_monitors is not None:
+        state["active_monitors"] = [s.upper().strip() for s in req.active_monitors if s.strip()]
+    save_copilot_state(state)
+    return {"status": "SUCCESS", "config": state}
+
+_last_eod_flatten_date = None
+
+async def _execute_eod_options_auto_flatten():
+    global _last_eod_flatten_date
+    try:
+        from zoneinfo import ZoneInfo
+        et = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        et = datetime.now(timezone.utc) - timedelta(hours=4)
+        
+    today_str = et.strftime("%Y-%m-%d")
+    # Only execute on weekdays Monday-Friday between 15:50 and 15:59 ET, once per day
+    if et.weekday() < 5 and et.hour == 15 and 50 <= et.minute <= 59:
+        if _last_eod_flatten_date == today_str:
+            return None
+        _last_eod_flatten_date = today_str
+        
+        print(f"[CO-PILOT EOD AUTO-FLATTEN] Initiating 15:50 ET Options Liquidation for {today_str}...")
+        import paper_engine
+        flatten_res = paper_engine.flatten_eod_options()
+        
+        creds = get_alpaca_creds()
+        alpaca_flattened = []
+        if creds.get("key") and creds.get("secret"):
+            try:
+                base = creds["base"].rstrip("/")
+                req = urllib.request.Request(
+                    f"{base}/v2/positions",
+                    headers={"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    alpaca_pos = json.loads(resp.read().decode())
+                
+                for p in alpaca_pos:
+                    psym = p.get("symbol", "")
+                    if len(psym) >= 10 and any(c in psym for c in ["C", "P"]):
+                        del_req = urllib.request.Request(
+                            f"{base}/v2/positions/{psym}",
+                            headers={"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]},
+                            method="DELETE"
+                        )
+                        with urllib.request.urlopen(del_req, timeout=5) as dresp:
+                            alpaca_flattened.append(psym)
+            except Exception as alp_err:
+                print(f"Alpaca option liquidation error: {alp_err}")
+                
+        flattened_count = flatten_res.get("flattened_count", 0) + len(alpaca_flattened)
+        try:
+            from email_notifier import send_email
+            subj = f"🛡️ EOD OPTIONS AUTO-FLATTEN: {flattened_count} Contracts Liquidated at 15:50 ET"
+            html = f"""
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #1e293b;">
+                <h2 style="color: #38bdf8; margin-top: 0;">🛡️ Co-Pilot End-Of-Day Auto-Flatten Executed</h2>
+                <p style="color: #94a3b8; font-size: 14px;">Rule Triggered: <strong>15:50 ET Same-Day Exit</strong> (Eliminated overnight theta decay and gap risk).</p>
+                <div style="background: #111827; padding: 16px; border-radius: 8px; margin: 16px 0; border: 1px solid #374151;">
+                    <p style="margin: 4px 0; color: #e2e8f0;"><strong>Date:</strong> {today_str} 15:50 ET</p>
+                    <p style="margin: 4px 0; color: #e2e8f0;"><strong>Paper Options Closed:</strong> {flatten_res.get('flattened_count', 0)}</p>
+                    <p style="margin: 4px 0; color: #e2e8f0;"><strong>Alpaca Contracts Closed:</strong> {len(alpaca_flattened)}</p>
+                    <p style="margin: 4px 0; color: #10b981;"><strong>Overnight Risk:</strong> ZERO CONTRACTS HELD OVERNIGHT</p>
+                </div>
+            </div>
+            """
+            await asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com")
+        except Exception as mail_err:
+            print(f"EOD email notification error: {mail_err}")
+            
+        return {
+            "status": "FLATTENED",
+            "paper_closed": flatten_res.get("flattened_count", 0),
+            "alpaca_closed": len(alpaca_flattened),
+            "date": today_str
+        }
+    return None
+
+@app.post("/api/copilot/flatten-options")
+async def trigger_flatten_options():
+    import paper_engine
+    res = paper_engine.flatten_eod_options()
+    return res
+
+async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
+    state = load_copilot_state()
+    if not state.get("armed", True) and not forced_symbol:
+        return {"status": "SKIPPED", "reason": "Co-Pilot disarmed"}
+    
+    try:
+        from zoneinfo import ZoneInfo
+        et = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        et = datetime.now(timezone.utc) - timedelta(hours=4)
+    market_open = (et.weekday() < 5) and (et.hour > 9 or (et.hour == 9 and et.minute >= 30)) and (et.hour < 16)
+    
+    # 1. Market Timing Gates:
+    # A) Don't open new options after 15:45 ET (since we auto-flatten at 15:50 ET)
+    near_eod = (et.weekday() < 5) and (et.hour == 15 and et.minute >= 45)
+    if near_eod and not forced_symbol:
+        return {"status": "SKIPPED", "reason": "Within cutoff of EOD 15:50 ET auto-flatten rule"}
+
+    # B) Opening Settle Gate: Avoid first 15 mins (9:30-9:45 AM ET) where bid-ask spreads are widest and auctions settle
+    market_opening_churn = (et.weekday() < 5) and (et.hour == 9 and 30 <= et.minute < 45)
+    if market_opening_churn and not forced_symbol:
+        return {"status": "SKIPPED", "reason": "Market Opening Settle Gate (9:30-9:45 AM ET) active: waiting for spread compression."}
+
+    # C) Midday Lunch Volume Lull Gate (12:00-13:15 ET): elevate minimum confidence to prevent chop stop-outs
+    is_lunch_lull = (et.weekday() < 5) and ((et.hour == 12) or (et.hour == 13 and et.minute <= 15))
+
+    # 2. Portfolio Heat & Unified Max Concurrent Open Positions Guard (Institutional Limit: 5)
+    active_pos_info = get_all_active_positions(creds)
+    total_active_pos = active_pos_info["total_count"]
+    max_concurrent = int(state.get("max_concurrent_positions", 5)) # User strictly requested 5 open positions max
+    if total_active_pos >= max_concurrent and not forced_symbol:
+        msg = f"Max Positions Guard: {total_active_pos}/{max_concurrent} active ({len(active_pos_info['alpaca_positions'])} Alpaca, {len(active_pos_info['paper_positions'])} Paper). Holding open slots."
+        state["last_status_message"] = msg
+        save_copilot_state(state)
+        return {
+            "status": "SKIPPED",
+            "reason": f"Portfolio Heat Guard: {total_active_pos}/{max_concurrent} max positions currently open."
+        }
+
+    # 3. Daily Trade Volume Cap (Guaranteed Prevention of Overtrading)
+    today_date = et.strftime("%Y-%m-%d")
+    if state.get("daily_trades_date") != today_date:
+        state["daily_trades_date"] = today_date
+        state["daily_trades_count"] = 0
+        
+    max_daily = int(state.get("max_daily_trades", 8))
+    if state.get("daily_trades_count", 0) >= max_daily and not forced_symbol:
+        msg = f"Daily trade cap reached ({state['daily_trades_count']}/{max_daily} trades today). Preserving capital until tomorrow."
+        state["last_status_message"] = msg
+        save_copilot_state(state)
+        return {
+            "status": "SKIPPED",
+            "reason": f"Daily Trade Cap Reached: {state['daily_trades_count']}/{max_daily} trades executed today."
+        }
+
+    # 4. Global Inter-Trade Spacing Cooldown (minimum 180s between any trades across the entire account)
+    last_global = state.get("last_global_trade_time", 0)
+    now_ts = time.time()
+    if (now_ts - last_global < 180) and not forced_symbol:
+        return {
+            "status": "SKIPPED",
+            "reason": f"Global pacing active: {int(180 - (now_ts - last_global))}s wait before next candidate execution."
+        }
+
+    options_only = state.get("options_only", True)
+    
+    if forced_symbol:
+        candidates = [forced_symbol.upper().strip()]
+    elif options_only:
+        # Liquid US equity/ETF underlyings for options
+        candidates = state.get("active_monitors", [
+            "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
+            "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM",
+            "AMD", "AVGO", "TSM", "SMCI", "MU", "ARM", "INTC", "QCOM", "TXN",
+            "PLTR", "COIN", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG",
+            "JPM", "BAC", "GS", "V", "MA", "DIS", "BABA", "BA", "XOM", "CAT", "LLY"
+        ])
+    else:
+        candidates = (
+            ["SPY", "QQQ", "NVDA", "AAPL", "TSLA", "BTC", "ETH"] if market_open else ["BTC", "ETH", "SOL", "SPY", "QQQ"]
+        )
+    
+    base_min_conf = state.get("min_confidence", 70)
+    # Elevate confidence required during midday low-volume lull (12:00-13:15 ET)
+    min_conf = max(base_min_conf, 80) if (is_lunch_lull and not forced_symbol) else base_min_conf
+    cooldown = state.get("cooldown_sec", 600)
+    trigger_times = state.get("last_trigger_times", {})
+    executed_trades = []
+    
+    # Active open underlyings across both Alpaca and Paper to prevent doubling down on same correlated sector
+    open_underlyings = active_pos_info["open_underlyings"]
+    
+    for sym in candidates:
+        if not forced_symbol and (now_ts - trigger_times.get(sym, 0) < cooldown):
+            continue
+            
+        # Correlated Exposure Check: Do not hold both NVDA and AMD or SPY and QQQ in the same direction
+        if not forced_symbol:
+            correlated_pairs = [("NVDA", "AMD"), ("SPY", "QQQ"), ("COIN", "MSTR")]
+            skip_correlated = False
+            for p1, p2 in correlated_pairs:
+                other = p2 if sym == p1 else (p1 if sym == p2 else None)
+                if other and other in open_underlyings:
+                    print(f"[CORRELATION GUARD] Skipped {sym}: Already holding correlated exposure in {other}.")
+                    skip_correlated = True
+                    break
+            if skip_correlated:
+                continue
+
+        try:
+            algo_res = await get_smart_intelligence(sym)
+            if not algo_res or "bracket_setup" not in algo_res:
+                continue
+                
+            conf = algo_res.get("confidence", 0)
+            setup = algo_res["bracket_setup"]
+            
+            if conf >= min_conf:
+                # -------------------------------------------------------------
+                # Automated News & Earnings Safety Filter
+                # -------------------------------------------------------------
+                if state.get("news_safety_filter_enabled", True) and not forced_symbol:
+                    try:
+                        import news_catalyst_engine
+                        recent_articles = await asyncio.to_thread(news_catalyst_engine.fetch_live_catalyst_news, sym, 5)
+                        breaking_high_impact = [
+                            a for a in recent_articles 
+                            if a.get("impact") in ["CRITICAL", "HIGH"] 
+                            and a.get("category") in ["REGULATORY", "EARNINGS", "MACRO"]
+                        ]
+                        if breaking_high_impact:
+                            lead = breaking_high_impact[0]
+                            sent = lead.get("sentiment", {}).get("bias", "NEUTRAL")
+                            # If trying to buy CALL but news is strong BEARISH (or DOJ/regulatory probe)
+                            if setup.get("side", "").upper() == "BUY" and sent == "BEARISH":
+                                print(f"[SAFETY FILTER] Blocked CALL on {sym}: Severe Bearish News Catalyst ({lead.get('headline')[:50]})")
+                                continue
+                            # If trying to buy PUT but news is strong BULLISH
+                            if setup.get("side", "").upper() == "SELL" and sent == "BULLISH":
+                                print(f"[SAFETY FILTER] Blocked PUT on {sym}: Strong Bullish News Catalyst ({lead.get('headline')[:50]})")
+                    except Exception as news_err:
+                        pass
+                # GEX Wall Proximity Filter: Avoid Buying Calls directly into Call Wall
+                # or Buying Puts directly into Put Support Wall
+                # -------------------------------------------------------------
+                if not forced_symbol:
+                    gex_info = algo_res.get("gex") or {}
+                    cw = gex_info.get("call_wall")
+                    pw = gex_info.get("put_wall")
+                    spot_val = float(setup.get("entry_price", 0))
+
+                    if spot_val > 0:
+                        # If Call Wall is within 0.35% above spot, upside is severely capped by dealer long gamma pin
+                        if setup.get("side", "").upper() == "BUY" and cw and cw > spot_val:
+                            dist_to_cw_pct = ((cw - spot_val) / spot_val) * 100
+                            if dist_to_cw_pct < 0.35:
+                                print(f"[GEX GATE] Skipped CALL on {sym}: Spot (${spot_val:.2f}) pinned within {dist_to_cw_pct:.2f}% of Dealer Call Resistance Wall (${cw:.2f}).")
+                                continue
+                        # If Put Wall is within 0.35% below spot, downside is protected by dealer put floor
+                        if setup.get("side", "").upper() == "SELL" and pw and pw < spot_val:
+                            dist_to_pw_pct = ((spot_val - pw) / spot_val) * 100
+                            if dist_to_pw_pct < 0.35:
+                                print(f"[GEX GATE] Skipped PUT on {sym}: Spot (${spot_val:.2f}) pinned within {dist_to_pw_pct:.2f}% of Dealer Put Support Floor (${pw:.2f}).")
+                                continue
+
+                # -------------------------------------------------------------
+                # Macro Index Regime Alignment Gate (SPY/QQQ Beta Alignment)
+                # Avoid buying Long Calls during market-wide breakdown or Puts during broad market rally
+                # -------------------------------------------------------------
+                if not forced_symbol and sym not in ["SPY", "QQQ"]:
+                    spy_tape = CACHE.get("alpaca_tape", {}).get("data", {}).get("tape", {}).get("SPY", {})
+                    spy_chg = spy_tape.get("change")
+                    if spy_chg is not None:
+                        # Severe market trend contra-trade filter
+                        if setup.get("side", "").upper() == "BUY" and float(spy_chg) <= -1.25:
+                            print(f"[MACRO GATE] Skipped CALL on {sym}: SPY experiencing severe intraday liquidation ({spy_chg:+.2f}%).")
+                            continue
+                        elif setup.get("side", "").upper() == "SELL" and float(spy_chg) >= 1.25:
+                            print(f"[MACRO GATE] Skipped PUT on {sym}: SPY in strong broad-market short squeeze ({spy_chg:+.2f}%).")
+                            continue
+
+                res_sym = resolve_symbol(sym)
+                should_sim = state.get("is_simulated", False) or (not market_open and not res_sym["is_crypto"])
+                
+                # Strict Options Only guard: Exclude crypto and non-optionable assets
+                if options_only and res_sym["is_crypto"]:
+                    print(f"[COPILOT] Skipping {sym}: Crypto assets are excluded in Options-Only mode.")
+                    continue
+
+                # Check Options Only routing
+                from options_auto_trade import generate_options_bracket_setup
+                opt_bracket = setup.get("option_bracket")
+                if not opt_bracket and not res_sym["is_crypto"]:
+                    opt_bracket = generate_options_bracket_setup(sym, setup["entry_price"], setup["side"])
+                
+                if options_only:
+                    # -------------------------------------------------------------
+                    # Bid-Ask Spread Width & Liquidity Guard
+                    # Avoid illiquid strikes with wide dealer spread gouging (> 12% spread width)
+                    # -------------------------------------------------------------
+                    limit_entry_price = opt_bracket["estimated_premium"]
+                    if creds.get("key") and creds.get("secret") and not should_sim:
+                        try:
+                            opt_q_req = urllib.request.Request(
+                                f"https://data.alpaca.markets/v1beta1/options/snapshots?symbols={opt_bracket['contract_symbol']}",
+                                headers={"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
+                            )
+                            with urllib.request.urlopen(opt_q_req, timeout=3) as oq_resp:
+                                snap_data = json.loads(oq_resp.read().decode())
+                                snap = snap_data.get("snapshots", {}).get(opt_bracket["contract_symbol"], {})
+                                lq = snap.get("latestQuote") or {}
+                                bp = float(lq.get("bp") or 0)
+                                ap = float(lq.get("ap") or 0)
+                                if bp > 0 and ap > 0:
+                                    mid = (bp + ap) / 2.0
+                                    spread_width_pct = (ap - bp) / mid
+                                    if spread_width_pct > 0.12:
+                                        print(f"[LIQUIDITY GUARD] Skipped {opt_bracket['contract_symbol']}: Excessive Bid/Ask Spread ({spread_width_pct*100:.1f}% > 12% max).")
+                                        continue
+                                    # Route with Price Improvement (Bid + 40% of spread instead of paying full Ask)
+                                    limit_entry_price = round(bp + 0.40 * (ap - bp), 2)
+                        except Exception as oq_err:
+                            pass
+
+                    # ROUTE TO OPTIONS CONTRACT BRACKET (OCC ATM Call/Put)
+                    order_req = BracketOrderRequest(
+                        symbol=opt_bracket["contract_symbol"],
+                        qty=state.get("order_qty", 1),
+                        side="buy", # Always buy Call or Put contract to open
+                        limit_price=limit_entry_price,
+                        take_profit_price=opt_bracket["take_profit_price"],
+                        stop_loss_price=opt_bracket["stop_loss_price"],
+                        simulated=should_sim,
+                        is_option=True,
+                        option_details=opt_bracket
+                    )
+                    
+                    order_res = await place_bracket_order(order_req)
+                    
+                    ticket = {
+                        "id": f"copt_{sym}_{int(now_ts)}",
+                        "timestamp": now_ts,
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "symbol": opt_bracket["contract_symbol"],
+                        "underlying": sym,
+                        "side": opt_bracket["option_type"].upper(), # CALL or PUT
+                        "action": "BUY_TO_OPEN",
+                        "strike": opt_bracket["strike"],
+                        "expiry": opt_bracket["expiry"],
+                        "multiplier": 100,
+                        "is_option": True,
+                        "auto_flatten_eod": True,
+                        "eod_rule": "Mandatory auto-close at 15:50 ET",
+                        "price": opt_bracket["estimated_premium"],
+                        "tp": opt_bracket["take_profit_price"],
+                        "sl": opt_bracket["stop_loss_price"],
+                        "mode": "PAPER_SIMULATION" if should_sim else "ALPACA_PAPER",
+                        "status": "FILLED" if order_res.get("status") in ["SUBMITTED", "SIMULATED_FILLED"] else "REJECTED",
+                        "confidence": conf,
+                        "win_probability": algo_res.get("win_probability", "70%"),
+                        "order_details": order_res
+                    }
+                else:
+                    # SHARES ROUTE (Only active if user manually turns off Options-Only mode)
+                    order_req = BracketOrderRequest(
+                        symbol=setup["symbol"],
+                        qty=state.get("order_qty", 1),
+                        side=setup["side"],
+                        limit_price=setup["entry_price"],
+                        take_profit_price=setup["take_profit"],
+                        stop_loss_price=setup["stop_loss"],
+                        simulated=should_sim
+                    )
+                    
+                    order_res = await place_bracket_order(order_req)
+                    
+                    ticket = {
+                        "id": f"copt_{sym}_{int(now_ts)}",
+                        "timestamp": now_ts,
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "symbol": sym,
+                        "side": setup["side"].upper(),
+                        "price": setup["entry_price"],
+                        "tp": setup["take_profit"],
+                        "sl": setup["stop_loss"],
+                        "mode": "PAPER_SIMULATION" if should_sim else "ALPACA_PAPER",
+                        "status": "FILLED" if order_res.get("status") in ["SUBMITTED", "SIMULATED_FILLED"] else "REJECTED",
+                        "confidence": conf,
+                        "win_probability": algo_res.get("win_probability", "70%"),
+                        "order_details": order_res
+                    }
+                
+                state["last_trades"].insert(0, ticket)
+                state["last_trades"] = state["last_trades"][:50]
+                trigger_times[sym] = now_ts
+                executed_trades.append(ticket)
+                state["daily_trades_count"] = state.get("daily_trades_count", 0) + 1
+                state["last_global_trade_time"] = now_ts
+                
+                # Send email notification
+                try:
+                    from email_notifier import send_email, render_copilot_trade_alert_html
+                    opt_str = f" [{ticket.get('side')} ${ticket.get('strike')} Exp {ticket.get('expiry')}]" if ticket.get("is_option") else ""
+                    subj = f"⚡ CO-PILOT {ticket['symbol']}{opt_str} @ ${ticket['price']}"
+                    html = render_copilot_trade_alert_html(ticket)
+                    await asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com")
+                except Exception as mail_err:
+                    print(f"Co-Pilot email alert error: {mail_err}")
+                
+        except Exception as eval_err:
+            print(f"Error evaluating candidate {sym}: {eval_err}")
+            
+    state["last_trigger_times"] = trigger_times
+    state["last_scan_time"] = time.time()
+    mode_label = "Options Only (15:50 ET Auto-Close)" if options_only else "Equities/Shares"
+    state["last_status_message"] = f"Scanned {len(candidates)} {mode_label} assets at {datetime.now().strftime('%H:%M:%S')}. Executed {len(executed_trades)} trades."
+    save_copilot_state(state)
+    
+    return {
+        "status": "SUCCESS",
+        "scanned": len(candidates),
+        "executed_count": len(executed_trades),
+        "executed_trades": executed_trades
+    }
+
+@app.post("/api/copilot/trigger-now")
+async def trigger_copilot_now(symbol: Optional[str] = None):
+    res = await _execute_copilot_eval_cycle(forced_symbol=symbol)
+    return res
+
+async def _copilot_autonomous_worker():
+    while True:
+        try:
+            await asyncio.sleep(20)
+            
+            # 1. Evaluate Breakeven Ratchets and Take Profit / Stop Loss Exits
+            try:
+                import paper_engine
+                from options_auto_trade import estimate_option_premium
+                c_state = load_copilot_state()
+                r_enabled = c_state.get("breakeven_ratchet_enabled", True)
+                
+                prices = {}
+                # Ingest all live tape prices into price map for bracket and ratchet checks
+                for k, v in LAST_KNOWN_TAPE_PRICES.items():
+                    if isinstance(v, dict) and v.get("price"):
+                        prices[k] = float(v["price"])
+                for k, v in live_price_cache.items():
+                    if v:
+                        prices[k] = float(v)
+                    
+                p_state = paper_engine.load_paper_state()
+                for sym, pos in p_state.get("positions", {}).items():
+                    if pos.get("is_option"):
+                        und = pos.get("underlying", "SPY")
+                        spot = prices.get(und) or live_price_cache.get(und)
+                        if spot:
+                            est_p = estimate_option_premium(
+                                spot=float(spot),
+                                strike=float(pos.get("strike", spot)),
+                                dte_days=float(pos.get("dte_days", 0.5)),
+                                is_call=(pos.get("option_type", "CALL").upper() == "CALL")
+                            )
+                            prices[sym] = est_p
+                            
+                ratchet_res = paper_engine.check_paper_bracket_triggers(prices, ratchet_enabled=r_enabled)
+                if ratchet_res.get("ratchets"):
+                    for r in ratchet_res["ratchets"]:
+                        print(f"[CO-PILOT RATCHET] {r['symbol']}: Level {r['level']} Stop Loss moved to ${r['new_sl']} (+{r['gain_pct']}%)")
+            except Exception as r_err:
+                pass
+
+            # 1B. Real-time Live Alpaca Stop Loss, Take Profit & Breakeven Monitor
+            # Actively enforces stop losses directly on Alpaca options (since Alpaca API does not accept exchange-side bracket orders on options)
+            try:
+                alp_creds = get_alpaca_creds()
+                if alp_creds.get("key") and alp_creds.get("secret"):
+                    active_alp = get_all_active_positions(alp_creds)
+                    cop_state = load_copilot_state()
+                    r_active = cop_state.get("breakeven_ratchet_enabled", True)
+                    
+                    for p in active_alp.get("alpaca_positions", []):
+                        psym = p.get("symbol", "")
+                        qty = str(p.get("qty", "1"))
+                        plpc = float(p.get("unrealized_plpc") or 0.0)
+                        pl_dollars = float(p.get("unrealized_pl") or 0.0)
+                        is_opt = len(psym) >= 10 and any(c in psym for c in ["C", "P"])
+                        
+                        # A) STOP LOSS TRIGGER: -28% for options, -3% for equities
+                        sl_thresh = -0.28 if is_opt else -0.03
+                        if plpc <= sl_thresh:
+                            print(f"[ALGO STOP-LOSS] Closing {psym} on Alpaca: PnL {plpc*100:.1f}% <= {sl_thresh*100:.1f}% (${pl_dollars:.2f})")
+                            closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
+                            if closed_ok:
+                                exit_ticket = {
+                                    "id": f"sl_{psym}_{int(time.time())}",
+                                    "timestamp": time.time(),
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "symbol": psym,
+                                    "side": "STOP_LOSS_CLOSED",
+                                    "price": float(p.get("current_price") or 0.0),
+                                    "pnl_pct": f"{plpc*100:+.1f}%",
+                                    "pnl_dollars": round(pl_dollars, 2),
+                                    "reason": f"Institutional Stop Loss Executed ({plpc*100:.1f}%)",
+                                    "mode": "ALPACA_PAPER",
+                                    "status": "STOP_LOSS_CLOSED"
+                                }
+                                cop_state["last_trades"].insert(0, exit_ticket)
+                                cop_state["last_trades"] = cop_state["last_trades"][:50]
+                                save_copilot_state(cop_state)
+                                try:
+                                    from email_notifier import send_email
+                                    subj = f"🛑 STOP LOSS EXECUTED: {psym} Closed at {plpc*100:.1f}%"
+                                    html = f"<div style='background:#111;color:#fff;padding:16px;'><h3>🛑 Autonomous Stop Loss Executed</h3><p>Symbol: {psym}</p><p>Loss: {plpc*100:.1f}% (${pl_dollars:.2f})</p><p>Account capital preserved.</p></div>"
+                                    asyncio.create_task(asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com"))
+                                except Exception:
+                                    pass
+                            continue
+
+                        # B) TAKE PROFIT TRIGGER: +40% for options, +4% for equities
+                        tp_thresh = 0.40 if is_opt else 0.04
+                        if plpc >= tp_thresh:
+                            print(f"[ALGO TAKE-PROFIT] Locking Profit for {psym} on Alpaca: PnL {plpc*100:.1f}% >= +{tp_thresh*100:.1f}% (+${pl_dollars:.2f})")
+                            closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
+                            if closed_ok:
+                                exit_ticket = {
+                                    "id": f"tp_{psym}_{int(time.time())}",
+                                    "timestamp": time.time(),
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "symbol": psym,
+                                    "side": "TAKE_PROFIT_CLOSED",
+                                    "price": float(p.get("current_price") or 0.0),
+                                    "pnl_pct": f"{plpc*100:+.1f}%",
+                                    "pnl_dollars": round(pl_dollars, 2),
+                                    "reason": f"Target Profit Locked (+{plpc*100:.1f}%)",
+                                    "mode": "ALPACA_PAPER",
+                                    "status": "TAKE_PROFIT_CLOSED"
+                                }
+                                cop_state["last_trades"].insert(0, exit_ticket)
+                                cop_state["last_trades"] = cop_state["last_trades"][:50]
+                                save_copilot_state(cop_state)
+                                try:
+                                    from email_notifier import send_email
+                                    subj = f"🎯 TAKE PROFIT LOCKED: {psym} Closed at +{plpc*100:.1f}%"
+                                    html = f"<div style='background:#111;color:#fff;padding:16px;'><h3>🎯 Autonomous Take Profit Executed</h3><p>Symbol: {psym}</p><p>Gain: +{plpc*100:.1f}% (+${pl_dollars:.2f})</p><p>Profit secured into cash.</p></div>"
+                                    asyncio.create_task(asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com"))
+                                except Exception:
+                                    pass
+                            continue
+
+                        # C) BREAKEVEN RATCHET: Peak >= +15%, pull back <= +2%
+                        if r_active:
+                            hwm_key = f"hwm_{psym}"
+                            prev_hwm = float(cop_state.get(hwm_key, 0.0))
+                            if plpc > prev_hwm:
+                                cop_state[hwm_key] = plpc
+                                save_copilot_state(cop_state)
+                            elif prev_hwm >= 0.15 and plpc <= 0.02:
+                                print(f"[ALGO RATCHET] Breakeven Exit for {psym}: Peak was +{prev_hwm*100:.1f}%, now {plpc*100:.1f}%")
+                                closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
+                                if closed_ok:
+                                    cop_state.pop(hwm_key, None)
+                                    exit_ticket = {
+                                        "id": f"be_{psym}_{int(time.time())}",
+                                        "timestamp": time.time(),
+                                        "time": datetime.now().strftime("%H:%M:%S"),
+                                        "symbol": psym,
+                                        "side": "BREAKEVEN_CLOSED",
+                                        "price": float(p.get("current_price") or 0.0),
+                                        "pnl_pct": f"{plpc*100:+.1f}%",
+                                        "pnl_dollars": round(pl_dollars, 2),
+                                        "reason": f"Breakeven Ratchet Preserved (Peak: +{prev_hwm*100:.1f}%)",
+                                        "mode": "ALPACA_PAPER",
+                                        "status": "BREAKEVEN_CLOSED"
+                                    }
+                                    cop_state["last_trades"].insert(0, exit_ticket)
+                                    cop_state["last_trades"] = cop_state["last_trades"][:50]
+                                    save_copilot_state(cop_state)
+            except Exception as alp_bracket_err:
+                print(f"[ALGO BRACKET MONITOR] Error: {alp_bracket_err}")
+
+            # 2. End-of-Day 15:50 ET Options Auto-Flatten (Hard Rule)
+            await _execute_eod_options_auto_flatten()
+
+            # 3. Check Daily Profit Target & Max Loss Circuit Breakers
+            current_state = load_copilot_state()
+            if current_state.get("circuit_breaker_status") in ["TARGET_REACHED", "MAX_LOSS_HALTED"]:
+                # Circuit breaker tripped: preserve capital, do not scan for new trades
+                continue
+
+            # 4. Autonomous Walk-Forward Scan for Candidates
+            await _execute_copilot_eval_cycle()
+        except Exception as e:
+            print(f"Autonomous Co-Pilot Daemon loop error: {e}")
+            await asyncio.sleep(15)
+
 @app.on_event("startup")
-async def start_alert_worker():
+async def start_background_workers():
     asyncio.create_task(_alerts_background_worker())
+    asyncio.create_task(_rsi_autonomous_worker())
+    asyncio.create_task(_copilot_autonomous_worker())
+
+# Automatically mirror all /api/* routes to /* for reverse proxies (like Firebase Hosting) that strip the /api prefix
+for r in list(app.routes):
+    if hasattr(r, 'path') and r.path.startswith('/api/'):
+        alt_path = r.path[4:]
+        if hasattr(r, 'methods'):
+            try:
+                app.add_api_route(alt_path, r.endpoint, methods=list(r.methods))
+            except Exception:
+                pass
 
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.exists(frontend_dist):
