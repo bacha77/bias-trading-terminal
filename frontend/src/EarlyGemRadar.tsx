@@ -122,11 +122,14 @@ export function EarlyGemRadar() {
     }
   }, [selectedChain, minLiq]);
 
-  // Initial fetch and auto-refresh every 25 seconds
+  // Defer initial fetch so main terminal loads instantly with full priority, then refresh every 60s
   useEffect(() => {
-    fetchGems();
-    const interval = setInterval(fetchGems, 25000);
-    return () => clearInterval(interval);
+    const timer = setTimeout(fetchGems, 2000);
+    const interval = setInterval(fetchGems, 60000);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [fetchGems]);
 
   const copyToClipboard = (text: string) => {

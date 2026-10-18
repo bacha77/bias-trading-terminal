@@ -28,7 +28,11 @@ interface MultiChartGridProps {
   setIsExpandedCanvas: (expanded: boolean) => void;
 }
 
-const POPULAR_TICKERS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'META', 'AMZN', 'IWM'];
+const POPULAR_TICKERS = [
+  'SPY', 'QQQ', 'IWM', 'DIA', 'SMH', 'NVDA', 'AAPL', 'TSLA', 'AMD', 'MSFT',
+  'AMZN', 'META', 'GOOGL', 'NFLX', 'PLTR', 'COIN', 'MSTR', 'MARA', 'AVGO', 'TSM',
+  'SMCI', 'MU', 'ARM', 'SOFI', 'UBER', 'HOOD', 'INTC', 'JPM', 'BAC', 'DIS'
+];
 
 export function MultiChartGrid({
   primaryTicker,
@@ -182,7 +186,7 @@ export function MultiChartGrid({
   const quadHeight = isExpandedCanvas ? 540 : 480;
 
   return (
-    <div className="flex-1 flex flex-col h-full">
+    <div className="flex-1 min-h-0 flex flex-col h-full">
       {/* Top Multi-Chart Command Toolbar */}
       <div className="flex flex-wrap justify-between items-center pb-2.5 mb-2 border-b border-white/10 gap-2">
         <div className="flex items-center gap-3 flex-wrap">
@@ -285,7 +289,7 @@ export function MultiChartGrid({
 
       {/* Render Single View */}
       {layout === 'single' && (
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 min-h-0 flex flex-col">
           <ErrorBoundary fallbackTitle="Main Chart Render Error">
             <TradingChart
               ticker={primaryTicker}
@@ -301,11 +305,11 @@ export function MultiChartGrid({
 
       {/* Render Dual Split View (2 Charts) */}
       {layout === 'dual' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1 min-h-0">
           {/* Chart 1: Primary Ticker */}
-          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col">
+          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col min-h-0">
             {renderSlotHeader(0, primaryTicker, true)}
-            <div className="flex-1 p-2">
+            <div className="flex-1 min-h-0 p-2 flex flex-col">
               <ErrorBoundary fallbackTitle="Slot 1 Chart Error">
                 <TradingChart
                   ticker={primaryTicker}
@@ -321,9 +325,9 @@ export function MultiChartGrid({
           </div>
 
           {/* Chart 2: Slot 2 */}
-          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col">
+          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col min-h-0">
             {renderSlotHeader(1, slot2, false)}
-            <div className="flex-1 p-2">
+            <div className="flex-1 min-h-0 p-2 flex flex-col">
               <ErrorBoundary fallbackTitle="Slot 2 Chart Error">
                 <TradingChart
                   ticker={slot2}
@@ -340,11 +344,11 @@ export function MultiChartGrid({
 
       {/* Render Quad Matrix View (4 Charts: 2x2) */}
       {layout === 'quad' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1 min-h-0">
           {/* Slot 1: Primary */}
-          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col">
+          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col min-h-0">
             {renderSlotHeader(0, primaryTicker, true)}
-            <div className="flex-1 p-1.5">
+            <div className="flex-1 min-h-0 p-1.5 flex flex-col">
               <ErrorBoundary fallbackTitle="Quad Slot 1 Chart Error">
                 <TradingChart
                   ticker={primaryTicker}
@@ -360,9 +364,9 @@ export function MultiChartGrid({
           </div>
 
           {/* Slot 2 */}
-          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col">
+          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col min-h-0">
             {renderSlotHeader(1, slot2, false)}
-            <div className="flex-1 p-1.5">
+            <div className="flex-1 min-h-0 p-1.5 flex flex-col">
               <ErrorBoundary fallbackTitle="Quad Slot 2 Chart Error">
                 <TradingChart
                   ticker={slot2}
@@ -376,9 +380,9 @@ export function MultiChartGrid({
           </div>
 
           {/* Slot 3 */}
-          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col">
+          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col min-h-0">
             {renderSlotHeader(2, slot3, false)}
-            <div className="flex-1 p-1.5">
+            <div className="flex-1 min-h-0 p-1.5 flex flex-col">
               <ErrorBoundary fallbackTitle="Quad Slot 3 Chart Error">
                 <TradingChart
                   ticker={slot3}
@@ -392,9 +396,9 @@ export function MultiChartGrid({
           </div>
 
           {/* Slot 4 */}
-          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col">
+          <div className="rounded-lg border border-white/10 bg-black/40 overflow-hidden flex flex-col min-h-0">
             {renderSlotHeader(3, slot4, false)}
-            <div className="flex-1 p-1.5">
+            <div className="flex-1 min-h-0 p-1.5 flex flex-col">
               <ErrorBoundary fallbackTitle="Quad Slot 4 Chart Error">
                 <TradingChart
                   ticker={slot4}

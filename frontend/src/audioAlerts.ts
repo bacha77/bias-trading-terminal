@@ -1,5 +1,56 @@
 // Web Audio API Synthesizer for Institutional Level Proximity & Breaches
 let audioCtx: AudioContext | null = null;
+let voiceEnabled = true;
+const lastSpokenMap = new Map<string, number>();
+
+export function isVoiceAlertEnabled(): boolean {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('bias_voice_alerts');
+    if (saved !== null) return saved === 'true';
+  }
+  return voiceEnabled;
+}
+
+export function setVoiceAlertEnabled(enabled: boolean): void {
+  voiceEnabled = enabled;
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('bias_voice_alerts', String(enabled));
+  }
+}
+
+export function speakInstitutionalVoice(text: string, priority: 'normal' | 'high' = 'normal'): void {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  if (!isVoiceAlertEnabled()) return;
+
+  const now = Date.now();
+  const lastTime = lastSpokenMap.get(text) || 0;
+  // Prevent repeating same message within 25s
+  if (now - lastTime < 25000) return;
+  lastSpokenMap.set(text, now);
+
+  try {
+    if (priority === 'high') {
+      window.speechSynthesis.cancel();
+    }
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.05;
+    utter.pitch = 0.96;
+    utter.volume = 0.85;
+
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => 
+      v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('David'))
+    ) || voices.find(v => v.lang.startsWith('en'));
+
+    if (preferredVoice) {
+      utter.voice = preferredVoice;
+    }
+
+    window.speechSynthesis.speak(utter);
+  } catch (err) {
+    console.warn('Speech synthesis alert failed:', err);
+  }
+}
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;

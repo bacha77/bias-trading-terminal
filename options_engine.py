@@ -109,21 +109,23 @@ def options_analytics(ticker: str, expiry: str | None = None, spot_override: flo
 
     hist = tk.history(period="3mo", interval="1d", auto_adjust=False)
     if hist.empty:
-        raise ValueError(f"No price history for {ticker}")
+        hist = tk.history(period="1mo", interval="1d", auto_adjust=False)
+    if hist.empty:
+        hist = tk.history(period="5d", interval="1d", auto_adjust=False)
         
-    valid_close = hist["Close"].dropna()
+    valid_close = hist["Close"].dropna() if not hist.empty else None
     if spot_override and float(spot_override) > 0:
         spot = float(spot_override)
-    elif not valid_close.empty:
+    elif valid_close is not None and not valid_close.empty:
         spot = float(valid_close.iloc[-1])
     else:
         spot = 500.0
         
-    prev = float(valid_close.iloc[-2]) if len(valid_close) > 1 else spot
+    prev = float(valid_close.iloc[-2]) if valid_close is not None and len(valid_close) > 1 else spot
 
     # Realized vol (20d close-to-close, annualised)
-    rets = np.log(hist["Close"] / hist["Close"].shift(1)).dropna()
-    rv20 = float(rets.tail(20).std() * math.sqrt(252)) if len(rets) >= 20 else None
+    rets = np.log(hist["Close"] / hist["Close"].shift(1)).dropna() if not hist.empty and "Close" in hist else None
+    rv20 = float(rets.tail(20).std() * math.sqrt(252)) if rets is not None and len(rets) >= 20 else None
 
     expiries = list(tk.options or [])
     if not expiries:

@@ -288,3 +288,88 @@ def render_high_conviction_alert_html(ticker: str, alert_type: str, details: dic
     </body>
     </html>
     """
+
+def render_copilot_trade_alert_html(trade: dict) -> str:
+    now_str = datetime.now().strftime("%H:%M:%S ET · %b %d, %Y")
+    symbol = trade.get("symbol", "SPY")
+    occ_symbol = trade.get("occ_symbol", trade.get("symbol", "SPY"))
+    side = trade.get("side", "BUY").upper()
+    qty = trade.get("qty", 1)
+    price = trade.get("limit_price", trade.get("price", 0.0))
+    tp = trade.get("take_profit_price", trade.get("tp", 0.0))
+    sl = trade.get("stop_loss_price", trade.get("sl", 0.0))
+    mode = trade.get("mode", "ALPACA PAPER")
+    confidence = trade.get("confidence", 75)
+    win_prob = trade.get("win_probability", "68%")
+    is_option = trade.get("is_option", False) or trade.get("instrument") == "OPTION"
+    opt_type = trade.get("option_type", "CALL" if "BUY" in side else "PUT")
+    strike = trade.get("strike", "")
+    expiry = trade.get("expiry_str", trade.get("expiry", ""))
+    
+    is_bull = "BUY" in side or "LONG" in side or opt_type == "CALL"
+    theme_color = "#00FF66" if is_bull else "#FF3366"
+    bg_gradient = "#0d2818" if is_bull else "#2d1017"
+
+    headline = f"BUY {qty}x {occ_symbol} @ ${price:.2f}" if is_option else f"{side} {qty} {symbol} @ ${price:.2f}"
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="background-color: #050508; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 20px; margin: 0;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #0b0c10; border: 1px solid {theme_color}; border-radius: 12px; overflow: hidden; box-shadow: 0 0 25px rgba({ '0,255,102,0.2' if is_bull else '255,51,102,0.2' });">
+            <div style="background: {bg_gradient}; padding: 18px; border-bottom: 2px solid {theme_color};">
+                <span style="background: {theme_color}; color: #000; font-weight: bold; font-size: 10px; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">
+                    ⚡ AUTONOMOUS CO-PILOT: {'OPTIONS ONLY EXECUTION' if is_option else 'TRADE EXECUTED'}
+                </span>
+                <h1 style="margin: 8px 0 0 0; color: #ffffff; font-size: 21px; font-family: monospace;">{headline}</h1>
+                <p style="margin: 4px 0 0 0; color: #888888; font-size: 11px;">{now_str} · Mode: {mode} · Same-Day EOD Close: 15:50 ET</p>
+            </div>
+
+            <div style="padding: 20px;">
+                {f'''
+                <div style="background: #111e15 if is_bull else #251015; border: 1px solid {theme_color}40; padding: 10px 14px; border-radius: 8px; margin-bottom: 15px; font-size: 12px; font-family: monospace;">
+                    <strong style="color: #fff;">Option Contract:</strong> {opt_type} | Strike: ${strike} | Expiry: {expiry} | Multiplier: 100x
+                </div>
+                ''' if is_option and strike else ''}
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px; background: #161b22; padding: 12px; border-radius: 8px;">
+                    <div>
+                        <div style="font-size: 10px; color: #888; text-transform: uppercase;">Premium Entry</div>
+                        <div style="font-size: 16px; font-weight: bold; color: #fff; font-family: monospace;">${price:.2f}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 10px; color: #888; text-transform: uppercase;">Target (+40%)</div>
+                        <div style="font-size: 16px; font-weight: bold; color: #00FF66; font-family: monospace;">${tp:.2f}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 10px; color: #888; text-transform: uppercase;">Stop Loss (-25%)</div>
+                        <div style="font-size: 16px; font-weight: bold; color: #FF3366; font-family: monospace;">${sl:.2f}</div>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; margin-bottom: 15px; background: #111; padding: 10px 14px; border-radius: 8px; font-size: 12px;">
+                    <div><span style="color: #888;">Algo Confidence:</span> <strong style="color: {theme_color}; font-family: monospace;">{confidence}%</strong></div>
+                    <div><span style="color: #888;">Win Probability:</span> <strong style="color: #FFCC00; font-family: monospace;">{win_prob}</strong></div>
+                    <div><span style="color: #888;">EOD Flatten:</span> <strong style="color: #00FF66;">15:50 ET</strong></div>
+                </div>
+
+                <div style="background: #0d1117; padding: 12px; border-radius: 8px; font-size: 12px; color: #bbb; line-height: 1.5; margin-bottom: 20px; border-left: 3px solid {theme_color};">
+                    <strong>Options Execution Audit:</strong> Zero overnight theta decay and gap risk policy is active. If profit target or stop loss is not triggered intraday, this contract will automatically be closed at 15:50 ET before the closing bell.
+                </div>
+
+                <div style="text-align: center;">
+                    <a href="https://bias-trading-terminal-app.web.app" style="display: inline-block; background: {theme_color}; color: #000; font-weight: bold; padding: 10px 24px; border-radius: 6px; text-decoration: none; font-size: 13px;">
+                        VIEW ACTIVE TERMINAL EXECUTION →
+                    </a>
+                </div>
+            </div>
+            <div style="background-color: #07090e; padding: 10px 20px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #1a1e28;">
+                B.I.A.S. Autonomous Co-Pilot Daemon · Alpaca Paper Account #PA3AZT2ZU9IT
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+

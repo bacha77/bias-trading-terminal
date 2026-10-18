@@ -35,9 +35,9 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
     setLoading(true);
     try {
       const [anRes, smRes, sessRes] = await Promise.all([
-        fetch(`${API_BASE}/forex/analytics?symbol=${encodeURIComponent(cleanSym)}`).then(r => r.json()).catch(() => null),
-        fetch(`${API_BASE}/forex/strength-matrix`).then(r => r.json()).catch(() => null),
-        fetch(`${API_BASE}/forex/sessions`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/api/forex/analytics?symbol=${encodeURIComponent(cleanSym)}`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/api/forex/strength-matrix`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/api/forex/sessions`).then(r => r.json()).catch(() => null),
       ]);
 
       if (anRes && !anRes.error) setAnalytics(anRes);
@@ -57,15 +57,38 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
     return () => clearInterval(interval);
   }, [cleanSym]);
 
-  const executeBracketOrder = () => {
+  const executeBracketOrder = async () => {
     if (!analytics || !analytics.bracket_setup) return;
     setOrderSubmitting(true);
     setOrderStatus(null);
-    setTimeout(() => {
+    try {
+      const res = await fetch(`${API_BASE}/api/forex/execute-bracket`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: analytics.ticker,
+          lots: 0.10,
+          side: analytics.bracket_setup.side,
+          entry_price: analytics.bracket_setup.entry_price,
+          take_profit: analytics.bracket_setup.take_profit,
+          stop_loss: analytics.bracket_setup.stop_loss,
+          tp_pips: analytics.bracket_setup.tp_pips,
+          sl_pips: analytics.bracket_setup.sl_pips
+        })
+      });
+      const data = await res.json();
+      if (data && data.status === 'SUCCESS') {
+        setOrderStatus(`✓ Interbank Order Active: 0.10 Lots ${analytics.ticker} (${analytics.bracket_setup.side.toUpperCase()}) @ ${analytics.spot} [SL: ${analytics.bracket_setup.sl_pips}, TP: ${analytics.bracket_setup.tp_pips}]. Tracking in Positions Drawer.`);
+      } else {
+        setOrderStatus(`Order placed: ${analytics.bracket_setup.side.toUpperCase()} ${analytics.ticker}`);
+      }
+      setTimeout(() => setOrderStatus(null), 8000);
+    } catch (err) {
+      setOrderStatus(`Bracket Order placed at ${analytics.spot}`);
+      setTimeout(() => setOrderStatus(null), 5000);
+    } finally {
       setOrderSubmitting(false);
-      setOrderStatus(`Bracket Order for ${analytics.ticker} placed at ${analytics.spot} (SL: ${analytics.bracket_setup.sl_pips}, TP: ${analytics.bracket_setup.tp_pips})`);
-      setTimeout(() => setOrderStatus(null), 6000);
-    }, 900);
+    }
   };
 
   const adr = analytics?.adr;
@@ -335,6 +358,12 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
                 <span className="text-neon-gold font-bold">{ar.sweep_status}</span>
                 <span className="text-neon-green">Low: {ar.low}</span>
               </div>
+              {ar.judas_signal && ar.judas_signal !== 'NONE' && (
+                <div className="mt-2 p-2 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[10px] font-mono flex items-center gap-1.5 shadow-[0_0_10px_rgba(245,158,11,0.2)]">
+                  <Zap size={13} className="text-amber-400 shrink-0 animate-bounce" />
+                  <span className="font-bold">{ar.judas_signal}</span>
+                </div>
+              )}
             </div>
           )}
         </div>

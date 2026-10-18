@@ -103,7 +103,7 @@ export const StrategyBacktestLab: React.FC<Props> = ({ initialTicker = 'SPY', on
       setTicker(initialTicker);
       setInputTicker(initialTicker);
     }
-  }, [initialTicker]);
+  }, [initialTicker, ticker]);
 
   const executeBacktest = useCallback(async (
     targetTicker = ticker, 
@@ -114,7 +114,7 @@ export const StrategyBacktestLab: React.FC<Props> = ({ initialTicker = 'SPY', on
   ) => {
     setLoading(true);
     try {
-      const url = `${API_BASE}/backtest?ticker=${encodeURIComponent(targetTicker)}&strategy=${targetStrat}&period=${targetPeriod}&timeframe=${targetTf}&mode=${targetMode}`;
+      const url = `${API_BASE}/api/backtest?ticker=${encodeURIComponent(targetTicker)}&strategy=${targetStrat}&period=${targetPeriod}&timeframe=${targetTf}&mode=${targetMode}`;
       const res = await fetch(url);
       const json = await res.json();
       setData(json);

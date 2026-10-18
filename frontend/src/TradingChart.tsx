@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, AutoscaleInfo } from 'lightweight-charts';
-import { BarChart3, Layers, ZoomIn, ZoomOut, Maximize2, RefreshCcw, Activity } from 'lucide-react';
+import { BarChart3, Layers, ZoomIn, ZoomOut, Maximize2, RefreshCcw, Activity, ArrowDownToLine } from 'lucide-react';
 import { API_BASE } from './config';
 
 interface BarWithVolume {
@@ -173,12 +173,14 @@ export function TradingChart({
         horzLine: { color: '#00ffa3', width: 1, style: 2 },
       },
       rightPriceScale: {
-        borderColor: 'rgba(255, 255, 255, 0.12)',
-        scaleMargins: { top: 0.15, bottom: 0.15 },
+        visible: true,
+        borderColor: 'rgba(255, 255, 255, 0.18)',
+        scaleMargins: { top: 0.12, bottom: 0.18 },
         autoScale: true,
       },
       timeScale: {
-        borderColor: 'rgba(255, 255, 255, 0.12)',
+        visible: true,
+        borderColor: 'rgba(255, 255, 255, 0.18)',
         timeVisible: true,
         secondsVisible: false,
         barSpacing: 18,        // Wide, prominent candles (not squished)
@@ -199,8 +201,8 @@ export function TradingChart({
         mouseWheel: true,
         pinch: true,
       },
-      width: container.clientWidth,
-      height: container.clientHeight || 460,
+      width: container.clientWidth || 600,
+      height: container.clientHeight || 480,
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -269,15 +271,37 @@ export function TradingChart({
 
     const handleResize = () => {
       if (chartContainerRef.current && chartInstanceRef.current) {
-        chartInstanceRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight || chartHeight,
-        });
+        const clientW = chartContainerRef.current.clientWidth;
+        const clientH = chartContainerRef.current.clientHeight;
+        if (clientW > 0 && clientH > 0) {
+          chartInstanceRef.current.applyOptions({
+            width: clientW,
+            height: clientH,
+          });
+        }
       }
     };
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && chartContainerRef.current) {
+      resizeObserver = new ResizeObserver((entries) => {
+        if (!entries.length || !chartInstanceRef.current) return;
+        const entry = entries[0];
+        const w = entry.contentRect.width;
+        const h = entry.contentRect.height;
+        if (w > 0 && h > 0) {
+          chartInstanceRef.current.applyOptions({ width: w, height: h });
+        }
+      });
+      resizeObserver.observe(chartContainerRef.current);
+    }
+
     window.addEventListener('resize', handleResize);
 
     return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       window.removeEventListener('resize', handleResize);
       if (chartInstanceRef.current) {
         chartInstanceRef.current.remove();
@@ -289,7 +313,7 @@ export function TradingChart({
         lastBarRef.current = null;
       }
     };
-  }, [viewMode]);
+  }, [viewMode, chartHeight]);
 
   // Synchronize VWAP series visibility
   useEffect(() => {
@@ -371,7 +395,7 @@ export function TradingChart({
     } finally {
       setLoading(false);
     }
-  }, [ticker, timeframe]);
+  }, [ticker, timeframe, compact]);
 
   useEffect(() => {
     if (viewMode === 'levels') {
@@ -568,6 +592,23 @@ export function TradingChart({
     }
   };
 
+  // Scroll all the way down to real-time / latest price bar
+  const handleScrollToRealtime = () => {
+    if (!chartInstanceRef.current) return;
+    setZoomMode('candles');
+    chartInstanceRef.current.priceScale('right').applyOptions({ autoScale: true });
+    const timeScale = chartInstanceRef.current.timeScale();
+    timeScale.scrollToRealTime();
+    const range = timeScale.getVisibleLogicalRange();
+    if (range) {
+      const span = Math.min(50, Math.max(25, range.to - range.from));
+      timeScale.setVisibleLogicalRange({
+        from: range.to - span,
+        to: range.to + 3,
+      });
+    }
+  };
+
   // Toggle GEX Wall full view vs Candles focus
   const toggleZoom = () => {
     setZoomMode((prev) => (prev === 'candles' ? 'gex' : 'candles'));
@@ -651,6 +692,14 @@ export function TradingChart({
               >
                 <Maximize2 size={11} />
               </button>
+              <button
+                onClick={handleScrollToRealtime}
+                title="Scroll all the way down to real-time price & latest candle"
+                className="px-1.5 py-0.5 text-[9px] font-mono font-bold text-neon-green bg-neon-green/10 hover:bg-neon-green/20 border border-neon-green/30 rounded flex items-center gap-1 transition-all"
+              >
+                <ArrowDownToLine size={10} />
+                <span>NOW</span>
+              </button>
             </div>
           )}
 
@@ -722,8 +771,7 @@ export function TradingChart({
 
       {/* Main Chart Canvas Container */}
       <div 
-        className="flex-1 w-full relative rounded-lg border border-white/10 bg-[#070a13] overflow-hidden shadow-2xl flex flex-col"
-        style={{ minHeight: `${chartHeight}px`, height: `${chartHeight}px` }}
+        className="flex-1 min-h-0 w-full relative rounded-lg border border-white/10 bg-[#070a13] overflow-hidden shadow-2xl flex flex-col"
       >
         {/* Pro HUD Over Canvas */}
         {viewMode === 'levels' && (
@@ -784,7 +832,7 @@ export function TradingChart({
         {!compact && viewMode === 'levels' && effectiveGex?.put_wall && (
           <div 
             onClick={() => setZoomMode('gex')}
-            className="absolute bottom-6 right-3 z-10 cursor-pointer bg-neon-red/10 hover:bg-neon-red/20 border border-neon-red/40 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-mono text-neon-red font-bold flex items-center gap-1.5 transition-all shadow-[0_0_10px_rgba(255,42,109,0.2)]"
+            className="absolute bottom-9 right-3 z-10 cursor-pointer bg-neon-red/10 hover:bg-neon-red/20 border border-neon-red/40 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-mono text-neon-red font-bold flex items-center gap-1.5 transition-all shadow-[0_0_10px_rgba(255,42,109,0.2)]"
             title="Click to scale chart to Put Wall"
           >
             <span>▼ SUPPORT PUT WALL: ${effectiveGex.put_wall.toFixed(2)}</span>
@@ -797,15 +845,14 @@ export function TradingChart({
         )}
 
         {viewMode === 'levels' ? (
-          <div ref={chartContainerRef} className="w-full h-full" style={{ minHeight: `${chartHeight}px` }} />
+          <div ref={chartContainerRef} className="w-full h-full flex-1 min-h-0" />
         ) : (
           <iframe
             key={ticker}
             src={`https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=${encodeURIComponent(
               ticker
             )}&interval=D&hidesidetoolbar=0&symboledit=1&saveimage=1&toolbarbg=f1f3f6&studies=[]&theme=dark&style=1&timezone=exchange&studies_overrides={}&overrides={}&enabled_features=[]&disabled_features=[]&locale=en`}
-            className="w-full h-full border-0"
-            style={{ minHeight: `${chartHeight}px` }}
+            className="w-full h-full border-0 flex-1 min-h-0"
             title="TradingView Chart"
           />
         )}

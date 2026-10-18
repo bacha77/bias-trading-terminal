@@ -20,6 +20,11 @@ interface Position {
   unrealized_pl: number;
   unrealized_pl_pct: number;
   change_today: number;
+  is_option?: boolean;
+  multiplier?: number;
+  strike?: number;
+  expiry?: string;
+  option_type?: string;
 }
 
 interface PositionsData {
@@ -37,6 +42,8 @@ interface PositionsDrawerProps {
 
 export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDrawerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [activeAccountMode, setActiveAccountMode] = useState<'paper' | 'live'>('live');
+  const [paperAccount, setPaperAccount] = useState<any>(null);
   const [data, setData] = useState<PositionsData>({
     connected: false,
     positions: [],
@@ -48,20 +55,35 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [flattenConfirm, setFlattenConfirm] = useState(false);
 
+  const [liveAlpacaAccount, setLiveAlpacaAccount] = useState<any>(alpacaAccount);
+
   const fetchPositions = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/api/alpaca/positions`);
+      const isPaper = activeAccountMode === 'paper';
+      const posEndpoint = isPaper ? `${API_BASE}/api/paper/positions` : `${API_BASE}/api/alpaca/positions`;
+      const res = await fetch(posEndpoint);
       const json = await res.json();
       if (json && json.connected !== undefined) {
         setData(json);
       }
+      if (isPaper) {
+        const accRes = await fetch(`${API_BASE}/api/paper/account`);
+        const accJson = await accRes.json();
+        setPaperAccount(accJson);
+      } else {
+        const accRes = await fetch(`${API_BASE}/api/alpaca/account`);
+        const accJson = await accRes.json();
+        if (accJson && accJson.connected) {
+          setLiveAlpacaAccount(accJson);
+        }
+      }
     } catch (err) {
-      console.error('Error fetching Alpaca positions:', err);
+      console.error('Error fetching positions:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeAccountMode]);
 
   useEffect(() => {
     fetchPositions();
@@ -72,7 +94,10 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
   const handleClosePosition = async (symbol: string) => {
     try {
       setActionMsg(`Closing ${symbol}...`);
-      const res = await fetch(`${API_BASE}/api/alpaca/positions/close?symbol=${symbol}`, { method: 'POST' });
+      const endpoint = activeAccountMode === 'paper' 
+        ? `${API_BASE}/api/paper/positions/close?symbol=${symbol}` 
+        : `${API_BASE}/api/alpaca/positions/close?symbol=${symbol}`;
+      const res = await fetch(endpoint, { method: 'POST' });
       const json = await res.json();
       if (json.status === 'SUCCESS') {
         setActionMsg(`✓ Successfully closed ${symbol}`);
@@ -90,7 +115,10 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
   const handleFlattenAll = async () => {
     try {
       setActionMsg('Liquidating all positions...');
-      const res = await fetch(`${API_BASE}/api/alpaca/positions/flatten-all`, { method: 'POST' });
+      const endpoint = activeAccountMode === 'paper' 
+        ? `${API_BASE}/api/paper/positions/flatten-all` 
+        : `${API_BASE}/api/alpaca/positions/flatten-all`;
+      const res = await fetch(endpoint, { method: 'POST' });
       const json = await res.json();
       setFlattenConfirm(false);
       if (json.status === 'SUCCESS') {
@@ -107,7 +135,10 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
     }
   };
 
-  const plColor = data.total_unrealized_pl > 0 ? 'text-neon-green' : data.total_unrealized_pl < 0 ? 'text-neon-red' : 'text-slate-300';
+  const currentAcc = activeAccountMode === 'paper' ? paperAccount : (liveAlpacaAccount || alpacaAccount);
+  const totalUpl = Number(data?.total_unrealized_pl || 0);
+  const posCount = data?.count ?? (data?.positions?.length || 0);
+  const plColor = totalUpl > 0 ? 'text-neon-green' : totalUpl < 0 ? 'text-neon-red' : 'text-slate-300';
 
   return (
     <div className="glass-panel border-t border-neon-green/20 bg-black/80 backdrop-blur-xl shadow-2xl transition-all duration-300">
@@ -116,35 +147,59 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsOpen(!isOpen)}
-            className="flex items-center gap-2 text-white hover:text-neon-green font-bold transition-colors"
+            className="flex items-center gap-2 text-white hover:text-neon-green font-bold transition-colors cursor-pointer"
           >
             <Wallet size={14} className="text-neon-green" />
-            <span>ALPACA PORTFOLIO & POSITIONS</span>
+            <span>PORTFOLIO & POSITIONS</span>
             {isOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           </button>
 
+          {/* Paper vs Live Mode Switcher */}
+          <div className="flex items-center bg-white/5 rounded border border-white/10 p-0.5 text-[9px] font-bold">
+            <button
+              onClick={() => setActiveAccountMode('live')}
+              className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                activeAccountMode === 'live' 
+                  ? 'bg-neon-green/20 text-neon-green border border-neon-green/40' 
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              ALPACA PAPER ({alpacaAccount?.account_number || 'CONNECTED'})
+            </button>
+            <button
+              onClick={() => setActiveAccountMode('paper')}
+              className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                activeAccountMode === 'paper' 
+                  ? 'bg-neon-gold/20 text-neon-gold border border-neon-gold/40' 
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              OFFLINE SIMULATOR
+            </button>
+          </div>
+
           {/* Account status badge */}
-          {alpacaAccount && (
-            <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300">
-              ACC #{alpacaAccount.account_number || 'CONNECTED'} · {alpacaAccount.status || 'ACTIVE'}
+          {currentAcc && (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 hidden md:inline">
+              ACC #{currentAcc.account_number || (activeAccountMode === 'paper' ? 'PAPER-100K' : 'CONNECTED')} · {currentAcc.status || 'ACTIVE'}
             </span>
           )}
 
           {/* Quick Metrics */}
           <div className="hidden sm:flex items-center gap-3 text-[11px] pl-3 border-l border-white/10">
             <span>
-              Buying Power: <strong className="text-white">${Number(alpacaAccount?.buying_power || 0).toLocaleString()}</strong>
+              Buying Power: <strong className="text-white">${Number(currentAcc?.buying_power || (activeAccountMode === 'paper' ? 200000 : 0)).toLocaleString()}</strong>
             </span>
             <span>
-              Portfolio: <strong className="text-white">${Number(alpacaAccount?.portfolio_value || 0).toLocaleString()}</strong>
+              Portfolio: <strong className="text-white">${Number(currentAcc?.portfolio_value || (activeAccountMode === 'paper' ? 100000 : 0)).toLocaleString()}</strong>
             </span>
             <span>
               Unrealized P&L: <strong className={plColor}>
-                {data.total_unrealized_pl > 0 ? '+' : ''}${data.total_unrealized_pl.toFixed(2)}
+                {totalUpl > 0 ? '+' : ''}${totalUpl.toFixed(2)}
               </strong>
             </span>
             <span className="px-1.5 py-0.2 rounded bg-white/10 text-slate-300 text-[10px]">
-              {data.count} Open {data.count === 1 ? 'Position' : 'Positions'}
+              {posCount} Open {posCount === 1 ? 'Position' : 'Positions'}
             </span>
           </div>
         </div>
@@ -156,7 +211,7 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
             </span>
           )}
 
-          {data.count > 0 && (
+          {posCount > 0 && (
             <>
               {flattenConfirm ? (
                 <div className="flex items-center gap-1.5 bg-neon-red/20 px-2 py-1 rounded border border-neon-red/50">
@@ -228,13 +283,27 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
                   return (
                     <tr key={pos.symbol} className="hover:bg-white/[0.02] transition-colors">
                       <td className="py-2 px-2 font-bold text-white">
-                        <button
-                          onClick={() => onSelectTicker && onSelectTicker(pos.symbol)}
-                          className="hover:text-neon-green transition-colors text-left flex items-center gap-1"
-                          title="Click to view chart and options"
-                        >
-                          {pos.symbol}
-                        </button>
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => onSelectTicker && onSelectTicker(pos.symbol)}
+                              className="hover:text-neon-green transition-colors text-left font-bold"
+                              title="Click to view chart and options"
+                            >
+                              {pos.symbol}
+                            </button>
+                            {(pos.is_option || pos.multiplier === 100) && (
+                              <span className="px-1 py-0.2 rounded text-[8px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                                OPT 100x
+                              </span>
+                            )}
+                          </div>
+                          {(pos.is_option || pos.strike) && (
+                            <span className="text-[9px] text-slate-400 font-normal">
+                              ${pos.strike} {pos.option_type} · Exp {pos.expiry} (15:50 ET Exit)
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2 px-2">
                         <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
@@ -243,7 +312,9 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
                           {pos.side}
                         </span>
                       </td>
-                      <td className="py-2 px-2 text-slate-200">{pos.qty}</td>
+                      <td className="py-2 px-2 text-slate-200">
+                        {pos.qty} {pos.is_option ? 'contracts' : 'shs'}
+                      </td>
                       <td className="py-2 px-2 text-slate-300">${pos.avg_entry_price.toFixed(2)}</td>
                       <td className="py-2 px-2 font-bold text-white">${pos.current_price.toFixed(2)}</td>
                       <td className="py-2 px-2 text-slate-300">${pos.market_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>

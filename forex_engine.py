@@ -417,6 +417,27 @@ def get_forex_pair_analytics(symbol: str) -> dict:
     asian_low = round(l_day + (spot - l_day) * 0.35, p_dec)
     asian_range_pips = round((asian_high - asian_low) * p_mult, 1)
 
+    # 3b. ICT Asian Range "Judas Swing" False Breakout Detection
+    # When price sweeps Asian High during London Open (03:00-05:00 ET) and drops back inside -> High probability Short Reversal.
+    # When price sweeps Asian Low and springs back inside -> High probability Long Reversal.
+    sessions_status = get_forex_sessions_status()
+    is_london_open = "LONDON OPEN" in sessions_status.get("active_killzone", "")
+    is_ny_open = "NEW YORK OPEN" in sessions_status.get("active_killzone", "")
+    
+    judas_signal = "NONE"
+    judas_score = 0.0
+    if (is_london_open or is_ny_open):
+        if spot > asian_high:
+            sweep_pips = round((spot - asian_high) * p_mult, 1)
+            if 3.0 <= sweep_pips <= 20.0:
+                judas_signal = f"⚡ BEARISH JUDAS SWING TRAP (Asian High swept by {sweep_pips} pips · Reversal Expected)"
+                judas_score = -25.0
+        elif spot < asian_low:
+            sweep_pips = round((asian_low - spot) * p_mult, 1)
+            if 3.0 <= sweep_pips <= 20.0:
+                judas_signal = f"⚡ BULLISH JUDAS SWING TRAP (Asian Low swept by {sweep_pips} pips · Reversal Expected)"
+                judas_score = 25.0
+
     # 4. Institutional Quarter-Points (Round Numbers: 00, 20, 50, 80)
     # E.g. for EUR/USD 1.0850, 1.0900; for USD/JPY 152.00, 152.50
     step = 0.0050 if p_dec == 4 else 0.50
@@ -445,13 +466,13 @@ def get_forex_pair_analytics(symbol: str) -> dict:
     quote_strength = next((x["strength"] for x in csm["matrix"] if x["currency"] == quote_curr), 50.0)
     csm_spread = round(base_strength - quote_strength, 1)
 
-    # Multi-Factor Confluence: Technical Momentum + Quarter Points + CSM Score + Central Bank Carry
+    # Multi-Factor Confluence: Technical Momentum + Quarter Points + CSM Score + Central Bank Carry + Judas Swing
     tech_score = 30.0 if day_chg_pips > 0 else -30.0 if day_chg_pips < 0 else 0.0
     pivot_score = 25.0 if spot >= gamma_flip else -25.0
     csm_score = (csm_spread / 90.0) * 35.0
     carry_score = 10.0 if rate_diff > 0.5 else -10.0 if rate_diff < -0.5 else 0.0
 
-    total_confluence = tech_score + pivot_score + csm_score + carry_score
+    total_confluence = tech_score + pivot_score + csm_score + carry_score + judas_score
     is_bull = total_confluence >= 0
 
     if is_bull:
@@ -486,6 +507,8 @@ def get_forex_pair_analytics(symbol: str) -> dict:
         f"Active Killzone: {sessions_status['active_killzone']} · {sessions_status['killzone_sub']}",
         f"Asian Session Boundary: High {asian_high:.{p_dec}f} · Low {asian_low:.{p_dec}f} ({asian_range_pips} pip accumulation channel)"
     ]
+    if judas_signal != "NONE":
+        drivers.insert(0, judas_signal)
 
     bracket_setup = {
         "symbol": meta["display"],
@@ -553,7 +576,8 @@ def get_forex_pair_analytics(symbol: str) -> dict:
             "high": asian_high,
             "low": asian_low,
             "range_pips": asian_range_pips,
-            "sweep_status": "SWEEP PENDING" if spot > asian_high or spot < asian_low else "IN-RANGE ACCUMULATION"
+            "sweep_status": "SWEEP PENDING" if spot > asian_high or spot < asian_low else "IN-RANGE ACCUMULATION",
+            "judas_signal": judas_signal
         },
         "sessions": sessions_status
     }

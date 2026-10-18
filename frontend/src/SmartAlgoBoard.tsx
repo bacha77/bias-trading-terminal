@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Cpu, Target, Shield, ShieldCheck, CheckCircle2, Zap, Send, AlertCircle, Sparkles, 
-  Activity, Clock, BarChart3, RefreshCw, Dna, Bot, Play, Square, Radio, DollarSign, Award
+  Activity, Clock, BarChart3, RefreshCw, Dna, Bot, Play, Square, Radio, DollarSign, Award, Coins
 } from 'lucide-react';
 import { playInstitutionalChime, speakInstitutionalVoice } from './audioAlerts';
 import { API_BASE } from './config';
@@ -142,9 +142,24 @@ interface SmartAlgoProps {
   loading?: boolean;
   onSelectTicker?: (ticker: string) => void;
   tape?: Record<string, any>;
+  initialMode?: 'crypto' | 'options';
 }
 
-export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlgoProps) {
+export function SmartAlgoBoard({ data, loading, onSelectTicker, tape, initialMode }: SmartAlgoProps) {
+  const [activeSubTab, setActiveSubTab] = useState<'crypto' | 'options'>(() => {
+    if (initialMode) return initialMode;
+    const isCrypto = ['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'AVAX', 'LINK', 'ADA', 'AAVE', 'RENDER', 'UNI', 'LTC', 'DOT', 'ARB', 'ONDO', 'PEPE', 'SHIB', 'BONK', 'WIF', 'BCH'].includes(data?.ticker?.toUpperCase() || '');
+    return isCrypto ? 'crypto' : 'options';
+  });
+
+  useEffect(() => {
+    if (initialMode) {
+      setActiveSubTab(initialMode);
+    } else if (data?.ticker && ['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'AVAX', 'LINK', 'ADA', 'AAVE', 'RENDER', 'UNI', 'LTC', 'DOT', 'ARB', 'ONDO', 'PEPE', 'SHIB', 'BONK', 'WIF', 'BCH'].includes(data.ticker.toUpperCase())) {
+      setActiveSubTab('crypto');
+    }
+  }, [initialMode, data?.ticker]);
+
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderQty, setOrderQty] = useState(5);
   const [isSimulated, setIsSimulated] = useState(false);
@@ -215,6 +230,16 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
     multiplier?: number;
   }>>([]);
 
+  // Dedicated 24/7 Crypto Autonomous Co-Pilot State
+  const [cryptoArmed, setCryptoArmed] = useState<boolean>(true);
+  const [cryptoNotionalUsd, setCryptoNotionalUsd] = useState<number>(500);
+  const [cryptoMaxPositions, setCryptoMaxPositions] = useState<number>(3);
+  const [cryptoMinConfidence, setCryptoMinConfidence] = useState<number>(75);
+  const [cryptoActiveMonitors, setCryptoActiveMonitors] = useState<string[]>([]);
+  const [cryptoLastTrades, setCryptoLastTrades] = useState<any[]>([]);
+  const [cryptoStatusMsg, setCryptoStatusMsg] = useState<string>('Crypto 24/7 Daemon Initializing...');
+  const [isEvaluatingCryptoNow, setIsEvaluatingCryptoNow] = useState<boolean>(false);
+
   const lastExecutedKeyRef = useRef<string>('');
   const lastExecutedTimeRef = useRef<number>(0);
 
@@ -269,6 +294,20 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
         }
         if (json.executed_tickets && Array.isArray(json.executed_tickets)) {
           setCoPilotLogs(json.executed_tickets);
+        }
+        // Dedicated Crypto Telemetry
+        if (json.crypto_armed !== undefined) setCryptoArmed(json.crypto_armed);
+        if (json.crypto_notional_usd !== undefined) setCryptoNotionalUsd(json.crypto_notional_usd);
+        if (json.crypto_max_positions !== undefined) setCryptoMaxPositions(json.crypto_max_positions);
+        if (json.crypto_min_confidence !== undefined) setCryptoMinConfidence(json.crypto_min_confidence);
+        if (json.crypto_active_monitors && Array.isArray(json.crypto_active_monitors)) {
+          setCryptoActiveMonitors(json.crypto_active_monitors);
+        }
+        if (json.crypto_last_trades && Array.isArray(json.crypto_last_trades)) {
+          setCryptoLastTrades(json.crypto_last_trades);
+        }
+        if (json.crypto_last_status_message) {
+          setCryptoStatusMsg(json.crypto_last_status_message);
         }
         const mktStatus = json.market_open ? '🟢 US MARKET OPEN' : '🌙 OVERNIGHT CRYPTO & EXTENDED';
         setCopilotStatusMsg(`${mktStatus} · ${json.last_status_message || 'Cloud Daemon Active'}`);
@@ -513,6 +552,70 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
       .catch((err) => console.error('Auto trigger error:', err));
   }, [autoPilotEnabled, data, minConfidenceThreshold, fetchCopilotStatus]);
 
+  const handleToggleCryptoCopilot = async () => {
+    const next = !cryptoArmed;
+    setCryptoArmed(next);
+    try {
+      await fetch(`${API_BASE}/api/copilot/crypto-toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ armed: next })
+      });
+      notifyTabsSync();
+      fetchCopilotStatus();
+    } catch (e) {
+      console.error('Error toggling crypto copilot:', e);
+    }
+    if (next) {
+      playInstitutionalChime('gamma_flip');
+      speakInstitutionalVoice('Crypto 24/7 Autonomous Daemon is now armed.');
+    } else {
+      speakInstitutionalVoice('Crypto 24/7 Autonomous Daemon returned to standby.');
+    }
+  };
+
+  const handleChangeCryptoConfidence = async (val: number) => {
+    setCryptoMinConfidence(val);
+    try {
+      await fetch(`${API_BASE}/api/copilot/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crypto_min_confidence: val })
+      });
+      notifyTabsSync();
+      fetchCopilotStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleChangeCryptoNotional = async (val: number) => {
+    setCryptoNotionalUsd(val);
+    try {
+      await fetch(`${API_BASE}/api/copilot/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crypto_notional_usd: val })
+      });
+      notifyTabsSync();
+      fetchCopilotStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTriggerCryptoNow = async () => {
+    setIsEvaluatingCryptoNow(true);
+    try {
+      await fetch(`${API_BASE}/api/copilot/crypto-trigger-now`, { method: 'POST' });
+      fetchCopilotStatus();
+    } catch (e) {
+      console.error('Trigger crypto error:', e);
+    } finally {
+      setIsEvaluatingCryptoNow(false);
+    }
+  };
+
   if (loading && !data) {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-slate-500 font-mono text-xs gap-2">
@@ -607,10 +710,458 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
     } finally {
       setEvolvingGeneration(false);
     }
-  };
+  const renderCryptoCard = () => (
+    <div id="algo-crypto-copilot-card" className={`p-2.5 rounded-lg border transition-all ${
+      cryptoArmed 
+        ? 'bg-black/90 border-cyan-500/60 shadow-[0_0_20px_rgba(6,182,212,0.18)]' 
+        : 'bg-black/40 border-white/10'
+    }`}>
+      <div className="flex justify-between items-center pb-2 border-b border-white/10">
+        <div className="flex items-center gap-1.5">
+          <Coins size={14} className={cryptoArmed ? 'text-cyan-400 animate-pulse' : 'text-slate-400'} />
+          <span className="text-[10px] font-bold tracking-wider uppercase text-white flex items-center gap-1">
+            24/7 Crypto Autonomous Daemon (Alpaca Digital)
+          </span>
+          <span className={`text-[8px] px-1.5 py-0.2 rounded font-bold uppercase flex items-center gap-1 ${
+            cryptoArmed ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-white/5 text-slate-500'
+          }`}>
+            {cryptoArmed && <Radio size={8} className="animate-ping" />}
+            {cryptoArmed ? `ARMED ($${cryptoNotionalUsd}/TRADE)` : 'STANDBY'}
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleTriggerCryptoNow}
+            disabled={isEvaluatingCryptoNow}
+            title="Force immediate 24/7 crypto scan across all 20 coins"
+            className="px-2 py-1 rounded text-[9px] font-bold bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={9} className={isEvaluatingCryptoNow ? "animate-spin" : ""} />
+            <span>{isEvaluatingCryptoNow ? "SCANNING..." : "⚡ SCAN CRYPTO NOW"}</span>
+          </button>
+
+          <button
+            onClick={handleToggleCryptoCopilot}
+            className={`px-2.5 py-1 rounded text-[9px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+              cryptoArmed 
+                ? 'bg-neon-red/20 text-neon-red border border-neon-red/40 hover:bg-neon-red/30' 
+                : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30'
+            }`}
+          >
+            {cryptoArmed ? <Square size={9} fill="currentColor" /> : <Play size={9} fill="currentColor" />}
+            <span>{cryptoArmed ? 'DISARM CRYPTO' : 'ARM CRYPTO'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Crypto Daemon Telemetry Banner */}
+      <div className="mt-1.5 px-2 py-1 bg-white/[0.02] rounded border border-white/5 flex items-center justify-between text-[8px] font-mono text-slate-400">
+        <span className="truncate">{cryptoStatusMsg}</span>
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+          <span className="px-1.5 py-0.2 rounded font-bold border text-[8px] bg-cyan-500/20 text-cyan-300 border-cyan-500/40" title="Separate crypto allocation limit (does not count against stock options)">
+            ⚡ MAX {cryptoMaxPositions} POSITIONS
+          </span>
+          <span className="px-1.5 py-0.2 rounded font-bold border text-[8px] bg-emerald-500/20 text-emerald-300 border-emerald-500/40" title="Continuous 24/7/365 trading — never closes at 15:50 ET">
+            🟢 24/7/365 CONTINUOUS
+          </span>
+          <span className="px-1.5 py-0.2 rounded font-bold border text-[8px] bg-purple-500/20 text-purple-300 border-purple-500/40" title="Liquidates at -4% loss, locks breakeven at +6%, trails runner at +12%">
+            🛡️ -4% SL / +6% BE / +12% TRAIL
+          </span>
+          <span className="text-neon-gold text-[8px]">Fixed ${cryptoNotionalUsd} Notional</span>
+        </div>
+      </div>
+
+      {/* Crypto Parameters Row */}
+      <div className="grid grid-cols-3 gap-2 pt-2 text-[9px]">
+        <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
+          <span className="text-slate-400 text-[8px] uppercase">Min Confidence</span>
+          <div className="flex items-center gap-1 pt-0.5">
+            {[70, 75, 80, 85].map(thresh => (
+              <button
+                key={thresh}
+                onClick={() => handleChangeCryptoConfidence(thresh)}
+                className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all cursor-pointer ${
+                  cryptoMinConfidence === thresh 
+                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' 
+                    : 'text-slate-500 hover:text-white'
+                }`}
+              >
+                {thresh}%
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
+          <span className="text-slate-400 text-[8px] uppercase">Trade Sizing (USD)</span>
+          <div className="flex items-center gap-1 pt-0.5">
+            {[250, 500, 1000].map(amt => (
+              <button
+                key={amt}
+                onClick={() => handleChangeCryptoNotional(amt)}
+                className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all cursor-pointer ${
+                  cryptoNotionalUsd === amt 
+                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' 
+                    : 'text-slate-500 hover:text-white'
+                }`}
+              >
+                ${amt}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
+          <span className="text-slate-400 text-[8px] uppercase">Operating Hours</span>
+          <span className="mt-0.5 text-[8px] font-mono text-cyan-300 font-bold truncate">
+            24/7/365 UNRESTRICTED
+          </span>
+        </div>
+      </div>
+
+      {/* Active Liquid Crypto Assets Monitored Universe */}
+      <div className="mt-2 pt-2 border-t border-white/5 flex flex-col gap-1.5">
+        <div className="flex justify-between items-center text-[8px] text-slate-400">
+          <span className="uppercase font-bold tracking-wider text-cyan-300 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            Monitored Crypto Universe ({cryptoActiveMonitors.length || 20} High-Momentum Assets)
+          </span>
+          <span className="text-slate-500 text-[7.5px]">Option B + Top Tradable Tokens</span>
+        </div>
+        <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto no-scrollbar p-1 rounded bg-black/40 border border-white/5">
+          {(cryptoActiveMonitors.length > 0 ? cryptoActiveMonitors : [
+            "BTC", "ETH", "SOL", "DOGE", "XRP", "AVAX", "LINK", "ADA", "AAVE",
+            "RENDER", "UNI", "LTC", "DOT", "ARB", "ONDO", "PEPE", "SHIB", "BONK", "WIF", "BCH"
+          ]).map(sym => (
+            <button
+              key={sym}
+              type="button"
+              onClick={() => onSelectTicker && onSelectTicker(sym)}
+              className={`text-[8px] font-mono px-1.5 py-0.5 rounded border transition-all cursor-pointer flex items-center gap-1 ${
+                data?.ticker === sym 
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 font-bold shadow-[0_0_8px_rgba(6,182,212,0.3)]' 
+                  : 'bg-white/[0.03] text-slate-400 border-white/5 hover:border-white/20 hover:text-white'
+              }`}
+              title={`Load ${sym} Crypto Intelligence`}
+            >
+              <span>{sym}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Crypto Executed Orders Log */}
+      {cryptoLastTrades.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-white/5 flex flex-col gap-1">
+          <div className="flex justify-between items-center text-[8px] text-slate-400">
+            <span className="uppercase font-bold tracking-wider text-cyan-300">Crypto Executions ({cryptoLastTrades.length})</span>
+            <span className="text-[7.5px] text-slate-500">Autonomous Alpaca Executions</span>
+          </div>
+          <div className="max-h-24 overflow-y-auto no-scrollbar flex flex-col gap-1">
+            {cryptoLastTrades.map(log => (
+              <div key={log.id} className="text-[8px] bg-black/40 p-1.5 rounded border border-white/5 flex justify-between items-center font-mono">
+                <div className="flex items-center gap-1.5">
+                  <span className={`px-1 py-0.2 rounded font-bold ${log.side?.includes('BUY') ? 'bg-cyan-500/20 text-cyan-300' : 'bg-neon-red/20 text-neon-red'}`}>
+                    {log.side} {log.symbol}
+                  </span>
+                  {log.notional && (
+                    <span className="text-white font-bold">${log.notional} USD</span>
+                  )}
+                  {log.price && (
+                    <span className="text-slate-300">@ ${log.price}</span>
+                  )}
+                  {log.pnl_pct && (
+                    <span className={log.pnl_pct.startsWith('+') ? 'text-neon-green font-bold' : 'text-neon-red font-bold'}>
+                      {log.pnl_pct} ({log.reason || 'Closed'})
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 text-slate-400">
+                  <span className="text-neon-gold">{log.mode || 'ALPACA 24/7'}</span>
+                  <span>{log.time}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderOptionsCard = () => (
+    <div id="algo-copilot-card" className={`p-2.5 rounded-lg border transition-all ${
+      autoPilotEnabled 
+        ? 'bg-black/85 border-neon-green/60 shadow-[0_0_20px_rgba(0,255,163,0.15)]' 
+        : 'bg-black/40 border-white/10'
+    }`}>
+      <div className="flex justify-between items-center pb-2 border-b border-white/10">
+        <div className="flex items-center gap-1.5">
+          <Bot size={13} className={autoPilotEnabled ? 'text-neon-green animate-pulse' : 'text-slate-400'} />
+          <span className="text-[10px] font-bold tracking-wider uppercase text-white flex items-center gap-1">
+            AI Quant Autonomous Co-Pilot (24/7 Cloud)
+            <HelpButton cardId="algo" title="Explain AI Quant Autonomous Trade Co-Pilot" />
+          </span>
+          <span className={`text-[8px] px-1.5 py-0.2 rounded font-bold uppercase flex items-center gap-1 ${
+            autoPilotEnabled ? 'bg-neon-green/20 text-neon-green border border-neon-green/40' : 'bg-white/5 text-slate-500'
+          }`}>
+            {autoPilotEnabled && <Radio size={8} className="animate-ping" />}
+            {autoPilotEnabled ? (optionsOnly ? 'ARMED (OPTIONS 100x)' : 'ARMED (SHARES)') : 'STANDBY'}
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleFlattenOptions}
+            disabled={isFlatteningOptions}
+            title="Immediately liquidate and flatten all open options contracts (EOD 15:50 ET Rule)"
+            className="px-2 py-1 rounded text-[9px] font-bold bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+          >
+            <ShieldCheck size={10} className={isFlatteningOptions ? "animate-spin" : ""} />
+            <span>{isFlatteningOptions ? "CLOSING..." : "🛡️ FLATTEN OPTIONS"}</span>
+          </button>
+
+          <button
+            onClick={handleTriggerNow}
+            disabled={isEvaluatingNow}
+            title="Force immediate algorithmic evaluation and execute bracket order if criteria met"
+            className="px-2 py-1 rounded text-[9px] font-bold bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={9} className={isEvaluatingNow ? "animate-spin" : ""} />
+            <span>{isEvaluatingNow ? "RUNNING..." : "⚡ EVALUATE NOW"}</span>
+          </button>
+
+          <button
+            onClick={handleToggleCopilot}
+            className={`px-2.5 py-1 rounded text-[9px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+              autoPilotEnabled 
+                ? 'bg-neon-red/20 text-neon-red border border-neon-red/40 hover:bg-neon-red/30' 
+                : 'bg-neon-green/20 text-neon-green border border-neon-green/40 hover:bg-neon-green/30'
+            }`}
+          >
+            {autoPilotEnabled ? <Square size={9} fill="currentColor" /> : <Play size={9} fill="currentColor" />}
+            <span>{autoPilotEnabled ? 'DISARM' : 'ARM CO-PILOT'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Cloud Daemon Telemetry Banner */}
+      <div className="mt-1.5 px-2 py-1 bg-white/[0.02] rounded border border-white/5 flex items-center justify-between text-[8px] font-mono text-slate-400">
+        <span className="truncate">{copilotStatusMsg}</span>
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+          <span className={`px-1.5 py-0.2 rounded font-bold border text-[8px] ${
+            activePositionsCount >= maxConcurrentPositions
+              ? 'bg-neon-red/20 text-neon-red border-neon-red/40'
+              : 'bg-neon-green/20 text-neon-green border-neon-green/40'
+          }`} title="Strict Portfolio Limit: 5 positions max open at any time (6 for A+ Sure Trades)">
+            🛡️ {activePositionsCount}/{maxConcurrentPositions} POS MAX
+          </span>
+          <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40 font-bold text-[8px]" title="A+ High-Conviction (≥85%) trades bypass cooldown and can use reserve slot or reallocate stagnant trades">
+            ⚡ A+ PRIORITY PASS
+          </span>
+          <span className={`px-1.5 py-0.2 rounded font-bold border text-[8px] ${
+            dailyTradesCount >= maxDailyTrades
+              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+              : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+          }`} title="Daily Trade Cap: 8 trades max per day to prevent overtrading">
+            ⚡ {dailyTradesCount}/{maxDailyTrades} TRADES
+          </span>
+          <span className="px-1.5 py-0.2 rounded bg-red-500/20 text-red-300 border border-red-500/40 font-bold text-[8px]" title="Hard Cutoff: No new options or equities opened past 3:30 PM ET">
+            ⛔ 15:30 ET CUTOFF
+          </span>
+          {optionsOnly && (
+            <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold text-[8px]">
+              15:50 ET EXIT
+            </span>
+          )}
+          <span className="text-neon-gold text-[8px]">Alpaca #PA3AZT2ZU9IT</span>
+        </div>
+      </div>
+
+      {/* Co-Pilot Parameters Row */}
+      <div className="grid grid-cols-4 gap-2 pt-2 text-[9px]">
+        <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
+          <span className="text-slate-400 text-[8px] uppercase">Min Confidence</span>
+          <div className="flex items-center gap-1 pt-0.5">
+            {[70, 75, 80, 85].map(thresh => (
+              <button
+                key={thresh}
+                onClick={() => handleChangeConfidence(thresh)}
+                className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all cursor-pointer ${
+                  minConfidenceThreshold === thresh 
+                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' 
+                    : 'text-slate-500 hover:text-white'
+                }`}
+              >
+                {thresh}%
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
+          <span className="text-slate-400 text-[8px] uppercase">Asset Mode</span>
+          <button
+            onClick={handleToggleOptionsOnly}
+            title="Toggle between Options Only contracts and buying underlying shares"
+            className={`mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-bold border transition-all text-left cursor-pointer ${
+              optionsOnly
+                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' 
+                : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+            }`}
+          >
+            {optionsOnly ? 'OPTIONS (100x)' : 'SHARES'}
+          </button>
+        </div>
+
+        <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
+          <span className="text-slate-400 text-[8px] uppercase">Routing</span>
+          <button
+            onClick={handleToggleSimulation}
+            className={`mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-bold border transition-all text-left cursor-pointer ${
+              isSimulated 
+                ? 'bg-neon-gold/20 text-neon-gold border-neon-gold/40' 
+                : 'bg-neon-green/20 text-neon-green border-neon-green/40'
+            }`}
+          >
+            {isSimulated ? 'OFFLINE SIM' : 'ALPACA PAPER'}
+          </button>
+        </div>
+
+        <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
+          <span className="text-slate-400 text-[8px] uppercase">Co-Pilot Trigger</span>
+          <span className="mt-0.5 text-[8px] font-mono text-slate-300 truncate">
+            {autoPilotEnabled ? (
+              data.confidence >= minConfidenceThreshold 
+                ? <span className="text-neon-green font-bold">READY ({data.confidence}%)</span> 
+                : <span className="text-slate-400">SCAN ({data.confidence}% &lt; {minConfidenceThreshold}%)</span>
+            ) : (
+              <span className="text-slate-500">MANUAL ONLY</span>
+            )}
+          </span>
+        </div>
+      </div>
+
+      {/* Active Liquid Assets Monitored Universe */}
+      <div className="mt-2 pt-2 border-t border-white/5 flex flex-col gap-1.5">
+        <div className="flex justify-between items-center text-[8px] text-slate-400">
+          <span className="uppercase font-bold tracking-wider text-cyan-300 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            Monitored Liquid Assets Universe ({monitoredSymbols.length || 52} Options Leaders)
+          </span>
+          <span className="text-slate-500 text-[7.5px]">Click any asset to load &amp; analyze</span>
+        </div>
+        <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto no-scrollbar p-1 rounded bg-black/40 border border-white/5">
+          {(monitoredSymbols.length > 0 ? monitoredSymbols : [
+            "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
+            "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM",
+            "AMD", "AVGO", "TSM", "SMCI", "MU", "ARM", "INTC", "QCOM", "TXN",
+            "PLTR", "COIN", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG",
+            "JPM", "BAC", "GS", "V", "MA", "DIS", "BABA", "BA", "XOM", "CAT", "LLY"
+          ]).map(sym => {
+            const p = tape?.[sym]?.price;
+            const priceStr = p !== undefined && p !== null && Number(p) > 0 
+              ? (Number(p) < 5 ? `$${Number(p).toFixed(2)}` : `$${Number(p).toFixed(1)}`) 
+              : '';
+            return (
+              <button
+                key={sym}
+                type="button"
+                onClick={() => onSelectTicker && onSelectTicker(sym)}
+                className={`text-[8px] font-mono px-1.5 py-0.5 rounded border transition-all cursor-pointer flex items-center gap-1 ${
+                  data?.ticker === sym 
+                    ? 'bg-neon-green/20 text-neon-green border-neon-green/50 font-bold shadow-[0_0_8px_rgba(0,255,163,0.3)]' 
+                    : 'bg-white/[0.03] text-slate-400 border-white/5 hover:border-white/20 hover:text-white'
+                }`}
+                title={`Load ${sym} Options Matrix, GEX Walls & Tape`}
+              >
+                <span>{sym}</span>
+                {priceStr && <span className="text-slate-200">{priceStr}</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Co-Pilot Recent Auto-Executions Log */}
+      {coPilotLogs.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-white/5 flex flex-col gap-1">
+          <div className="flex justify-between items-center text-[8px] text-slate-400">
+            <span className="uppercase font-bold tracking-wider">Executed Tickets ({coPilotLogs.length})</span>
+            <button 
+              onClick={() => setCoPilotLogs([])} 
+              className="hover:text-neon-red text-[8px] transition-colors cursor-pointer"
+            >
+              Clear Tickets
+            </button>
+          </div>
+          <div className="max-h-24 overflow-y-auto no-scrollbar flex flex-col gap-1">
+            {coPilotLogs.map(log => (
+              <div key={log.id} className="text-[8px] bg-black/40 p-1.5 rounded border border-white/5 flex justify-between items-center font-mono">
+                <div className="flex items-center gap-1.5">
+                  <span className={`px-1 py-0.2 rounded font-bold ${log.side === 'BUY' || log.side === 'CALL' ? 'bg-neon-green/20 text-neon-green' : 'bg-neon-red/20 text-neon-red'}`}>
+                    {log.side} {log.symbol}
+                  </span>
+                  {log.strike && (
+                    <span className="text-purple-300">${log.strike} {log.expiry}</span>
+                  )}
+                  <span className="text-slate-300">${log.price}</span>
+                  <span className="text-slate-500">TP ${log.tp} · SL ${log.sl}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-slate-400">
+                  <span className="text-neon-gold">{log.mode}</span>
+                  <span>{log.time}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-3 font-mono">
+      {/* ---------------- 1. EXECUTIVE CO-PILOT COMMAND CONTROLS (ALWAYS VISIBLE AT TOP) ---------------- */}
+      <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-black/80 border border-white/10 text-[10px]">
+          <button
+            id="tab-btn-crypto-copilot"
+            onClick={() => setActiveSubTab('crypto')}
+            className={`py-2 px-2.5 rounded-md font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeSubTab === 'crypto'
+                ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/60 shadow-[0_0_15px_rgba(6,182,212,0.35)]'
+                : 'text-slate-400 hover:text-white bg-white/[0.02]'
+            }`}
+          >
+            <Coins size={13} className={cryptoArmed ? "text-cyan-400 animate-pulse" : ""} />
+            <span>⚡ 24/7 CRYPTO DAEMON</span>
+            <span className={`text-[8.5px] px-1.5 py-0.2 rounded font-bold ${cryptoArmed ? "bg-cyan-500/30 text-cyan-200" : "bg-white/10 text-slate-500"}`}>
+              {cryptoArmed ? "ARMED ($500)" : "STANDBY"}
+            </span>
+          </button>
+
+          <button
+            id="tab-btn-options-copilot"
+            onClick={() => setActiveSubTab('options')}
+            className={`py-2 px-2.5 rounded-md font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeSubTab === 'options'
+                ? 'bg-neon-green/25 text-neon-green border border-neon-green/60 shadow-[0_0_15px_rgba(0,255,163,0.3)]'
+                : 'text-slate-400 hover:text-white bg-white/[0.02]'
+            }`}
+          >
+            <Bot size={13} className={autoPilotEnabled ? "text-neon-green animate-pulse" : ""} />
+            <span>🤖 0DTE OPTIONS CO-PILOT</span>
+            <span className={`text-[8.5px] px-1.5 py-0.2 rounded font-bold ${autoPilotEnabled ? "bg-neon-green/30 text-neon-green" : "bg-white/10 text-slate-500"}`}>
+              {autoPilotEnabled ? "ARMED" : "STANDBY"}
+            </span>
+          </button>
+        </div>
+
+        {/* Dedicated Active Co-Pilot Card immediately rendered right here at top */}
+        {activeSubTab === 'crypto' ? renderCryptoCard() : renderOptionsCard()}
+      </div>
+
       {/* Top RSI Status Badge & 1-Click Evolve Trigger */}
       <div className="flex items-center justify-between text-[10px] bg-black/60 px-2.5 py-1.5 rounded border border-white/10">
         <div className="flex items-center gap-1.5">
@@ -1091,230 +1642,6 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
           </div>
         </div>
 
-        {/* AI QUANT AUTONOMOUS CO-PILOT COMMAND CARD */}
-        <div id="algo-copilot-card" className={`p-2.5 rounded-lg border transition-all ${
-          autoPilotEnabled 
-            ? 'bg-black/85 border-neon-green/60 shadow-[0_0_20px_rgba(0,255,163,0.15)]' 
-            : 'bg-black/40 border-white/10'
-        }`}>
-          <div className="flex justify-between items-center pb-2 border-b border-white/10">
-            <div className="flex items-center gap-1.5">
-              <Bot size={13} className={autoPilotEnabled ? 'text-neon-green animate-pulse' : 'text-slate-400'} />
-              <span className="text-[10px] font-bold tracking-wider uppercase text-white flex items-center gap-1">
-                AI Quant Autonomous Co-Pilot (24/7 Cloud)
-                <HelpButton cardId="algo" title="Explain AI Quant Autonomous Trade Co-Pilot" />
-              </span>
-              <span className={`text-[8px] px-1.5 py-0.2 rounded font-bold uppercase flex items-center gap-1 ${
-                autoPilotEnabled ? 'bg-neon-green/20 text-neon-green border border-neon-green/40' : 'bg-white/5 text-slate-500'
-              }`}>
-                {autoPilotEnabled && <Radio size={8} className="animate-ping" />}
-                {autoPilotEnabled ? (optionsOnly ? 'ARMED (OPTIONS 100x)' : 'ARMED (SHARES)') : 'STANDBY'}
-              </span>
-            </div>
-            
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={handleFlattenOptions}
-                disabled={isFlatteningOptions}
-                title="Immediately liquidate and flatten all open options contracts (EOD 15:50 ET Rule)"
-                className="px-2 py-1 rounded text-[9px] font-bold bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              >
-                <ShieldCheck size={10} className={isFlatteningOptions ? "animate-spin" : ""} />
-                <span>{isFlatteningOptions ? "CLOSING..." : "🛡️ FLATTEN OPTIONS"}</span>
-              </button>
-
-              <button
-                onClick={handleTriggerNow}
-                disabled={isEvaluatingNow}
-                title="Force immediate algorithmic evaluation and execute bracket order if criteria met"
-                className="px-2 py-1 rounded text-[9px] font-bold bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              >
-                <RefreshCw size={9} className={isEvaluatingNow ? "animate-spin" : ""} />
-                <span>{isEvaluatingNow ? "RUNNING..." : "⚡ EVALUATE NOW"}</span>
-              </button>
-
-              <button
-                onClick={handleToggleCopilot}
-                className={`px-2.5 py-1 rounded text-[9px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                  autoPilotEnabled 
-                    ? 'bg-neon-red/20 text-neon-red border border-neon-red/40 hover:bg-neon-red/30' 
-                    : 'bg-neon-green/20 text-neon-green border border-neon-green/40 hover:bg-neon-green/30'
-                }`}
-              >
-                {autoPilotEnabled ? <Square size={9} fill="currentColor" /> : <Play size={9} fill="currentColor" />}
-                <span>{autoPilotEnabled ? 'DISARM' : 'ARM CO-PILOT'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Cloud Daemon Telemetry Banner */}
-          <div className="mt-1.5 px-2 py-1 bg-white/[0.02] rounded border border-white/5 flex items-center justify-between text-[8px] font-mono text-slate-400">
-            <span className="truncate">{copilotStatusMsg}</span>
-            <div className="flex items-center gap-1.5 shrink-0 ml-2">
-              <span className={`px-1.5 py-0.2 rounded font-bold border text-[8px] ${
-                activePositionsCount >= maxConcurrentPositions
-                  ? 'bg-neon-red/20 text-neon-red border-neon-red/40'
-                  : 'bg-neon-green/20 text-neon-green border-neon-green/40'
-              }`} title="Strict Portfolio Limit: 5 positions max open at any time">
-                🛡️ {activePositionsCount}/{maxConcurrentPositions} POS MAX
-              </span>
-              <span className={`px-1.5 py-0.2 rounded font-bold border text-[8px] ${
-                dailyTradesCount >= maxDailyTrades
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                  : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-              }`} title="Daily Trade Cap: 8 trades max per day to prevent overtrading">
-                ⚡ {dailyTradesCount}/{maxDailyTrades} TRADES
-              </span>
-              {optionsOnly && (
-                <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold text-[8px]">
-                  15:50 ET EXIT
-                </span>
-              )}
-              <span className="text-neon-gold text-[8px]">Alpaca #PA3AZT2ZU9IT</span>
-            </div>
-          </div>
-
-          {/* Co-Pilot Parameters Row */}
-          <div className="grid grid-cols-4 gap-2 pt-2 text-[9px]">
-            <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
-              <span className="text-slate-400 text-[8px] uppercase">Min Confidence</span>
-              <div className="flex items-center gap-1 pt-0.5">
-                {[70, 75, 80, 85].map(thresh => (
-                  <button
-                    key={thresh}
-                    onClick={() => handleChangeConfidence(thresh)}
-                    className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all cursor-pointer ${
-                      minConfidenceThreshold === thresh 
-                        ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' 
-                        : 'text-slate-500 hover:text-white'
-                    }`}
-                  >
-                    {thresh}%
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
-              <span className="text-slate-400 text-[8px] uppercase">Asset Mode</span>
-              <button
-                onClick={handleToggleOptionsOnly}
-                title="Toggle between Options Only contracts and buying underlying shares"
-                className={`mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-bold border transition-all text-left cursor-pointer ${
-                  optionsOnly
-                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' 
-                    : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
-                }`}
-              >
-                {optionsOnly ? 'OPTIONS (100x)' : 'SHARES'}
-              </button>
-            </div>
-
-            <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
-              <span className="text-slate-400 text-[8px] uppercase">Routing</span>
-              <button
-                onClick={handleToggleSimulation}
-                className={`mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-bold border transition-all text-left cursor-pointer ${
-                  isSimulated 
-                    ? 'bg-neon-gold/20 text-neon-gold border-neon-gold/40' 
-                    : 'bg-neon-green/20 text-neon-green border-neon-green/40'
-                }`}
-              >
-                {isSimulated ? 'OFFLINE SIM' : 'ALPACA PAPER'}
-              </button>
-            </div>
-
-            <div className="bg-white/[0.03] p-1.5 rounded flex flex-col">
-              <span className="text-slate-400 text-[8px] uppercase">Co-Pilot Trigger</span>
-              <span className="mt-0.5 text-[8px] font-mono text-slate-300 truncate">
-                {autoPilotEnabled ? (
-                  data.confidence >= minConfidenceThreshold 
-                    ? <span className="text-neon-green font-bold">READY ({data.confidence}%)</span> 
-                    : <span className="text-slate-400">SCAN ({data.confidence}% &lt; {minConfidenceThreshold}%)</span>
-                ) : (
-                  <span className="text-slate-500">MANUAL ONLY</span>
-                )}
-              </span>
-            </div>
-          </div>
-
-          {/* Active Liquid Assets Monitored Universe */}
-          <div className="mt-2 pt-2 border-t border-white/5 flex flex-col gap-1.5">
-            <div className="flex justify-between items-center text-[8px] text-slate-400">
-              <span className="uppercase font-bold tracking-wider text-cyan-300 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                Monitored Liquid Assets Universe ({monitoredSymbols.length || 52} Options Leaders)
-              </span>
-              <span className="text-slate-500 text-[7.5px]">Click any asset to load &amp; analyze</span>
-            </div>
-            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto no-scrollbar p-1 rounded bg-black/40 border border-white/5">
-              {(monitoredSymbols.length > 0 ? monitoredSymbols : [
-                "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
-                "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM",
-                "AMD", "AVGO", "TSM", "SMCI", "MU", "ARM", "INTC", "QCOM", "TXN",
-                "PLTR", "COIN", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG",
-                "JPM", "BAC", "GS", "V", "MA", "DIS", "BABA", "BA", "XOM", "CAT", "LLY"
-              ]).map(sym => {
-                const p = tape?.[sym]?.price;
-                const priceStr = p !== undefined && p !== null && Number(p) > 0 
-                  ? (Number(p) < 5 ? `$${Number(p).toFixed(2)}` : `$${Number(p).toFixed(1)}`) 
-                  : '';
-                return (
-                  <button
-                    key={sym}
-                    type="button"
-                    onClick={() => onSelectTicker && onSelectTicker(sym)}
-                    className={`text-[8px] font-mono px-1.5 py-0.5 rounded border transition-all cursor-pointer flex items-center gap-1 ${
-                      data?.ticker === sym 
-                        ? 'bg-neon-green/20 text-neon-green border-neon-green/50 font-bold shadow-[0_0_8px_rgba(0,255,163,0.3)]' 
-                        : 'bg-white/[0.03] text-slate-400 border-white/5 hover:border-white/20 hover:text-white'
-                    }`}
-                    title={`Load ${sym} Options Matrix, GEX Walls & Tape`}
-                  >
-                    <span>{sym}</span>
-                    {priceStr && <span className="text-slate-200">{priceStr}</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Co-Pilot Recent Auto-Executions Log */}
-          {coPilotLogs.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-white/5 flex flex-col gap-1">
-              <div className="flex justify-between items-center text-[8px] text-slate-400">
-                <span className="uppercase font-bold tracking-wider">Executed Tickets ({coPilotLogs.length})</span>
-                <button 
-                  onClick={() => setCoPilotLogs([])} 
-                  className="hover:text-neon-red text-[8px] transition-colors cursor-pointer"
-                >
-                  Clear Tickets
-                </button>
-              </div>
-              <div className="max-h-24 overflow-y-auto no-scrollbar flex flex-col gap-1">
-                {coPilotLogs.map(log => (
-                  <div key={log.id} className="text-[8px] bg-black/40 p-1.5 rounded border border-white/5 flex justify-between items-center font-mono">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`px-1 py-0.2 rounded font-bold ${log.side === 'BUY' || log.side === 'CALL' ? 'bg-neon-green/20 text-neon-green' : 'bg-neon-red/20 text-neon-red'}`}>
-                        {log.side} {log.symbol}
-                      </span>
-                      {log.strike && (
-                        <span className="text-purple-300">${log.strike} {log.expiry}</span>
-                      )}
-                      <span className="text-slate-300">${log.price}</span>
-                      <span className="text-slate-500">TP ${log.tp} · SL ${log.sl}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-slate-400">
-                      <span className="text-neon-gold">{log.mode}</span>
-                      <span>{log.time}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* 1-Click Institutional Bracket Execution Button */}
         {setup && (
           <div className="pt-2 border-t border-white/10 flex flex-col gap-2">
@@ -1739,4 +2066,5 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape }: SmartAlg
       })()}
     </div>
   );
+}
 }

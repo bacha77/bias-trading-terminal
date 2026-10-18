@@ -294,8 +294,49 @@ export const CARD_KNOWLEDGE: Record<string, CardExplanation> = {
       'Watch for an Asian Range false breakout (Judas Swing) in the first 30 minutes of London Open, then enter in the opposite direction.'
     ],
     proTip: 'Never hold large unbracketed positions into 17:00 ET Friday close to avoid weekend gap risk across geopolitical headlines.'
+  },
+  newsWire: {
+    id: 'newsWire',
+    title: 'Institutional News Wire & Contagion Domino Engine',
+    category: 'REAL-TIME CATALYST ATTRIBUTION',
+    summary: 'Streaming financial news feeds filtered through quantitative NLP sentiment and cross-asset contagion modeling.',
+    whatItDoes: 'Identifies which stocks are directly affected by breaking news and models the multi-tier supply chain and sector contagion ("infected stocks") before retail algorithms react.',
+    keyNumbers: [
+      { label: 'Impact Rating (CRITICAL / HIGH / MODERATE)', meaning: 'CRITICAL denotes Fed shocks, surprise CPI prints, antitrust actions, or mega-cap earnings beats that immediately shift broad market volatility.' },
+      { label: 'Sentiment Bias (BULLISH / BEARISH / NEUTRAL)', meaning: 'Quantitative NLP directional probability based on financial sentiment lexicons.' },
+      { label: 'Infected Stocks (Domino Effect)', meaning: 'Suppliers, direct peers, and correlated customers that move in sympathy with the primary target.' },
+      { label: 'B.I.A.S. Tactical Action Plan', meaning: 'Rule-based execution recommendations combining news direction with underlying Gamma walls and VWAP.' }
+    ],
+    howToTrade: [
+      'Click on any infected peer ticker badge to immediately load its candlestick chart and options chain.',
+      'During major macro releases, monitor the primary target reaction against its Put Wall and Call Wall to identify fade or continuation entries.'
+    ],
+    proTip: 'When a mega-cap stock like NVDA or AAPL reports a major catalyst, its tier-1 suppliers (e.g. TSM, CRUS) often experience more explosive percentage sympathy moves than the parent stock.'
+  },
+  dumay_command_bar: {
+    id: 'dumay_command_bar',
+    title: 'Dumay Command Bar · Universal Terminal Omnibar',
+    category: 'INSTITUTIONAL WORKFLOW & MNEMONICS',
+    summary: 'Wall Street-style keyboard command center with Bloomberg <GO> parity for instant navigation, ticker sync, and trade execution.',
+    whatItDoes: 'Allows institutional traders to pilot the entire B.I.A.S. Terminal via rapid keyboard shortcuts and mnemonics without touching a mouse. Switches tickers, jumps across desks, toggles chart grids, opens macro yield curves, and routes bracket orders.',
+    keyNumbers: [
+      { label: 'Ctrl + K (or Cmd + K)', meaning: 'Global hotkey to summon or dismiss the Dumay Command Bar from anywhere on the screen.' },
+      { label: '/ (Forward Slash)', meaning: 'Instant search shortcut when not typing inside an input field.' },
+      { label: '<GO> (Enter)', meaning: 'Executes the active mnemonic or loads the typed ticker symbol across all terminal matrices.' },
+      { label: '↑ / ↓ Arrow Keys', meaning: 'Cycles through suggested commands, desks, and tickers with zero latency.' },
+      { label: 'Esc', meaning: 'Instantly closes the command bar overlay.' }
+    ],
+    howToTrade: [
+      '1. Instant Ticker Switch: Type any symbol (e.g. NVDA, SPY, TSLA, BTC, SOL, EUR/USD) + press <GO> (Enter). The chart matrix, options chain, GEX walls, and dark pool feeds all synchronize instantaneously.',
+      '2. Desk Jumping: Type "FX" or "FXIP" for Forex Interbank; "GEMS" or "RADAR" for Crypto Early Gems; "LAB" or "BACKTEST" for Strategy Lab; "AICO" for AI Co-Pilot; "WIRE" for Institutional News.',
+      '3. Fixed Income & Yield Curve: Type "YCRV" or "FED" to view the US Treasury Yield Curve, 10Y-2Y Inversion Spread, and CME FedWatch rate probabilities.',
+      '4. Chart Multi-Matrix: Type "1P" for single chart; "2P" for dual split; "4P" for quad matrix; "CANV" to maximize canvas width.',
+      '5. Risk Management: Type "PORT" to open Portfolio positions; type "FLAT" for Emergency Panic Flatten of all open risk.'
+    ],
+    proTip: 'You do not need to click with a mouse. Press Ctrl+K -> type "YCRV" -> press Enter to inspect the yield curve; then press Ctrl+K -> type "NVDA" -> press Enter to trade NVDA. This matches institutional trading desk velocity.'
   }
 };
+
 
 // Help Context for opening the modal from anywhere
 interface HelpModalContextType {
