@@ -312,7 +312,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-sans mt-0.5">
-                BullX & GMGN Forensics (Mint/Freeze/LP Lock) · Whale Inflow Tracking · Embedded Live Charts
+                GMGN Smart Inflow · BullX Audit Suite (Mint/Freeze/LP Lock) · Photon Panic Bailout · Micro-Trailing Ratchet
               </p>
             </div>
           </div>

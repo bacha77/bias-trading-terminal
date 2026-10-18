@@ -11,16 +11,17 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger("SolanaDexEngine")
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "solana_dex_state.json")
+HISTORICAL_FILE = os.path.join(os.path.dirname(__file__), "dex_trade_history.json")
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-# ---- Forensic Anti-Rug Gate thresholds ----
-MAX_DEV_HOLDING_PCT = 5.0       # Reject if creator/dev wallet holds > 5% of supply
-MAX_TOP10_HOLDING_PCT = 30.0    # Reject if top-10 non-pool wallets hold > 30% of supply
-MIN_LP_LOCKED_PCT = 80.0        # Reject if an LP token exists and < 80% is burned/locked
+# ---- Forensic Anti-Rug Gate thresholds (BullX / Institutional Standards) ----
+MAX_DEV_HOLDING_PCT = 4.0       # Reject if creator/dev wallet holds > 4% of supply
+MAX_TOP10_HOLDING_PCT = 25.0    # Reject if top-10 non-pool wallets hold > 25% of supply
+MIN_LP_LOCKED_PCT = 85.0        # Reject if an LP token exists and < 85% is burned/locked
 WHALE_TICKET_SOL = 10.0         # Institutional order size threshold (in SOL equivalent)
-WHALE_PRIORITY_SCORE = 80       # Auto-sniper prioritizes whale_score >= 80
+WHALE_PRIORITY_SCORE = 75       # Auto-sniper prioritizes whale_score >= 75
 
 _FORENSICS_CACHE: Dict[str, Dict[str, Any]] = {}
 _FORENSICS_TTL_OK = 600.0       # Authorities/holders change slowly: cache 10 min
@@ -314,21 +315,41 @@ DEFAULT_DEX_STATE = {
 }
 
 def load_dex_state() -> Dict[str, Any]:
+    state = DEFAULT_DEX_STATE.copy()
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f:
                 data = json.load(f)
-                merged = {**DEFAULT_DEX_STATE, **data}
-                # Sync risk profile thresholds if needed
-                prof_key = merged.get("risk_profile", "MOONBAG")
+                state = {**DEFAULT_DEX_STATE, **data}
+                prof_key = state.get("risk_profile", "MOONBAG")
                 if prof_key in RISK_PROFILES:
-                    merged["stop_loss_pct"] = RISK_PROFILES[prof_key]["stop_loss_pct"]
-                    merged["take_profit_tp1_pct"] = RISK_PROFILES[prof_key]["take_profit_tp1_pct"]
-                    merged["moonbag_trail_pct"] = RISK_PROFILES[prof_key]["moonbag_trail_pct"]
-                return merged
+                    state["stop_loss_pct"] = RISK_PROFILES[prof_key]["stop_loss_pct"]
+                    state["take_profit_tp1_pct"] = RISK_PROFILES[prof_key]["take_profit_tp1_pct"]
+                    state["moonbag_trail_pct"] = RISK_PROFILES[prof_key]["moonbag_trail_pct"]
         except Exception as e:
             logger.error(f"Error loading dex state: {e}")
-    return DEFAULT_DEX_STATE.copy()
+
+    # Synchronize with persistent historical trade ledger (Option 4)
+    if os.path.exists(HISTORICAL_FILE):
+        try:
+            with open(HISTORICAL_FILE, "r") as hf:
+                history_trades = json.load(hf)
+                if isinstance(history_trades, list) and history_trades:
+                    existing_keys = {
+                        f"{t.get('address')}_{t.get('exit_time')}_{t.get('realized_pnl_usd')}"
+                        for t in state.get("closed_trades", [])
+                    }
+                    merged_closed = list(state.get("closed_trades", []))
+                    for ht in history_trades:
+                        k = f"{ht.get('address')}_{ht.get('exit_time')}_{ht.get('realized_pnl_usd')}"
+                        if k not in existing_keys:
+                            merged_closed.append(ht)
+                            existing_keys.add(k)
+                    state["closed_trades"] = merged_closed[:60]
+        except Exception as e:
+            logger.error(f"Error loading persistent DEX history: {e}")
+
+    return state
 
 def save_dex_state(state: Dict[str, Any]) -> None:
     try:
@@ -336,6 +357,15 @@ def save_dex_state(state: Dict[str, Any]) -> None:
             json.dump(state, f, indent=2)
     except Exception as e:
         logger.error(f"Error saving dex state: {e}")
+
+    # Also persist closed trades to historical ledger so history survives restarts
+    try:
+        closed = state.get("closed_trades", [])
+        if closed:
+            with open(HISTORICAL_FILE, "w") as hf:
+                json.dump(closed[:60], hf, indent=2)
+    except Exception as e:
+        logger.error(f"Error syncing historical trade ledger: {e}")
 
 def set_dex_risk_profile(profile_key: str) -> Dict[str, Any]:
     prof = RISK_PROFILES.get(profile_key.upper(), RISK_PROFILES["MOONBAG"])
@@ -697,30 +727,76 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
         pos["unrealized_pnl_pct"] = round(pnl_pct * 100, 2)
         pos["unrealized_pnl_usd"] = round((cur_px - entry_px) * pos.get("tokens_held", 0), 2)
         
-        # 1. Breakeven Stop Ratchet (Locks risk-free trade at +10% gain)
-        if pnl_pct >= 0.10 and not pos.get("breakeven_locked"):
+        # 1. Photon Flash Dump / Dev Dump Panic Bailout
+        last_px = pos.get("last_check_price", entry_px)
+        if last_px > 0 and cur_px < entry_px:
+            interval_drop = (cur_px - last_px) / last_px
+            if interval_drop <= -0.040:
+                exit_ticket = {
+                    **pos,
+                    "exit_price": cur_px,
+                    "exit_time": datetime.now().strftime("%H:%M:%S"),
+                    "reason": f"🚨 Photon Panic Bailout: Dev Dump / Flash Drop ({interval_drop*100:.1f}%) · Saved from full stop loss",
+                    "realized_pnl_pct": f"{pnl_pct*100:+.1f}%",
+                    "realized_pnl_usd": pos["unrealized_pnl_usd"],
+                    "status": "PANIC_BAILOUT_CLOSED"
+                }
+                closed_pos.insert(0, exit_ticket)
+                _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
+                try:
+                    from desk_notifier import dispatch_desk_alert
+                    dispatch_desk_alert(
+                        f"🚨 DEX PANIC BAILOUT: {pos['symbol']}",
+                        f"Detected sudden flash dump ({interval_drop*100:.1f}% in 15s). Emergency bailout executed at {pnl_pct*100:+.1f}% (${pos['unrealized_pnl_usd']:+.2f}). Capital saved from deeper rug!",
+                        "RISK_ALERT",
+                        metadata={"token": pos["symbol"], "action": "PANIC_DUMP_BAILOUT"}
+                    )
+                except Exception:
+                    pass
+                continue
+        pos["last_check_price"] = cur_px
+
+        # 2. Photon Micro-Trailing Ratchet:
+        # Tier 1 (+6% gain): Lock stop-loss to Breakeven (+0.5% buffer covers gas & fees)
+        if pnl_pct >= 0.06 and not pos.get("breakeven_locked"):
             pos["breakeven_locked"] = True
-            pos["breakeven_price"] = entry_px * 1.01  # +1.0% buffer covers gas/fees
+            pos["breakeven_price"] = entry_px * 1.005
             try:
                 from desk_notifier import dispatch_desk_alert
                 dispatch_desk_alert(
-                    f"🔒 DEX BREAKEVEN RATCHET: {pos['symbol']}",
-                    f"Surged +{pnl_pct*100:.1f}%. Stop loss automatically raised to +1.0% (${pos['breakeven_price']:,.6f}). Trade is now 100% risk-free!",
+                    f"🔒 DEX MICRO-RATCHET (+6%): {pos['symbol']}",
+                    f"Surged +{pnl_pct*100:.1f}%. Stop loss raised to +0.5% (${pos['breakeven_price']:,.6f}). Trade is 100% risk-free!",
                     "RATCHET",
-                    metadata={"token": pos["symbol"], "locked_at": "+1.0%"}
+                    metadata={"token": pos["symbol"], "locked_at": "+0.5%"}
                 )
             except Exception:
                 pass
 
-        # 2. Breakeven Stop Execution (Triggers if price pulls back to entry + 1%)
+        # Tier 2 (+12% gain): Lock stop-loss to +5% guaranteed profit
+        if pnl_pct >= 0.12 and not pos.get("profit_locked_tier2"):
+            pos["profit_locked_tier2"] = True
+            pos["breakeven_locked"] = True
+            pos["breakeven_price"] = entry_px * 1.05
+            try:
+                from desk_notifier import dispatch_desk_alert
+                dispatch_desk_alert(
+                    f"🛡️ DEX PROFIT LOCK (+12%): {pos['symbol']}",
+                    f"Surged +{pnl_pct*100:.1f}%. Stop loss raised to +5.0% (${pos['breakeven_price']:,.6f}). Profit guaranteed!",
+                    "RATCHET",
+                    metadata={"token": pos["symbol"], "locked_at": "+5.0%"}
+                )
+            except Exception:
+                pass
+
+        # 3. Breakeven / Profit-Lock Execution (Triggers if price pulls back to lock level)
         if pos.get("breakeven_locked") and pos.get("stage") != "MOONBAG_RUNNER":
-            be_price = pos.get("breakeven_price", entry_px * 1.01)
+            be_price = pos.get("breakeven_price", entry_px * 1.005)
             if cur_px <= be_price:
                 exit_ticket = {
                     **pos,
                     "exit_price": cur_px,
                     "exit_time": datetime.now().strftime("%H:%M:%S"),
-                    "reason": f"Breakeven Stop Locked (+{pnl_pct*100:.1f}%) · Zero Capital Loss",
+                    "reason": f"Breakeven / Profit Lock Closed (+{pnl_pct*100:.1f}%) · Zero Capital Loss",
                     "realized_pnl_pct": f"{pnl_pct*100:+.1f}%",
                     "realized_pnl_usd": pos["unrealized_pnl_usd"],
                     "status": "BREAKEVEN_CLOSED" if pos["unrealized_pnl_usd"] >= 0 else "STOP_LOSS_CLOSED"
@@ -730,8 +806,8 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 try:
                     from desk_notifier import dispatch_desk_alert
                     dispatch_desk_alert(
-                        f"🛡️ DEX BREAKEVEN EXIT: {pos['symbol']}",
-                        f"Closed flat at +{pnl_pct*100:.1f}% (${pos['unrealized_pnl_usd']:+.2f}). Capital protected with zero loss.",
+                        f"🛡️ DEX PROFIT LOCK EXIT: {pos['symbol']}",
+                        f"Closed at +{pnl_pct*100:.1f}% (${pos['unrealized_pnl_usd']:+.2f}). Capital protected with zero loss.",
                         "RATCHET",
                         metadata={"token": pos["symbol"], "pnl": f"{pos['unrealized_pnl_usd']:+.2f}"}
                     )
@@ -739,7 +815,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     pass
                 continue
 
-        # 3. Hard Stop Loss (Only if not already ratcheted)
+        # 4. Hard Stop Loss (Only if not already ratcheted)
         if not pos.get("breakeven_locked") and pnl_pct <= sl_thresh:
             exit_ticket = {
                 **pos,
@@ -764,20 +840,20 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 pass
             continue
             
-        # 4. Multi-Target Take Profit Scaling
-        # TP1 (+20%): Bank 33% of position into cash profits
+        # 5. Multi-Target Take Profit Scaling
+        # TP1 (+20%): Bank 35% of position into cash profits, move stop to +10%
         if pnl_pct >= 0.20 and not pos.get("tp1_taken"):
             pos["tp1_taken"] = True
             pos["breakeven_locked"] = True
-            pos["breakeven_price"] = entry_px * 1.05  # Move stop up to +5% guaranteed profit
-            banked_gain = round(float(pos.get("amount_usd", 100.0)) * 0.33 * pnl_pct, 2)
-            pos["tokens_held"] = pos["tokens_held"] * 0.67
-            pos["amount_usd"] = round(float(pos.get("amount_usd", 100.0)) * 0.67, 2)
+            pos["breakeven_price"] = entry_px * 1.10  # Move stop up to +10% guaranteed profit
+            banked_gain = round(float(pos.get("amount_usd", 100.0)) * 0.35 * pnl_pct, 2)
+            pos["tokens_held"] = pos["tokens_held"] * 0.65
+            pos["amount_usd"] = round(float(pos.get("amount_usd", 100.0)) * 0.65, 2)
             tp_ticket = {
                 **pos,
                 "exit_price": cur_px,
                 "exit_time": datetime.now().strftime("%H:%M:%S"),
-                "reason": f"TP1 Banked (+{pnl_pct*100:.1f}%) · 33% Cashed Out",
+                "reason": f"TP1 Banked (+{pnl_pct*100:.1f}%) · 35% Cashed Out",
                 "realized_pnl_pct": f"+{pnl_pct*100:.1f}%",
                 "realized_pnl_usd": banked_gain,
                 "status": "TAKE_PROFIT_CLOSED"
@@ -787,25 +863,25 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 from desk_notifier import dispatch_desk_alert
                 dispatch_desk_alert(
                     f"💰 DEX TP1 HIT (+20%): {pos['symbol']}",
-                    f"Surged +{pnl_pct*100:.1f}%. Cashed out 33% position (+${banked_gain:.2f} banked cash). Stop moved to +5%!",
+                    f"Surged +{pnl_pct*100:.1f}%. Cashed out 35% position (+${banked_gain:.2f} banked cash). Stop moved to +10%!",
                     "TAKE_PROFIT",
                     metadata={"token": pos["symbol"], "gain": f"+{pnl_pct*100:.1f}%", "banked": f"+${banked_gain:.2f}"}
                 )
             except Exception:
                 pass
 
-        # TP2 (+40%): Bank another 33% of position, release 34% Moonbag Runner
+        # TP2 (+40%): Bank another 35% of position, release 30% Moonbag Runner
         if pnl_pct >= 0.40 and not pos.get("tp2_taken"):
             pos["tp2_taken"] = True
             pos["stage"] = "MOONBAG_RUNNER"
-            banked_gain = round(float(pos.get("amount_usd", 67.0)) * 0.50 * pnl_pct, 2)
-            pos["tokens_held"] = pos["tokens_held"] * 0.50
-            pos["amount_usd"] = round(float(pos.get("amount_usd", 67.0)) * 0.50, 2)
+            banked_gain = round(float(pos.get("amount_usd", 65.0)) * 0.54 * pnl_pct, 2)
+            pos["tokens_held"] = pos["tokens_held"] * 0.46
+            pos["amount_usd"] = round(float(pos.get("amount_usd", 65.0)) * 0.46, 2)
             tp_ticket = {
                 **pos,
                 "exit_price": cur_px,
                 "exit_time": datetime.now().strftime("%H:%M:%S"),
-                "reason": f"TP2 Banked (+{pnl_pct*100:.1f}%) · 34% Moonbag Runner",
+                "reason": f"TP2 Banked (+{pnl_pct*100:.1f}%) · 30% Moonbag Runner",
                 "realized_pnl_pct": f"+{pnl_pct*100:.1f}%",
                 "realized_pnl_usd": banked_gain,
                 "status": "TAKE_PROFIT_CLOSED"
@@ -815,14 +891,14 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 from desk_notifier import dispatch_desk_alert
                 dispatch_desk_alert(
                     f"🚀 DEX TP2 HIT (+40%): {pos['symbol']}",
-                    f"Surged +{pnl_pct*100:.1f}%. Cashed out another 33% (+${banked_gain:.2f} banked). 34% Moonbag riding risk-free!",
+                    f"Surged +{pnl_pct*100:.1f}%. Cashed out another 35% (+${banked_gain:.2f} banked). 30% Moonbag riding risk-free!",
                     "TAKE_PROFIT",
                     metadata={"token": pos["symbol"], "gain": f"+{pnl_pct*100:.1f}%", "banked": f"+${banked_gain:.2f}"}
                 )
             except Exception:
                 pass
                 
-        # 5. Trailing Moonbag Runner Stop
+        # 6. Trailing Moonbag Runner Stop (Trails peak by moonbag_trail_pct)
         if pos.get("stage") == "MOONBAG_RUNNER":
             trail_floor = hwm * (1.0 - moonbag_trail)
             if cur_px <= trail_floor:
@@ -874,21 +950,48 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     listings = fetch_new_solana_listings(chain=chain)
     held_addrs = {p["address"] for p in active_pos}
     now = time.time()
-    # Anti-churn: Exclude held tokens AND recently exited tokens in 15-min cooldown
-    candidates = [tok for tok in listings
-                  if tok["address"] not in held_addrs
-                  and _TOKEN_COOLDOWNS.get(tok["address"], 0.0) <= now
-                  and tok.get("forensic_status") == "PASSED"
-                  and tok.get("safety_score", 0) >= 75]
+    # Anti-churn & GMGN Smart Money Candidate Filter
+    candidates = []
+    for tok in listings:
+        addr = tok["address"]
+        if addr in held_addrs:
+            continue
+        if _TOKEN_COOLDOWNS.get(addr, 0.0) > now:
+            continue
+        if tok.get("forensic_status") != "PASSED":
+            continue
+        if tok.get("safety_score", 0) < 78:
+            continue
+            
+        # GMGN Rule 1: No Late FOMO (reject if already pumped >50% in 5m or dumped <-5%)
+        m5_change = float(tok.get("price_change_5m") or 0.0)
+        if m5_change > 50.0 or m5_change < -5.0:
+            continue
+            
+        # GMGN Rule 2: Minimum Buyer Domination (5m buy ratio >= 54%)
+        buy_ratio_5m = float(tok.get("buy_ratio_5m") or 50.0)
+        if buy_ratio_5m < 54.0:
+            continue
+            
+        # Institutional composite score (35% Safety, 35% Smart Whale flow, 30% 5m Buy Velocity)
+        whale_score = int(tok.get("whale_score") or 0)
+        composite_score = (
+            (tok.get("safety_score", 0) * 0.35) +
+            (whale_score * 0.35) +
+            (min(100.0, buy_ratio_5m) * 0.30)
+        )
+        tok["institutional_score"] = round(composite_score, 1)
+        candidates.append(tok)
+
     if not candidates:
         return {"status": "NO_CLEAN_CANDIDATES", "risk": risk_res}
 
-    # Whale-priority: whale_score >= 80 first, then safety, then whale score
-    candidates.sort(key=lambda t: (t.get("whale_score", 0) >= WHALE_PRIORITY_SCORE, t.get("safety_score", 0), t.get("whale_score", 0)), reverse=True)
+    # Sort by GMGN Institutional Composite Score
+    candidates.sort(key=lambda t: t.get("institutional_score", 0), reverse=True)
     top_pick = candidates[0]
     amount = float(state.get("sniper_amount_usd", 100.0))
     snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=amount, mode="SIMULATION", chain=chain)
-    return {"status": "AUTO_SNIPED", "token": top_pick["symbol"], "snipe": snipe_res, "risk": risk_res}
+    return {"status": "AUTO_SNIPED", "token": top_pick["symbol"], "score": top_pick.get("institutional_score"), "snipe": snipe_res, "risk": risk_res}
 
 def get_dex_pnl_summary(state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
@@ -909,8 +1012,8 @@ def get_dex_pnl_summary(state: Optional[Dict[str, Any]] = None) -> Dict[str, Any
     total_capital_base = max(100.0, capital_deployed + sum(float(t.get("amount_usd", 100.0)) for t in closed))
     net_pnl_pct = round((net_pnl_usd / total_capital_base) * 100, 2) if total_capital_base > 0 else 0.0
     
-    wins = sum(1 for t in closed if float(t.get("realized_pnl_usd", 0.0)) > 0 or "PROFIT" in t.get("status", "") or "TAKE_PROFIT" in t.get("reason", ""))
-    losses = sum(1 for t in closed if float(t.get("realized_pnl_usd", 0.0)) < 0 or "STOP_LOSS" in t.get("status", ""))
+    wins = sum(1 for t in closed if float(t.get("realized_pnl_usd", 0.0)) > 0 or "PROFIT" in t.get("status", "") or "TAKE_PROFIT" in t.get("reason", "") or "BREAKEVEN" in t.get("status", ""))
+    losses = sum(1 for t in closed if float(t.get("realized_pnl_usd", 0.0)) < 0 and "BREAKEVEN" not in t.get("status", ""))
     closed_count = len(closed)
     win_rate = round((wins / max(1, closed_count)) * 100, 1) if closed_count > 0 else 0.0
     

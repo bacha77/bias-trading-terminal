@@ -1,0 +1,67 @@
+[
+  {
+    "address": "GLITCHxxx888",
+    "symbol": "GLITCH",
+    "entry_price": 0.0017,
+    "exit_price": 0.00207,
+    "exit_time": "15:42:10",
+    "amount_usd": 100.0,
+    "realized_pnl_pct": "+22.1%",
+    "realized_pnl_usd": 7.29,
+    "reason": "TP1 Banked (+22.1%) · 35% Cashed Out",
+    "status": "TAKE_PROFIT_CLOSED",
+    "chain": "solana"
+  },
+  {
+    "address": "GOLDxxx999",
+    "symbol": "GOLD",
+    "entry_price": 0.00028,
+    "exit_price": 0.000388,
+    "exit_time": "15:10:04",
+    "amount_usd": 100.0,
+    "realized_pnl_pct": "+38.5%",
+    "realized_pnl_usd": 12.70,
+    "reason": "Moonbag Profit Locked (Peak: $0.00042)",
+    "status": "MOONBAG_PROFIT_CLOSED",
+    "chain": "solana"
+  },
+  {
+    "address": "CATONICExxx111",
+    "symbol": "CATONICE",
+    "entry_price": 0.00132,
+    "exit_price": 0.00120,
+    "exit_time": "16:29:57",
+    "amount_usd": 100.0,
+    "realized_pnl_pct": "-9.0%",
+    "realized_pnl_usd": -9.03,
+    "reason": "Stop loss Triggered (-9.0%)",
+    "status": "STOP_LOSS_CLOSED",
+    "chain": "solana"
+  },
+  {
+    "address": "CATSZNxxx222",
+    "symbol": "CATSZN",
+    "entry_price": 0.00030,
+    "exit_price": 0.000304,
+    "exit_time": "14:55:18",
+    "amount_usd": 100.0,
+    "realized_pnl_pct": "+1.2%",
+    "realized_pnl_usd": 1.20,
+    "reason": "Breakeven Stop Locked (+1.2%) · Zero Capital Loss",
+    "status": "BREAKEVEN_CLOSED",
+    "chain": "solana"
+  },
+  {
+    "address": "MINTERxxx333",
+    "symbol": "MINTER",
+    "entry_price": 0.0053,
+    "exit_price": 0.00638,
+    "exit_time": "14:12:05",
+    "amount_usd": 100.0,
+    "realized_pnl_pct": "+20.4%",
+    "realized_pnl_usd": 6.73,
+    "reason": "TP1 Banked (+20.4%) · 35% Cashed Out",
+    "status": "TAKE_PROFIT_CLOSED",
+    "chain": "solana"
+  }
+]
