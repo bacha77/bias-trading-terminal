@@ -90,20 +90,28 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
   useEffect(() => {
     if (isOpen) {
-      fetchListings(selectedChain);
+      fetchListings(selectedChain, true);
       fetchPositions();
 
-      const interval = setInterval(() => {
+      const posInterval = setInterval(() => {
         fetchPositions();
-      }, 4000);
-      return () => clearInterval(interval);
+      }, 3500);
+
+      const radarInterval = setInterval(() => {
+        fetchListings(selectedChain, false);
+      }, 10000);
+
+      return () => {
+        clearInterval(posInterval);
+        clearInterval(radarInterval);
+      };
     }
   }, [isOpen, selectedChain]);
 
   const handleSelectChain = async (chain: 'solana' | 'base') => {
     setSelectedChain(chain);
     setActiveChartToken(null);
-    fetchListings(chain);
+    fetchListings(chain, true);
     try {
       await fetch(`${API_BASE}/api/dex/set-chain`, {
         method: 'POST',
@@ -115,8 +123,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
     }
   };
 
-  const fetchListings = async (chain = selectedChain) => {
-    setLoading(true);
+  const fetchListings = async (chain = selectedChain, isInitial = false) => {
+    if (isInitial) setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/dex/new-listings?chain=${chain}`);
       if (res.ok) {
@@ -135,7 +143,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
     } catch (e) {
       console.error('Failed to load DEX listings:', e);
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
     }
   };
 

@@ -3141,6 +3141,7 @@ async def api_close_dex_position(token_address: str):
         target["reason"] = f"Manual Exit ({pnl_pct*100:+.1f}%)"
         
         closed.insert(0, target)
+        solana_dex_engine._TOKEN_COOLDOWNS[token_address] = time.time() + solana_dex_engine.TOKEN_COOLDOWN_SECONDS
         state["active_positions"] = remaining
         state["closed_trades"] = closed[:50]
         solana_dex_engine.save_dex_state(state)

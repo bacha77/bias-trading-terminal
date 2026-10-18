@@ -142,9 +142,19 @@ def dispatch_desk_alert(
     }
     icon = icon_map.get(category, "🔔")
     
+    # Desk tag identification
+    if "DEX" in title or "DEX" in details or (metadata and metadata.get("chain") in ("solana", "base")):
+        desk_label = "🪐 DEX RADAR & SNIPER"
+    elif "OPTION" in title or "0DTE" in title or category == "OPTIONS_TRADE":
+        desk_label = "📈 0DTE OPTIONS DESK"
+    elif "CRYPTO" in title or category == "CRYPTO_TRADE":
+        desk_label = "🪙 MAIN CRYPTO DESK (24/7)"
+    else:
+        desk_label = "🏛️ DUMAY B.I.A.S. TERMINAL"
+
     # Telegram message format
     tg_lines = [
-        f"<b>{icon} B.I.A.S. TERMINAL ALERT</b>",
+        f"<b>{icon} {desk_label}</b>",
         f"<b>{title}</b>",
         f"<code>{details}</code>",
         f"<i>Time: {now_str}</i>"

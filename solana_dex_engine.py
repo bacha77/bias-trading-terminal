@@ -26,6 +26,8 @@ _FORENSICS_CACHE: Dict[str, Dict[str, Any]] = {}
 _FORENSICS_TTL_OK = 600.0       # Authorities/holders change slowly: cache 10 min
 _FORENSICS_TTL_ERR = 60.0       # Retry failed lookups after 1 min
 _SOL_PRICE_CACHE: Dict[str, float] = {"price": 0.0, "ts": 0.0}
+_TOKEN_COOLDOWNS: Dict[str, float] = {}  # address -> cooldown_until timestamp
+TOKEN_COOLDOWN_SECONDS = 900.0           # 15 minutes anti-churn cooldown after exit
 
 
 def _http_json(url: str, timeout: float = 8.0) -> Any:
@@ -724,6 +726,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     "status": "BREAKEVEN_CLOSED" if pos["unrealized_pnl_usd"] >= 0 else "STOP_LOSS_CLOSED"
                 }
                 closed_pos.insert(0, exit_ticket)
+                _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
                 try:
                     from desk_notifier import dispatch_desk_alert
                     dispatch_desk_alert(
@@ -748,6 +751,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 "status": "STOP_LOSS_CLOSED"
             }
             closed_pos.insert(0, exit_ticket)
+            _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
             try:
                 from desk_notifier import dispatch_desk_alert
                 dispatch_desk_alert(
@@ -832,6 +836,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     "status": "MOONBAG_PROFIT_CLOSED"
                 }
                 closed_pos.insert(0, exit_ticket)
+                _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
                 try:
                     from desk_notifier import dispatch_desk_alert
                     dispatch_desk_alert(
@@ -868,9 +873,11 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     chain = state.get("active_chain", "solana")
     listings = fetch_new_solana_listings(chain=chain)
     held_addrs = {p["address"] for p in active_pos}
-    # Only tokens that PASSED every on-chain forensic gate are eligible for autonomous entries
+    now = time.time()
+    # Anti-churn: Exclude held tokens AND recently exited tokens in 15-min cooldown
     candidates = [tok for tok in listings
                   if tok["address"] not in held_addrs
+                  and _TOKEN_COOLDOWNS.get(tok["address"], 0.0) <= now
                   and tok.get("forensic_status") == "PASSED"
                   and tok.get("safety_score", 0) >= 75]
     if not candidates:
