@@ -3112,6 +3112,19 @@ async def api_set_dex_chain(req: DexSetChainRequest):
     solana_dex_engine.save_dex_state(state)
     return {"status": "SUCCESS", "active_chain": chain}
 
+class DexSetMaxPositionsRequest(BaseModel):
+    max_positions: int
+
+@app.post("/api/dex/set-max-positions")
+@app.post("/dex/set-max-positions")
+async def api_set_dex_max_positions(req: DexSetMaxPositionsRequest):
+    import solana_dex_engine
+    max_p = max(1, min(20, int(req.max_positions)))
+    state = solana_dex_engine.load_dex_state()
+    state["max_dex_positions"] = max_p
+    solana_dex_engine.save_dex_state(state)
+    return {"status": "SUCCESS", "max_positions": max_p}
+
 @app.post("/api/dex/close-position")
 @app.post("/dex/close-position")
 async def api_close_dex_position(token_address: str):

@@ -78,6 +78,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   });
   const [dexArmed, setDexArmed] = useState(false);
   const [snipeAmount, setSnipeAmount] = useState(100);
+  const [maxPositions, setMaxPositions] = useState(6);
   const [activeTab, setActiveTab] = useState<'SPLIT' | 'RADAR' | 'POSITIONS' | 'HISTORY'>('SPLIT');
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
@@ -160,6 +161,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
           setPnlSummary(json.pnl_summary);
         }
         if (json.sniper_amount_usd) setSnipeAmount(json.sniper_amount_usd);
+        if (json.max_positions) setMaxPositions(json.max_positions);
       }
     } catch (e) {
       console.error('Failed to load DEX positions:', e);
@@ -176,6 +178,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         body: JSON.stringify({ 
           armed: next, 
           amount_usd: snipeAmount,
+          max_positions: maxPositions,
           chain: selectedChain,
           risk_profile: selectedRiskProfile
         })
@@ -207,6 +210,26 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleSetMaxPositions = async (slots: number) => {
+    setMaxPositions(slots);
+    try {
+      const res = await fetch(`${API_BASE}/api/dex/set-max-positions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_positions: slots })
+      });
+      if (res.ok) {
+        setToastMsg({
+          type: 'success',
+          text: `🎯 Active DEX slots updated to ${slots} concurrent positions!`
+        });
+        fetchPositions();
+      }
+    } catch (e) {
+      console.error('Failed to update max positions:', e);
     }
   };
 
@@ -359,6 +382,23 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               ))}
             </div>
 
+            {/* Active Position Slots Presets */}
+            <div className="hidden md:flex items-center gap-1 bg-white/[0.03] px-2.5 py-1 rounded-xl border border-white/10 font-mono text-xs">
+              <span className="text-slate-500 text-[10px]">SLOTS:</span>
+              {[3, 5, 6, 8, 10].map((slots) => (
+                <button
+                  key={slots}
+                  onClick={() => handleSetMaxPositions(slots)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                    maxPositions === slots ? 'bg-purple-500 text-white font-extrabold shadow-sm' : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                  title={`${slots} Max Active Positions`}
+                >
+                  {slots}
+                </button>
+              ))}
+            </div>
+
             {/* Arm / Disarm Button */}
             <button
               onClick={handleToggleDaemon}
@@ -454,10 +494,10 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             </span>
             <div className="mt-0.5">
               <span className="text-lg font-bold text-white tracking-tight">
-                ${pnlSummary.capital_deployed_usd.toFixed(0)} <span className="text-xs text-slate-400 font-normal">/ ${(snipeAmount * 3).toFixed(0)} max</span>
+                ${pnlSummary.capital_deployed_usd.toFixed(0)} <span className="text-xs text-slate-400 font-normal">/ ${(snipeAmount * maxPositions).toFixed(0)} max</span>
               </span>
             </div>
-            <div className="text-[9px] text-slate-500">{positions.length}/3 Slots Used</div>
+            <div className="text-[9px] text-slate-500">{positions.length}/{maxPositions} Slots Used</div>
           </div>
 
           {/* Card 5: Win Rate */}
@@ -819,7 +859,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     <div className="flex items-center gap-2">
                       <Coins size={14} className="text-neon-green" />
                       <span className="text-xs font-bold text-white uppercase tracking-wider">
-                        Active Positions ({positions.length}/3)
+                        Active Positions ({positions.length}/{maxPositions})
                       </span>
                     </div>
                     <span className="text-[10px] text-neon-green font-bold">

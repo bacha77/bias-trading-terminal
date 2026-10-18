@@ -301,7 +301,7 @@ RISK_PROFILES: Dict[str, Dict[str, Any]] = {
 DEFAULT_DEX_STATE = {
     "dex_armed": False,
     "sniper_amount_usd": 100.0,
-    "max_dex_positions": 3,
+    "max_dex_positions": 6,
     "active_chain": "solana",          # "solana" or "base"
     "risk_profile": "MOONBAG",         # "SCALPER", "MOONBAG", "HUNTER_10X"
     "stop_loss_pct": -0.08,
