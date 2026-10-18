@@ -65,7 +65,7 @@ def save_telegram_config(bot_token: str, chat_id: str) -> bool:
         logger.error(f"Failed to save telegram config: {e}")
         return False
 
-def send_telegram_alert(text: str, parse_mode: str = "HTML") -> Dict[str, Any]:
+def send_telegram_alert(text: str, parse_mode: str = "HTML", reply_markup: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg = get_telegram_config()
     token = cfg.get("bot_token")
     chat_id = cfg.get("chat_id")
@@ -78,12 +78,14 @@ def send_telegram_alert(text: str, parse_mode: str = "HTML") -> Dict[str, Any]:
         }
         
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
+    payload: Dict[str, Any] = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": parse_mode,
         "disable_web_page_preview": True
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     
     try:
         req = urllib.request.Request(
@@ -111,7 +113,7 @@ def dispatch_desk_alert(
     """
     Central notification dispatcher:
     1. Formats crisp HTML for Telegram.
-    2. Sends to Telegram bot.
+    2. Sends to Telegram bot with interactive inline action buttons.
     3. Keeps in-memory buffer of recent alerts for the frontend notification feed.
     """
     global _recent_alerts
@@ -153,7 +155,23 @@ def dispatch_desk_alert(
             tg_lines.append(f"<b>Telemetry:</b> <code>{extra}</code>")
             
     tg_text = "\n".join(tg_lines)
-    tg_result = send_telegram_alert(tg_text)
+
+    # Dynamic interactive Telegram inline buttons
+    reply_markup = None
+    buttons = []
+    token_sym = metadata.get("token") if metadata else None
+    pair_url = metadata.get("pair_url") if metadata else None
+    
+    if pair_url:
+        buttons.append({"text": "📊 Live Chart", "url": pair_url})
+    elif token_sym:
+        buttons.append({"text": f"📊 Chart {token_sym}", "url": f"https://dexscreener.com/search?q={token_sym}"})
+        
+    buttons.append({"text": "🖥️ Open Terminal", "url": "https://bias-trading-terminal-app.web.app"})
+    if buttons:
+        reply_markup = {"inline_keyboard": [buttons]}
+
+    tg_result = send_telegram_alert(tg_text, reply_markup=reply_markup)
     
     alert_record = {
         "id": f"alert_{int(time.time() * 1000)}",
