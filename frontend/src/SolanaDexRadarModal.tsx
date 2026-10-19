@@ -5,7 +5,7 @@ import {
   DollarSign, Activity, Maximize2, Minimize2, 
   Layers, Target, Shield, Gauge,
   LineChart, Sparkles, Sliders,
-  AlertTriangle, Volume2, VolumeX, Star, Diamond, Users, Plus, Trash2
+  AlertTriangle, Volume2, VolumeX, Star, Diamond, Users, Plus, Trash2, Wallet
 } from 'lucide-react';
 import { API_BASE } from './config';
 
@@ -165,10 +165,49 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   const [newWalletLabel, setNewWalletLabel] = useState('');
   const [newWalletChain, setNewWalletChain] = useState<'solana' | 'base'>('solana');
 
+  // Real Money On-Chain Wallet & Execution Mode State
+  const [dexMode, setDexMode] = useState<'SIMULATION' | 'LIVE'>('SIMULATION');
+  const [walletInfo, setWalletInfo] = useState<any>(null);
+  const [showWalletModal, setShowWalletModal] = useState<boolean>(false);
+
+  const fetchWalletInfo = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/dex/wallet`);
+      if (res.ok) {
+        const json = await res.json();
+        setWalletInfo(json);
+      }
+    } catch (e) {
+      console.error('Failed to fetch DEX wallet info:', e);
+    }
+  };
+
+  const handleToggleDexMode = async (mode: 'SIMULATION' | 'LIVE') => {
+    try {
+      const res = await fetch(`${API_BASE}/api/dex/set-mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      });
+      const json = await res.json();
+      if (json.status === 'SUCCESS') {
+        setDexMode(json.dex_mode);
+        if (json.wallet) setWalletInfo(json.wallet);
+        setToastMsg({
+          type: 'success',
+          text: json.dex_mode === 'LIVE' ? '🔴 Live On-Chain Trading Active!' : '🟡 Safe Simulation Mode Active.'
+        });
+      }
+    } catch (e) {
+      console.error('Failed to toggle DEX mode:', e);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       fetchListings(selectedChain, true);
       fetchPositions();
+      fetchWalletInfo();
 
       const posInterval = setInterval(() => {
         fetchPositions();
@@ -242,6 +281,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         if (json.gas_priority) setGasPriority(json.gas_priority);
         if (json.slippage_bps != null) setSlippageBps(json.slippage_bps);
         if (json.anti_mev_shield != null) setAntiMevShield(json.anti_mev_shield);
+        if (json.dex_mode) setDexMode(json.dex_mode);
       }
     } catch (e) {
       console.error('Failed to load DEX positions:', e);
@@ -500,9 +540,19 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 }`}>
                   {dexArmed ? '● 24/7 DAEMON ARMED' : '○ STANDBY'}
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 font-mono font-bold">
-                  SIMULATION · LIVE ON-CHAIN BOOK
-                </span>
+                <button
+                  id="btn-dex-mode-wallet"
+                  onClick={() => setShowWalletModal(true)}
+                  className={`text-[10px] px-2.5 py-0.5 rounded font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    dexMode === 'LIVE'
+                      ? 'bg-neon-red/25 text-neon-red border border-neon-red/50 shadow-[0_0_12px_rgba(255,42,109,0.35)] animate-pulse'
+                      : 'bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 hover:text-white'
+                  }`}
+                  title="Click to view Real Money On-Chain Wallet Setup & Mode"
+                >
+                  <Wallet size={11} className={dexMode === 'LIVE' ? 'text-neon-red' : 'text-cyan-400'} />
+                  <span>{dexMode === 'LIVE' ? '🔴 LIVE REAL MONEY (ON-CHAIN)' : '🟡 SIMULATION (PAPER ON-CHAIN)'}</span>
+                </button>
               </div>
               <p className="text-[11px] text-slate-400 font-sans mt-0.5">
                 GMGN Smart Inflow · BullX Audit Suite (Mint/Freeze/LP Lock) · Photon Panic Bailout · Micro-Trailing Ratchet
@@ -1660,6 +1710,133 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
           )}
         </div>
       </div>
+
+      {/* Real Money On-Chain Wallet Modal */}
+      {showWalletModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div className="w-full max-w-lg p-5 rounded-2xl bg-[#090d16] border border-cyan-500/40 shadow-[0_0_40px_rgba(6,182,212,0.25)] font-mono text-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <Wallet className="text-cyan-400" size={16} />
+                <span className="font-extrabold text-sm text-white tracking-wider">
+                  SOLANA REAL MONEY ON-CHAIN EXECUTION
+                </span>
+              </div>
+              <button
+                onClick={() => setShowWalletModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Mode Selector */}
+            <div className="mt-4 p-1.5 rounded-xl bg-black/60 border border-white/10 grid grid-cols-2 gap-1.5">
+              <button
+                onClick={() => handleToggleDexMode('SIMULATION')}
+                className={`py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  dexMode === 'SIMULATION'
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>🟡 SIMULATION (PAPER)</span>
+              </button>
+              <button
+                onClick={() => handleToggleDexMode('LIVE')}
+                className={`py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  dexMode === 'LIVE'
+                    ? 'bg-neon-red/25 text-neon-red border border-neon-red/50 shadow-[0_0_12px_rgba(255,42,109,0.35)] animate-pulse'
+                    : 'text-slate-400 hover:text-neon-red'
+                }`}
+              >
+                <span>🔴 LIVE ON-CHAIN JUPITER</span>
+              </button>
+            </div>
+
+            {/* Wallet Status Card */}
+            <div className="mt-4 p-3.5 rounded-xl bg-[#0c121e] border border-white/10">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-bold uppercase text-[10px]">Connected Solana Trading Wallet:</span>
+                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                  walletInfo?.configured 
+                    ? walletInfo?.balance_sol >= 0.05 
+                      ? 'bg-neon-green/20 text-neon-green border border-neon-green/40' 
+                      : 'bg-neon-gold/20 text-neon-gold border border-neon-gold/40'
+                    : 'bg-neon-red/20 text-neon-red border border-neon-red/40'
+                }`}>
+                  {walletInfo?.configured ? (walletInfo?.balance_sol >= 0.05 ? '🟢 READY TO SNIPE' : '🟡 LOW BALANCE') : '🔴 NOT CONFIGURED'}
+                </span>
+              </div>
+
+              {walletInfo?.configured ? (
+                <div className="mt-2.5 space-y-2">
+                  <div className="p-2 rounded bg-black/60 border border-white/5 flex items-center justify-between">
+                    <span className="text-slate-300 text-[11px] font-mono select-all truncate max-w-[320px]">
+                      {walletInfo.address}
+                    </span>
+                    <button
+                      onClick={() => copyAddress(walletInfo.address)}
+                      className="text-cyan-400 hover:text-white ml-2 cursor-pointer"
+                      title="Copy Wallet Address"
+                    >
+                      {copiedAddr === walletInfo.address ? <Check size={13} className="text-neon-green" /> : <Copy size={13} />}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div className="p-2 rounded bg-black/40 border border-white/5">
+                      <div className="text-[9px] text-slate-400">SOL BALANCE:</div>
+                      <div className="text-sm font-extrabold text-neon-green mt-0.5">
+                        {walletInfo.balance_sol} SOL
+                      </div>
+                      <div className="text-[9px] text-slate-500">~${walletInfo.balance_usd} USD</div>
+                    </div>
+                    <div className="p-2 rounded bg-black/40 border border-white/5">
+                      <div className="text-[9px] text-slate-400">JITO ANTI-MEV:</div>
+                      <div className="text-sm font-extrabold text-cyan-300 mt-0.5">
+                        {walletInfo.jito_enabled ? 'ACTIVE' : 'STANDARD'}
+                      </div>
+                      <div className="text-[9px] text-slate-500">Fast Block Landing</div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 text-slate-400 text-[11px] leading-relaxed">
+                  No Solana private key is configured yet. The engine safely simulates trades using live Raydium & Jupiter liquidity pools.
+                </div>
+              )}
+            </div>
+
+            {/* Step-by-Step Setup Guide */}
+            <div className="mt-3.5 p-3 rounded-xl bg-cyan-950/20 border border-cyan-500/30 text-[10px] text-slate-300 space-y-1.5">
+              <div className="font-bold text-cyan-300 text-[11px] flex items-center gap-1">
+                <span>📋 How to Fund & Activate Real Money DEX Trading:</span>
+              </div>
+              <div className="pl-2 border-l border-cyan-500/40 space-y-1">
+                <p>1. Create a dedicated <strong>"Burner Wallet"</strong> in Phantom or Solflare (never your main wallet).</p>
+                <p>2. Send <strong>0.5 to 2 SOL</strong> to the wallet for token swaps and priority gas.</p>
+                <p>3. Export your <strong>Base58 Private Key</strong> from Phantom (Settings &gt; Show Private Key).</p>
+                <p>4. Add to server <code>.env</code> file:</p>
+                <div className="p-1.5 rounded bg-black/80 font-mono text-[9px] text-neon-green select-all border border-white/10">
+                  SOLANA_PRIVATE_KEY=your_private_key_base58_here<br/>
+                  SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=optional
+                </div>
+                <p>5. Toggle mode above to <strong>🔴 LIVE ON-CHAIN JUPITER</strong>.</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setShowWalletModal(false)}
+                className="px-4 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 font-bold transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

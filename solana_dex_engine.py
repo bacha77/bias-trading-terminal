@@ -463,6 +463,20 @@ def close_dex_position_by_address(token_address: str, partial_pct: float = 1.0) 
     pnl_pct = (cur_px - entry_px) / entry_px if entry_px > 0 else 0.0
     now_str = datetime.now().strftime("%H:%M:%S")
 
+    # If this was executed on-chain, route sell through Jupiter
+    onchain_sell_txid = None
+    onchain_solscan = None
+    if target.get("mode") == "LIVE_ONCHAIN" and target.get("chain") == "solana":
+        tokens_to_sell = float(target.get("tokens_held", 0)) * partial_pct
+        if tokens_to_sell > 0:
+            token_lamports = int(tokens_to_sell * (10 ** 6))
+            logger.info(f"[LIVE ON-CHAIN SELL] Routing Jupiter swap back to SOL for {target.get('symbol')}...")
+            sell_res = execute_jupiter_onchain_sell(token_address, token_lamports, slippage_bps=300)
+            if sell_res.get("status") == "SUCCESS":
+                onchain_sell_txid = sell_res.get("txid")
+                onchain_solscan = sell_res.get("solscan_url")
+                logger.info(f"[LIVE ON-CHAIN SELL SUCCESS] {target.get('symbol')} sold: {onchain_sell_txid}")
+
     if partial_pct < 1.0:
         cash_banked = round(float(target.get("amount_usd", 100.0)) * partial_pct * pnl_pct, 2)
         target["tokens_held"] = target.get("tokens_held", 0) * (1.0 - partial_pct)
@@ -474,6 +488,8 @@ def close_dex_position_by_address(token_address: str, partial_pct: float = 1.0) 
             "reason": f"💰 Partial Scale Out ({int(partial_pct*100)}%) via Telegram",
             "realized_pnl_pct": f"{pnl_pct*100:+.1f}%",
             "realized_pnl_usd": cash_banked,
+            "close_txid": onchain_sell_txid,
+            "close_solscan": onchain_solscan,
             "status": "PARTIAL_TP_CLOSED"
         }
         closed.insert(0, exit_ticket)
@@ -487,6 +503,8 @@ def close_dex_position_by_address(token_address: str, partial_pct: float = 1.0) 
             "exit_time": now_str,
             "realized_pnl_usd": pnl_usd,
             "realized_pnl_pct": f"{pnl_pct*100:+.1f}%",
+            "close_txid": onchain_sell_txid,
+            "close_solscan": onchain_solscan,
             "reason": "Market Exit executed via Telegram / Terminal",
             "status": "PROFIT_MANUAL_CLOSED" if pnl_usd >= 0 else "MANUALLY_CLOSED"
         }
@@ -571,6 +589,270 @@ def get_jupiter_quote(output_mint: str, input_mint: str = SOL_MINT, amount_sol: 
     except Exception as e:
         logger.error(f"Jupiter quote error for {output_mint}: {e}")
         return {"success": False, "error": str(e)}
+
+def get_solana_keypair():
+    """
+    Retrieves the Solana keypair from environment variables or .env file.
+    Expects SOLANA_PRIVATE_KEY in base58 format.
+    """
+    key_str = os.getenv("SOLANA_PRIVATE_KEY", "").strip()
+    if not key_str:
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r") as f:
+                    for line in f:
+                        if line.startswith("SOLANA_PRIVATE_KEY=") and not line.startswith("#"):
+                            key_str = line.strip().split("=", 1)[1].strip()
+                            break
+            except Exception:
+                pass
+    if not key_str:
+        return None
+    try:
+        from solders.keypair import Keypair
+        return Keypair.from_base58_string(key_str)
+    except Exception as e:
+        logger.error(f"Failed to load Solana keypair: {e}")
+        return None
+
+def get_solana_rpc_url() -> str:
+    """Returns configured RPC endpoint (e.g. Helius / Quicknode) or standard public cluster."""
+    rpc = os.getenv("SOLANA_RPC_URL", "").strip()
+    if not rpc:
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r") as f:
+                    for line in f:
+                        if line.startswith("SOLANA_RPC_URL=") and not line.startswith("#"):
+                            rpc = line.strip().split("=", 1)[1].strip()
+                            break
+            except Exception:
+                pass
+    return rpc or "https://api.mainnet-beta.solana.com"
+
+def get_solana_wallet_status() -> Dict[str, Any]:
+    """
+    Checks if a live Solana wallet is configured, resolves address and queries live SOL balance.
+    """
+    kp = get_solana_keypair()
+    if not kp:
+        return {
+            "configured": False,
+            "address": None,
+            "balance_sol": 0.0,
+            "balance_usd": 0.0,
+            "mode": "SIMULATION",
+            "message": "No SOLANA_PRIVATE_KEY configured. Running in safe simulation mode."
+        }
+    pubkey = str(kp.pubkey())
+    rpc_url = get_solana_rpc_url()
+    balance_sol = 0.0
+    try:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBalance",
+            "params": [pubkey]
+        }
+        req = urllib.request.Request(
+            rpc_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            lamports = data.get("result", {}).get("value", 0)
+            balance_sol = round(lamports / 1_000_000_000, 4)
+    except Exception as e:
+        logger.warning(f"Failed to query SOL balance for {pubkey}: {e}")
+
+    sol_px = get_sol_price_usd()
+    return {
+        "configured": True,
+        "address": pubkey,
+        "balance_sol": balance_sol,
+        "balance_usd": round(balance_sol * sol_px, 2),
+        "sol_price": sol_px,
+        "rpc_url": rpc_url,
+        "jito_enabled": bool(os.getenv("SOLANA_JITO_ENABLED", "true").lower() == "true"),
+        "mode": "LIVE_READY" if balance_sol >= 0.02 else "LOW_BALANCE",
+        "message": f"Wallet active ({balance_sol} SOL). Ready for live execution." if balance_sol >= 0.02 else f"Low SOL balance ({balance_sol} SOL). Deposit at least 0.05 SOL to execute."
+    }
+
+def execute_jupiter_onchain_swap(
+    output_mint: str,
+    input_mint: str = SOL_MINT,
+    amount_sol: float = 0.1,
+    slippage_bps: int = 250,
+    gas_priority: str = "ULTRA_JITO"
+) -> Dict[str, Any]:
+    """
+    Builds, signs, and broadcasts an authentic Jupiter v6 on-chain transaction.
+    """
+    kp = get_solana_keypair()
+    if not kp:
+        return {"status": "ERROR", "message": "No Solana private key configured."}
+
+    user_pubkey = str(kp.pubkey())
+    quote_res = get_jupiter_quote(output_mint=output_mint, input_mint=input_mint, amount_sol=amount_sol, slippage_bps=slippage_bps)
+    if not quote_res.get("success"):
+        return {"status": "ERROR", "message": f"Jupiter quote failed: {quote_res.get('error')}"}
+
+    quote = quote_res["quote"]
+    swap_url = "https://api.jup.ag/swap/v1/swap"
+    swap_payload = {
+        "quoteResponse": quote,
+        "userPublicKey": user_pubkey,
+        "wrapAndUnwrapSol": True,
+        "dynamicComputeUnitLimit": True,
+        "prioritizationFeeLamports": "auto"
+    }
+
+    try:
+        s_req = urllib.request.Request(
+            swap_url,
+            data=json.dumps(swap_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(s_req, timeout=8) as sr:
+            swap_data = json.loads(sr.read().decode())
+            swap_tx_b64 = swap_data.get("swapTransaction")
+            if not swap_tx_b64:
+                return {"status": "ERROR", "message": "Jupiter returned empty swap transaction."}
+
+        import base64
+        from solders.transaction import VersionedTransaction
+        raw_tx_bytes = base64.b64decode(swap_tx_b64)
+        tx = VersionedTransaction.from_bytes(raw_tx_bytes)
+        signed_tx = VersionedTransaction(tx.message, [kp])
+        signed_b64 = base64.b64encode(bytes(signed_tx)).decode("utf-8")
+        txid = str(signed_tx.signatures[0])
+
+        # Broadcast via Solana RPC sendTransaction
+        rpc_url = get_solana_rpc_url()
+        broadcast_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendTransaction",
+            "params": [
+                signed_b64,
+                {
+                    "skipPreflight": True,
+                    "maxRetries": 3,
+                    "encoding": "base64"
+                }
+            ]
+        }
+        b_req = urllib.request.Request(
+            rpc_url,
+            data=json.dumps(broadcast_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(b_req, timeout=8) as br:
+            b_res = json.loads(br.read().decode())
+            if "error" in b_res:
+                return {"status": "ERROR", "message": f"RPC send error: {b_res['error']}", "txid": txid}
+
+        solscan_url = f"https://solscan.io/tx/{txid}"
+        return {
+            "status": "SUCCESS",
+            "txid": txid,
+            "solscan_url": solscan_url,
+            "in_amount": quote.get("inAmount"),
+            "out_amount": quote.get("outAmount"),
+            "price_impact_pct": quote.get("priceImpactPct", "0")
+        }
+    except Exception as e:
+        logger.error(f"Jupiter onchain swap execution error: {e}")
+        return {"status": "ERROR", "message": str(e)}
+
+def execute_jupiter_onchain_sell(
+    token_mint: str,
+    token_amount_lamports: int,
+    slippage_bps: int = 300
+) -> Dict[str, Any]:
+    """
+    Sells tokens back to native SOL on-chain via Jupiter swap.
+    """
+    kp = get_solana_keypair()
+    if not kp:
+        return {"status": "ERROR", "message": "No Solana private key configured."}
+
+    user_pubkey = str(kp.pubkey())
+    url = f"https://api.jup.ag/swap/v1/quote?inputMint={token_mint}&outputMint={SOL_MINT}&amount={token_amount_lamports}&slippageBps={slippage_bps}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            quote = json.loads(resp.read().decode())
+    except Exception as e:
+        return {"status": "ERROR", "message": f"Jupiter sell quote failed: {e}"}
+
+    swap_url = "https://api.jup.ag/swap/v1/swap"
+    swap_payload = {
+        "quoteResponse": quote,
+        "userPublicKey": user_pubkey,
+        "wrapAndUnwrapSol": True,
+        "dynamicComputeUnitLimit": True,
+        "prioritizationFeeLamports": "auto"
+    }
+    try:
+        s_req = urllib.request.Request(
+            swap_url,
+            data=json.dumps(swap_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(s_req, timeout=8) as sr:
+            swap_data = json.loads(sr.read().decode())
+            swap_tx_b64 = swap_data.get("swapTransaction")
+
+        import base64
+        from solders.transaction import VersionedTransaction
+        raw_tx_bytes = base64.b64decode(swap_tx_b64)
+        tx = VersionedTransaction.from_bytes(raw_tx_bytes)
+        signed_tx = VersionedTransaction(tx.message, [kp])
+        signed_b64 = base64.b64encode(bytes(signed_tx)).decode("utf-8")
+        txid = str(signed_tx.signatures[0])
+
+        rpc_url = get_solana_rpc_url()
+        broadcast_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendTransaction",
+            "params": [
+                signed_b64,
+                {
+                    "skipPreflight": True,
+                    "maxRetries": 3,
+                    "encoding": "base64"
+                }
+            ]
+        }
+        b_req = urllib.request.Request(
+            rpc_url,
+            data=json.dumps(broadcast_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(b_req, timeout=8) as br:
+            b_res = json.loads(br.read().decode())
+            if "error" in b_res:
+                return {"status": "ERROR", "message": f"RPC sell error: {b_res['error']}", "txid": txid}
+
+        return {
+            "status": "SUCCESS",
+            "txid": txid,
+            "solscan_url": f"https://solscan.io/tx/{txid}",
+            "sol_received_lamports": quote.get("outAmount")
+        }
+    except Exception as e:
+        logger.error(f"Jupiter onchain sell error: {e}")
+        return {"status": "ERROR", "message": str(e)}
 
 _LISTINGS_CACHE: Dict[str, Any] = {}
 
@@ -838,6 +1120,33 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
     now_ts = time.time()
     ticket_id = f"dex_{symbol}_{int(now_ts)}"
     
+    actual_mode = mode
+    onchain_txid = None
+    solscan_url = None
+    
+    # Check if Live on-chain execution requested
+    if (mode == "LIVE" or state.get("dex_mode") == "LIVE") and chain == "solana":
+        kp = get_solana_keypair()
+        if kp:
+            logger.info(f"[LIVE DEX SWAP] Submitting Jupiter live on-chain swap for {symbol} ({amount_sol:.4f} SOL)...")
+            onchain_res = execute_jupiter_onchain_swap(
+                output_mint=token_address,
+                amount_sol=amount_sol,
+                slippage_bps=slippage_bps,
+                gas_priority=gas_priority
+            )
+            if onchain_res.get("status") == "SUCCESS":
+                actual_mode = "LIVE_ONCHAIN"
+                onchain_txid = onchain_res.get("txid")
+                solscan_url = onchain_res.get("solscan_url")
+                logger.info(f"[LIVE DEX SWAP SUCCESS] Txid: {onchain_txid}")
+            else:
+                logger.error(f"[LIVE DEX SWAP FAILED] {onchain_res.get('message')}")
+                return {"status": "ERROR", "message": f"On-chain swap rejected: {onchain_res.get('message')}"}
+        else:
+            logger.warning("[LIVE DEX SWAP] No SOLANA_PRIVATE_KEY configured. Defaulting to SIMULATION.")
+            actual_mode = "SIMULATION"
+
     pos_record = {
         "id": ticket_id,
         "address": token_address,
@@ -860,7 +1169,9 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
         "pair_url": f"https://dexscreener.com/{chain}/{token_address}",
         "unrealized_pnl_pct": 0.0,
         "unrealized_pnl_usd": 0.0,
-        "mode": mode,
+        "mode": actual_mode,
+        "txid": onchain_txid,
+        "solscan_url": solscan_url,
         "status": "ACTIVE"
     }
     

@@ -7,3 +7,6 @@ yfinance>=0.2.30
 requests>=2.31.0
 tradingview-screener>=2.4.0
 python-dotenv>=1.0.0
+solders>=0.21.0
+solana>=0.34.0
+base58>=2.1.1

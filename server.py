@@ -3186,6 +3186,7 @@ async def api_get_dex_positions():
     return {
         "status": "SUCCESS",
         "dex_armed": state.get("dex_armed", False),
+        "dex_mode": state.get("dex_mode", "SIMULATION"),
         "sniper_amount_usd": state.get("sniper_amount_usd", 100.0),
         "max_positions": state.get("max_dex_positions", 6),
         "active_chain": state.get("active_chain", "both"),
@@ -3254,6 +3255,26 @@ async def api_set_dex_max_positions(req: DexSetMaxPositionsRequest):
     state["max_dex_positions"] = max_p
     solana_dex_engine.save_dex_state(state)
     return {"status": "SUCCESS", "max_positions": max_p}
+
+@app.get("/api/dex/wallet")
+@app.get("/dex/wallet")
+async def api_get_dex_wallet():
+    import solana_dex_engine
+    return solana_dex_engine.get_solana_wallet_status()
+
+class DexSetModeRequest(BaseModel):
+    mode: str
+
+@app.post("/api/dex/set-mode")
+@app.post("/dex/set-mode")
+async def api_set_dex_mode(req: DexSetModeRequest):
+    import solana_dex_engine
+    mode_clean = "LIVE" if req.mode.upper().strip() in ["LIVE", "REAL"] else "SIMULATION"
+    state = solana_dex_engine.load_dex_state()
+    state["dex_mode"] = mode_clean
+    solana_dex_engine.save_dex_state(state)
+    wallet_info = solana_dex_engine.get_solana_wallet_status()
+    return {"status": "SUCCESS", "dex_mode": mode_clean, "wallet": wallet_info}
 
 class DexExecutionSettingsRequest(BaseModel):
     gas_priority: Optional[str] = None
