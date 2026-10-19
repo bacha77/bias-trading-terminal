@@ -3,8 +3,9 @@ import {
   X, RefreshCw, Zap, ShieldCheck, ExternalLink, 
   Copy, Check, Flame, Coins, 
   DollarSign, Activity, Maximize2, Minimize2, 
-  Layers, Target,
-  LineChart, Sparkles, Sliders
+  Layers, Target, Shield, Gauge,
+  LineChart, Sparkles, Sliders,
+  AlertTriangle, Volume2, VolumeX, Star, Diamond, Users, Plus, Trash2
 } from 'lucide-react';
 import { API_BASE } from './config';
 
@@ -12,6 +13,71 @@ interface SolanaDexRadarModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
+// Pure Browser Web Audio API Chimes (Zero external MP3 dependency)
+const playChime = (type: 'snipe' | 'profit' | 'exit' | 'flatten') => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+
+    if (type === 'snipe') {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.15);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.2);
+    } else if (type === 'profit') {
+      [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + i * 0.08);
+        gain.gain.setValueAtTime(0.12, now + i * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.08);
+        osc.stop(now + i * 0.08 + 0.25);
+      });
+    } else if (type === 'exit') {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(650, now);
+      osc.frequency.exponentialRampToValueAtTime(320, now + 0.2);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.22);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.22);
+    } else if (type === 'flatten') {
+      [0, 0.12].forEach((offset) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(880, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(440, now + offset + 0.1);
+        gain.gain.setValueAtTime(0.18, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + offset + 0.1);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.1);
+      });
+    }
+  } catch (e) {
+    // Audio context may be restricted before user interaction
+  }
+};
 
 // Renders one forensic gate: true = pass, false = fail, null/undefined = not verifiable
 const Gate: React.FC<{ ok: boolean | null | undefined; label: string }> = ({ ok, label }) => (
@@ -58,11 +124,12 @@ const ForensicStrip: React.FC<{ tok: any }> = ({ tok }) => {
 
 export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen, onClose }) => {
   const [loading, setLoading] = useState(false);
-  const [selectedChain, setSelectedChain] = useState<'solana' | 'base'>('solana');
+  const [selectedChain, setSelectedChain] = useState<'both' | 'solana' | 'base'>('both');
   const [selectedRiskProfile, setSelectedRiskProfile] = useState<string>('MOONBAG');
   const [listings, setListings] = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
   const [closedTrades, setClosedTrades] = useState<any[]>([]);
+  const [trackedWallets, setTrackedWallets] = useState<any[]>([]);
   const [activeChartToken, setActiveChartToken] = useState<any | null>(null);
   const [pnlSummary, setPnlSummary] = useState<any>({
     net_pnl_usd: 0.0,
@@ -79,15 +146,24 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   const [dexArmed, setDexArmed] = useState(false);
   const [snipeAmount, setSnipeAmount] = useState(100);
   const [maxPositions, setMaxPositions] = useState(6);
-  const [activeTab, setActiveTab] = useState<'SPLIT' | 'RADAR' | 'POSITIONS' | 'HISTORY'>('SPLIT');
+  const [gasPriority, setGasPriority] = useState<'NORMAL' | 'TURBO' | 'ULTRA_JITO'>('TURBO');
+  const [slippageBps, setSlippageBps] = useState<number>(100);
+  const [antiMevShield, setAntiMevShield] = useState<boolean>(true);
+  const [activeTab, setActiveTab] = useState<'SPLIT' | 'RADAR' | 'POSITIONS' | 'HISTORY' | 'WALLETS'>('SPLIT');
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
   const [snipingAddr, setSnipingAddr] = useState<string | null>(null);
   const [closingAddr, setClosingAddr] = useState<string | null>(null);
+  const [isFlattening, setIsFlattening] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [toastMsg, setToastMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filterSafety, setFilterSafety] = useState(false);
   const [filterWhalesOnly, setFilterWhalesOnly] = useState(false);
+  const [filterPreGraduation, setFilterPreGraduation] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [newWalletAddr, setNewWalletAddr] = useState('');
+  const [newWalletLabel, setNewWalletLabel] = useState('');
+  const [newWalletChain, setNewWalletChain] = useState<'solana' | 'base'>('solana');
 
   useEffect(() => {
     if (isOpen) {
@@ -109,7 +185,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
     }
   }, [isOpen, selectedChain]);
 
-  const handleSelectChain = async (chain: 'solana' | 'base') => {
+  const handleSelectChain = async (chain: 'both' | 'solana' | 'base') => {
     setSelectedChain(chain);
     setActiveChartToken(null);
     fetchListings(chain, true);
@@ -157,14 +233,35 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         setClosedTrades(json.closed_trades || []);
         setDexArmed(json.dex_armed || false);
         if (json.risk_profile) setSelectedRiskProfile(json.risk_profile);
+        if (json.tracked_wallets) setTrackedWallets(json.tracked_wallets);
         if (json.pnl_summary) {
           setPnlSummary(json.pnl_summary);
         }
         if (json.sniper_amount_usd) setSnipeAmount(json.sniper_amount_usd);
         if (json.max_positions) setMaxPositions(json.max_positions);
+        if (json.gas_priority) setGasPriority(json.gas_priority);
+        if (json.slippage_bps != null) setSlippageBps(json.slippage_bps);
+        if (json.anti_mev_shield != null) setAntiMevShield(json.anti_mev_shield);
       }
     } catch (e) {
       console.error('Failed to load DEX positions:', e);
+    }
+  };
+
+  const handleUpdateExecutionSettings = async (updates: { gas_priority?: string; slippage_bps?: number; anti_mev_shield?: boolean }) => {
+    if (updates.gas_priority) setGasPriority(updates.gas_priority as any);
+    if (updates.slippage_bps != null) setSlippageBps(updates.slippage_bps);
+    if (updates.anti_mev_shield != null) setAntiMevShield(updates.anti_mev_shield);
+    try {
+      await fetch(`${API_BASE}/api/dex/set-execution-settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      setToastMsg({ type: 'success', text: 'Institutional execution settings updated.' });
+      setTimeout(() => setToastMsg(null), 3000);
+    } catch (e) {
+      console.error('Failed to update execution settings:', e);
     }
   };
 
@@ -250,6 +347,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
       });
       const data = await res.json();
       if (data.status === 'SUCCESS') {
+        if (soundEnabled) playChime('snipe');
         setToastMsg({
           type: 'success',
           text: `🚀 Sniped $${snipeAmount} of ${tok.symbol}! Forensic protection active.`
@@ -273,6 +371,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
     try {
       const res = await fetch(`${API_BASE}/api/dex/close-position?token_address=${addr}`, { method: 'POST' });
       if (res.ok) {
+        if (soundEnabled) playChime('exit');
         setToastMsg({ type: 'success', text: `Closed ${sym} position. Realized P&L banked.` });
         fetchPositions();
       }
@@ -280,6 +379,73 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
       console.error(e);
     } finally {
       setClosingAddr(null);
+    }
+  };
+
+  const handleFlattenAll = async () => {
+    if (!window.confirm("⚠️ EMERGENCY FLATTEN ALL: Liquidate 100% of all open DEX positions to cash immediately?")) {
+      return;
+    }
+    setIsFlattening(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/dex/flatten-all`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        if (soundEnabled) playChime('flatten');
+        setToastMsg({
+          type: 'success',
+          text: `⚡ FLATTEN EXECUTED: Liquidated ${data.flattened_count || 0} open positions to cash.`
+        });
+        fetchPositions();
+      } else {
+        setToastMsg({ type: 'error', text: data.message || 'Flatten failed' });
+      }
+    } catch (err: any) {
+      setToastMsg({ type: 'error', text: `Flatten error: ${err.message}` });
+    } finally {
+      setIsFlattening(false);
+    }
+  };
+
+  const handleAddTrackedWallet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWalletAddr.trim()) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/dex/add-tracked-wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: newWalletAddr.trim(),
+          label: newWalletLabel.trim() || 'Tracked Whale',
+          chain: newWalletChain
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setToastMsg({ type: 'success', text: `🐋 Whale wallet added to radar!` });
+        setTrackedWallets(data.tracked_wallets || []);
+        setNewWalletAddr('');
+        setNewWalletLabel('');
+      }
+    } catch (e: any) {
+      setToastMsg({ type: 'error', text: `Failed to add wallet: ${e.message}` });
+    }
+  };
+
+  const handleRemoveTrackedWallet = async (addr: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/dex/remove-tracked-wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setToastMsg({ type: 'success', text: `Removed wallet from radar.` });
+        setTrackedWallets(data.tracked_wallets || []);
+      }
+    } catch (e: any) {
+      setToastMsg({ type: 'error', text: `Failed to remove wallet: ${e.message}` });
     }
   };
 
@@ -298,22 +464,26 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
       tok.address.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesSafety = !filterSafety || (tok.safety_score >= 75 && tok.forensic_status === 'PASSED');
     const matchesWhales = !filterWhalesOnly || (tok.whale_flow !== 'ORGANIC FLOW');
-    return matchesSearch && matchesSafety && matchesWhales;
+    const matchesPreGrad = !filterPreGraduation || (
+      tok.graduation_status === 'PRE_GRADUATION' || 
+      (tok.bonding_curve_pct != null && tok.bonding_curve_pct >= 75 && tok.bonding_curve_pct <= 95)
+    );
+    return matchesSearch && matchesSafety && matchesWhales && matchesPreGrad;
   });
 
   const isNetProfit = pnlSummary.net_pnl_usd >= 0;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-2 sm:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-1 sm:p-3 md:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
       <div 
-        className={`relative bg-[#070b12] border border-cyan-500/40 shadow-[0_0_80px_rgba(6,182,212,0.25)] flex flex-col overflow-hidden transition-all duration-300 ${
+        className={`relative bg-[#070b12] border border-cyan-500/40 shadow-[0_0_80px_rgba(6,182,212,0.25)] flex flex-col transition-all duration-300 my-auto ${
           isFullScreen 
-            ? 'w-full h-full rounded-none' 
-            : 'w-[97vw] max-w-[1740px] h-[94vh] rounded-2xl'
+            ? 'w-full min-h-screen rounded-none' 
+            : 'w-[98vw] max-w-[1740px] h-[95vh] min-h-[500px] rounded-2xl overflow-hidden'
         }`}
       >
         {/* ================= 1. Top Institutional Navigation Header ================= */}
-        <div className="flex flex-wrap items-center justify-between px-6 py-3 border-b border-white/10 bg-gradient-to-r from-white/[0.04] via-transparent to-white/[0.02] gap-3">
+        <div className="flex flex-wrap items-center justify-between px-4 sm:px-6 py-2.5 sm:py-3 border-b border-white/10 bg-gradient-to-r from-white/[0.04] via-transparent to-white/[0.02] gap-2.5 sm:gap-3 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl overflow-hidden border border-cyan-400/50 shadow-[0_0_20px_rgba(6,182,212,0.45)] bg-black/60 shrink-0">
               <img src="/dumay-logo.jpg" alt="DUMAY" className="w-full h-full object-cover" />
@@ -342,8 +512,19 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
           {/* Chain & Snipe Controls */}
           <div className="flex items-center gap-3">
-            {/* Multi-Chain Selector (Solana vs Base L2) */}
+            {/* Multi-Chain Selector (Solana vs Base vs Both) */}
             <div className="flex items-center p-0.5 bg-black/60 rounded-xl border border-white/10 font-mono text-xs">
+              <button
+                onClick={() => handleSelectChain('both')}
+                className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  selectedChain === 'both'
+                    ? 'bg-gradient-to-r from-emerald-500 via-cyan-500 to-blue-600 text-black font-extrabold shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Autonomous Snipe on BOTH Solana and Base L2"
+              >
+                <span>⚡ DUAL (SOL + BASE)</span>
+              </button>
               <button
                 onClick={() => handleSelectChain('solana')}
                 className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
@@ -399,7 +580,64 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               ))}
             </div>
 
-            {/* Arm / Disarm Button */}
+            {/* Slippage Tolerance Selector */}
+            <div className="hidden lg:flex items-center gap-1 bg-white/[0.03] px-2.5 py-1 rounded-xl border border-white/10 font-mono text-xs">
+              <span className="text-slate-500 text-[10px]">SLIP:</span>
+              {[
+                { label: '0.5%', bps: 50 },
+                { label: '1.0%', bps: 100 },
+                { label: '2.5%', bps: 250 },
+                { label: '5.0%', bps: 500 },
+              ].map((s) => (
+                <button
+                  key={s.bps}
+                  onClick={() => handleUpdateExecutionSettings({ slippage_bps: s.bps })}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                    slippageBps === s.bps ? 'bg-amber-400 text-black font-extrabold shadow-sm' : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                  title={`Max Slippage: ${s.label}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Gas Priority & MEV Protection Toggle */}
+            <div className="hidden xl:flex items-center gap-1 bg-white/[0.03] px-2 py-1 rounded-xl border border-white/10 font-mono text-xs">
+              <span className="text-slate-500 text-[10px] flex items-center gap-0.5">
+                <Gauge size={10} className="text-cyan-400" />
+                <span>GAS:</span>
+              </span>
+              {[
+                { label: 'NORM', val: 'NORMAL', tip: 'Normal Gas (5k lamports)' },
+                { label: 'TURBO', val: 'TURBO', tip: 'Fast Validator Priority (50k lamports)' },
+                { label: 'JITO 🛡️', val: 'ULTRA_JITO', tip: 'Ultra Private Bundle + Jito MEV Shield (150k lamports)' },
+              ].map((g) => (
+                <button
+                  key={g.val}
+                  onClick={() => handleUpdateExecutionSettings({ gas_priority: g.val })}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                    gasPriority === g.val ? 'bg-cyan-500 text-black font-extrabold shadow-sm' : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                  title={g.tip}
+                >
+                  {g.label}
+                </button>
+              ))}
+
+              <button
+                onClick={() => handleUpdateExecutionSettings({ anti_mev_shield: !antiMevShield })}
+                className={`ml-1 px-1.5 py-0.5 rounded text-[9.5px] font-black border transition-all cursor-pointer flex items-center gap-0.5 ${
+                  antiMevShield 
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_8px_rgba(16,185,129,0.3)]' 
+                    : 'bg-white/5 text-slate-500 border-white/5 hover:text-slate-400'
+                }`}
+                title={antiMevShield ? "Anti-Sandwich / MEV Shield Active (Private Validator Bundles)" : "MEV Shield Disabled (Standard Public Mempool)"}
+              >
+                <Shield size={10} className={antiMevShield ? "text-emerald-400" : "text-slate-500"} />
+                <span>{antiMevShield ? 'MEV 🛡️' : 'OFF'}</span>
+              </button>
+            </div>
             <button
               onClick={handleToggleDaemon}
               className={`px-4 py-1.5 rounded-xl font-mono text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-md ${
@@ -410,6 +648,19 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             >
               <Zap size={14} className={dexArmed ? "text-neon-red" : "text-cyan-400"} />
               {dexArmed ? 'DISARM DAEMON' : 'ARM 24/7 DAEMON'}
+            </button>
+
+            {/* Audio Chime Mute/Unmute */}
+            <button
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              className={`p-2 rounded-xl transition-colors cursor-pointer border ${
+                soundEnabled 
+                  ? 'text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 border-cyan-500/30' 
+                  : 'text-slate-500 hover:text-slate-400 bg-white/5 border-white/5'
+              }`}
+              title={soundEnabled ? "Audio Chimes ON (Click to Mute)" : "Audio Chimes OFF (Click to Enable)"}
+            >
+              {soundEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}
             </button>
 
             <button
@@ -440,7 +691,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         </div>
 
         {/* ================= 2. Real-Time DEX P&L Analytics HUD & Risk Profiles ================= */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2.5 px-6 py-2.5 bg-black/60 border-b border-white/10 font-mono">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5 px-4 sm:px-6 py-2 sm:py-2.5 bg-black/60 border-b border-white/10 font-mono shrink-0">
           {/* Card 1: NET P&L */}
           <div className="p-2.5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/10 flex flex-col justify-between">
             <span className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center justify-between">
@@ -577,8 +828,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         )}
 
         {/* Navigation Tabs & Search Controls */}
-        <div className="flex flex-wrap items-center justify-between px-6 py-2 border-b border-white/10 bg-white/[0.01]">
-          <div className="flex items-center gap-2 text-xs font-mono">
+        <div className="flex flex-wrap items-center justify-between px-4 sm:px-6 py-2 border-b border-white/10 bg-white/[0.01] shrink-0 gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-mono overflow-x-auto max-w-full pb-1 sm:pb-0">
             <button
               onClick={() => setActiveTab('SPLIT')}
               className={`pb-1 px-3 font-bold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -625,16 +876,28 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             >
               <span>RECEIPTS ({closedTrades.length})</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab('WALLETS')}
+              className={`pb-1 px-3 font-bold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'WALLETS'
+                  ? 'border-cyan-400 text-cyan-300'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users size={13} className="text-cyan-400" />
+              <span>SMART WHALES ({trackedWallets.length})</span>
+            </button>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <div className="relative">
               <input
                 type="text"
                 placeholder="Search symbol, pair or address..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="px-3 py-1 bg-black/50 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 font-mono focus:border-cyan-400 focus:outline-none w-48 sm:w-60"
+                className="px-3 py-1 bg-black/50 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 font-mono focus:border-cyan-400 focus:outline-none w-44 sm:w-56"
               />
               {searchQuery && (
                 <button 
@@ -645,6 +908,19 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 </button>
               )}
             </div>
+
+            <button
+              onClick={() => setFilterPreGraduation(!filterPreGraduation)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                filterPreGraduation 
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.2)]'
+                  : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
+              }`}
+              title="Filter for tokens at 75-95% bonding curve progress"
+            >
+              <Zap size={12} className="text-amber-400" />
+              <span>⚡ Pre-Grad (75-95%)</span>
+            </button>
 
             <button
               onClick={() => setFilterSafety(!filterSafety)}
@@ -673,11 +949,11 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         </div>
 
         {/* ================= 3. Main Command Center Body ================= */}
-        <div className="flex-1 overflow-hidden p-5 font-mono">
+        <div className="flex-1 overflow-y-auto lg:overflow-hidden p-3 sm:p-5 font-mono">
           {activeTab === 'SPLIT' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 h-full">
+            <div className="flex flex-col lg:grid lg:grid-cols-12 gap-5 min-h-[750px] lg:h-full">
               {/* Left Column: Clean Breakout Radar & Forensics (7 Cols) */}
-              <div className="lg:col-span-7 flex flex-col h-full bg-black/40 rounded-xl border border-white/10 overflow-hidden">
+              <div className="lg:col-span-7 flex flex-col h-[520px] lg:h-full bg-black/40 rounded-xl border border-white/10 overflow-hidden shrink-0">
                 <div className="px-4 py-2 bg-white/[0.02] border-b border-white/10 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Flame size={15} className="text-amber-400" />
@@ -763,6 +1039,29 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                     <LineChart size={11} /> Chart Active
                                   </span>
                                 </div>
+
+                                {/* Bonding Curve Progress (Pump.fun / Moonshot style) */}
+                                {tok.bonding_curve_pct != null && (
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-[8.5px] font-mono text-slate-400 flex items-center gap-1">
+                                      <span>⚡ Curve:</span>
+                                      <strong className={tok.bonding_curve_pct >= 75 ? 'text-amber-300' : 'text-slate-300'}>
+                                        {tok.bonding_curve_pct}%
+                                      </strong>
+                                    </span>
+                                    <div className="w-16 h-1.5 bg-black/60 rounded-full overflow-hidden border border-white/10">
+                                      <div 
+                                        className={`h-full ${tok.bonding_curve_pct >= 90 ? 'bg-gradient-to-r from-amber-500 to-neon-green' : 'bg-cyan-500'}`}
+                                        style={{ width: `${Math.min(100, tok.bonding_curve_pct)}%` }}
+                                      />
+                                    </div>
+                                    {tok.graduation_status === 'PRE_GRADUATION' && (
+                                      <span className="text-[7.5px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-black border border-amber-500/40 animate-pulse">
+                                        ⚡ PRE-GRAD
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -815,9 +1114,9 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               </div>
 
               {/* Right Column: Positions & Embedded Live Candlestick Chart (5 Cols) */}
-              <div className="lg:col-span-5 flex flex-col h-full space-y-3">
+              <div className="lg:col-span-5 flex flex-col h-auto lg:h-full space-y-3 shrink-0">
                 {/* Embedded Live Chart Drawer (Photon Model) */}
-                <div className="h-64 flex flex-col bg-black/40 rounded-xl border border-white/10 overflow-hidden">
+                <div className="h-64 sm:h-72 flex flex-col bg-black/40 rounded-xl border border-white/10 overflow-hidden shrink-0">
                   <div className="px-3.5 py-1.5 bg-white/[0.02] border-b border-white/10 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <LineChart size={14} className="text-cyan-400" />
@@ -854,17 +1153,30 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 </div>
 
                 {/* Active Positions Desk */}
-                <div className="flex-1 flex flex-col bg-black/40 rounded-xl border border-white/10 overflow-hidden">
-                  <div className="px-4 py-2 bg-white/[0.02] border-b border-white/10 flex items-center justify-between">
+                <div className="flex-1 min-h-[380px] lg:min-h-0 flex flex-col bg-black/40 rounded-xl border border-white/10 overflow-hidden shrink-0">
+                  <div className="px-4 py-2 bg-white/[0.02] border-b border-white/10 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Coins size={14} className="text-neon-green" />
                       <span className="text-xs font-bold text-white uppercase tracking-wider">
                         Active Positions ({positions.length}/{maxPositions})
                       </span>
                     </div>
-                    <span className="text-[10px] text-neon-green font-bold">
-                      Floating: {pnlSummary.total_unrealized_usd >= 0 ? '+' : ''}${pnlSummary.total_unrealized_usd.toFixed(2)}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-neon-green font-bold">
+                        Floating: {pnlSummary.total_unrealized_usd >= 0 ? '+' : ''}${pnlSummary.total_unrealized_usd.toFixed(2)}
+                      </span>
+                      {positions.length > 0 && (
+                        <button
+                          onClick={handleFlattenAll}
+                          disabled={isFlattening}
+                          className="px-2 py-0.5 rounded bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/50 text-[9px] font-black tracking-wide flex items-center gap-1 cursor-pointer transition-all shadow-[0_0_10px_rgba(255,59,92,0.3)] animate-pulse"
+                          title="Panic Liquidate ALL Open DEX Positions to Cash"
+                        >
+                          <AlertTriangle size={11} />
+                          <span>{isFlattening ? 'FLATTENING...' : '⚡ FLATTEN ALL'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
@@ -900,13 +1212,36 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                   {pos.symbol}
                                 </div>
                                 <div>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-extrabold text-white text-xs">
                                       ${pos.entry_price < 0.0001 ? pos.entry_price.toExponential(2) : pos.entry_price.toFixed(4)}
                                     </span>
-                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-bold">
+                                    <span className={`text-[8.5px] px-1.5 py-0.2 rounded font-black border ${
+                                      (pos.chain || 'solana').toLowerCase() === 'base'
+                                        ? 'bg-blue-600/30 text-blue-300 border-blue-500/50'
+                                        : 'bg-purple-600/30 text-purple-300 border-purple-500/50'
+                                    }`}>
+                                      {(pos.chain || 'solana').toLowerCase() === 'base' ? '🔵 BASE' : '🟣 SOL'}
+                                    </span>
+                                    <span className="text-[8.5px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-bold">
                                       {pos.stage}
                                     </span>
+
+                                    {/* Breakeven Locked Badge */}
+                                    {pos.breakeven_locked && (
+                                      <span className="text-[8px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-black flex items-center gap-0.5">
+                                        <Star size={9} className="fill-emerald-300 text-emerald-300" />
+                                        <span>BE LOCKED</span>
+                                      </span>
+                                    )}
+
+                                    {/* Moonbag Runner Badge */}
+                                    {pos.stage === 'RUNNER_50%' && (
+                                      <span className="text-[8px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 font-black flex items-center gap-0.5">
+                                        <Diamond size={9} className="text-purple-300 fill-purple-300" />
+                                        <span>MOONBAG</span>
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-2">
                                     <span>Now: <strong className="text-white">${pos.current_price < 0.0001 ? pos.current_price.toExponential(2) : pos.current_price.toFixed(4)}</strong></span>
@@ -943,9 +1278,19 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                             </div>
 
                             <div className="mt-2 flex items-center justify-between">
-                              <span className="text-[8.5px] text-slate-500">
-                                ${pos.amount_usd} USD · {pos.chain || 'SOL'}
-                              </span>
+                              <div className="flex items-center gap-1.5 text-[8.5px] text-slate-500">
+                                <span>${pos.amount_usd} USD · {pos.chain || 'SOL'}</span>
+                                {pos.anti_mev_shield && (
+                                  <span className="px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[7.5px] font-mono font-bold">
+                                    🛡️ MEV SAFE
+                                  </span>
+                                )}
+                                {pos.gas_priority && (
+                                  <span className="px-1 py-0.2 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 text-[7.5px] font-mono font-bold">
+                                    ⚡ {pos.gas_priority}
+                                  </span>
+                                )}
+                              </div>
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleClosePos(pos.address, pos.symbol); }}
                                 disabled={closingAddr === pos.address}
@@ -962,7 +1307,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 </div>
 
                 {/* Closed Trade History Log */}
-                <div className="h-32 flex flex-col bg-black/40 rounded-xl border border-white/10 overflow-hidden">
+                <div className="h-36 sm:h-32 flex flex-col bg-black/40 rounded-xl border border-white/10 overflow-hidden shrink-0">
                   <div className="px-3.5 py-1.5 bg-white/[0.02] border-b border-white/10 flex items-center justify-between">
                     <span className="text-[10px] font-bold text-white uppercase tracking-wider">
                       Closed Trade Receipts ({closedTrades.length})
@@ -1033,6 +1378,27 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                           DexScreener Chart <ExternalLink size={10} />
                         </a>
                       </div>
+                      {tok.bonding_curve_pct != null && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[8.5px] font-mono text-slate-400 flex items-center gap-1">
+                            <span>⚡ Curve:</span>
+                            <strong className={tok.bonding_curve_pct >= 75 ? 'text-amber-300' : 'text-slate-300'}>
+                              {tok.bonding_curve_pct}%
+                            </strong>
+                          </span>
+                          <div className="w-20 h-1.5 bg-black/60 rounded-full overflow-hidden border border-white/10">
+                            <div 
+                              className={`h-full ${tok.bonding_curve_pct >= 90 ? 'bg-gradient-to-r from-amber-500 to-neon-green' : 'bg-cyan-500'}`}
+                              style={{ width: `${Math.min(100, tok.bonding_curve_pct)}%` }}
+                            />
+                          </div>
+                          {tok.graduation_status === 'PRE_GRADUATION' && (
+                            <span className="text-[8px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-black border border-amber-500/40 animate-pulse">
+                              ⚡ PRE-GRADUATION
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1072,60 +1438,98 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
           {/* Positions Only View */}
           {activeTab === 'POSITIONS' && (
-            <div className="h-full overflow-y-auto space-y-3 pr-2">
-              {positions.length === 0 ? (
-                <div className="p-16 text-center text-slate-500 font-sans">
-                  No active DEX sniper positions currently held.
-                </div>
-              ) : (
-                positions.map((pos) => {
-                  const isProfit = pos.unrealized_pnl_pct >= 0;
-                  return (
-                    <div
-                      key={pos.id}
-                      className="p-4 rounded-xl bg-[#0c121e]/90 border border-white/10 flex items-center justify-between font-mono shadow-lg"
-                    >
-                      <div className="flex items-center gap-3.5">
-                        <div className="p-3 rounded-xl bg-cyan-950/50 border border-cyan-500/40 text-cyan-300 font-black text-base">
-                          {pos.symbol}
+            <div className="h-full flex flex-col space-y-3 pr-2">
+              <div className="px-3 py-2 rounded-xl bg-[#0c121e]/90 border border-white/10 flex items-center justify-between">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  Open Positions Desk ({positions.length}/{maxPositions})
+                </span>
+                {positions.length > 0 && (
+                  <button
+                    onClick={handleFlattenAll}
+                    disabled={isFlattening}
+                    className="px-3 py-1 rounded-lg bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/50 text-xs font-black tracking-wide flex items-center gap-1.5 cursor-pointer transition-all shadow-[0_0_12px_rgba(255,59,92,0.35)] animate-pulse"
+                    title="Panic Liquidate ALL Open Positions"
+                  >
+                    <AlertTriangle size={13} />
+                    <span>{isFlattening ? 'FLATTENING ALL...' : '⚡ FLATTEN ALL TO CASH'}</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-3">
+                {positions.length === 0 ? (
+                  <div className="p-16 text-center text-slate-500 font-sans">
+                    No active DEX sniper positions currently held.
+                  </div>
+                ) : (
+                  positions.map((pos) => {
+                    const isProfit = pos.unrealized_pnl_pct >= 0;
+                    return (
+                      <div
+                        key={pos.id}
+                        className="p-4 rounded-xl bg-[#0c121e]/90 border border-white/10 flex items-center justify-between font-mono shadow-lg"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <div className="p-3 rounded-xl bg-cyan-950/50 border border-cyan-500/40 text-cyan-300 font-black text-base">
+                            {pos.symbol}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-black text-white text-sm">
+                                ${pos.entry_price.toFixed(4)} Entry
+                              </span>
+                              <span className={`text-[9px] px-2 py-0.5 rounded-full font-black border ${
+                                (pos.chain || 'solana').toLowerCase() === 'base'
+                                  ? 'bg-blue-600/30 text-blue-300 border-blue-500/50'
+                                  : 'bg-purple-600/30 text-purple-300 border-purple-500/50'
+                              }`}>
+                                {(pos.chain || 'solana').toLowerCase() === 'base' ? '🔵 BASE L2' : '🟣 SOLANA'}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full font-bold bg-cyan-500/20 text-cyan-300 text-[10px]">
+                                {pos.stage}
+                              </span>
+                              {pos.breakeven_locked && (
+                                <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-black flex items-center gap-1">
+                                  <Star size={10} className="fill-emerald-300 text-emerald-300" />
+                                  <span>BREAKEVEN LOCKED</span>
+                                </span>
+                              )}
+                              {pos.stage === 'RUNNER_50%' && (
+                                <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-black flex items-center gap-1">
+                                  <Diamond size={10} className="text-purple-300 fill-purple-300" />
+                                  <span>MOONBAG RUNNER</span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-400 mt-1 flex items-center gap-3">
+                              <span>Current: <strong>${pos.current_price.toFixed(4)}</strong></span>
+                              <span>Peak: <strong className="text-cyan-300">${pos.high_water_mark.toFixed(4)}</strong></span>
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-black text-white text-sm">
-                              ${pos.entry_price.toFixed(4)} Entry
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full font-bold bg-cyan-500/20 text-cyan-300 text-[10px]">
-                              {pos.stage}
-                            </span>
+
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <div className={`text-xl font-black ${isProfit ? 'text-neon-green' : 'text-neon-red'}`}>
+                              {isProfit ? '+' : ''}{pos.unrealized_pnl_pct}%
+                            </div>
+                            <div className={`text-xs font-bold ${isProfit ? 'text-neon-green/90' : 'text-neon-red/90'}`}>
+                              {isProfit ? '+' : ''}${pos.unrealized_pnl_usd} USD
+                            </div>
                           </div>
-                          <div className="text-xs text-slate-400 mt-1 flex items-center gap-3">
-                            <span>Current: <strong>${pos.current_price.toFixed(4)}</strong></span>
-                            <span>Peak: <strong className="text-cyan-300">${pos.high_water_mark.toFixed(4)}</strong></span>
-                          </div>
+
+                          <button
+                            onClick={() => handleClosePos(pos.address, pos.symbol)}
+                            className="px-3 py-1.5 rounded-xl bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/40 text-xs font-bold cursor-pointer"
+                          >
+                            EXIT MARKET
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <div className={`text-xl font-black ${isProfit ? 'text-neon-green' : 'text-neon-red'}`}>
-                            {isProfit ? '+' : ''}{pos.unrealized_pnl_pct}%
-                          </div>
-                          <div className={`text-xs font-bold ${isProfit ? 'text-neon-green/90' : 'text-neon-red/90'}`}>
-                            {isProfit ? '+' : ''}${pos.unrealized_pnl_usd} USD
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => handleClosePos(pos.address, pos.symbol)}
-                          className="px-3 py-1.5 rounded-xl bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/40 text-xs font-bold cursor-pointer"
-                        >
-                          EXIT MARKET
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
+                    );
+                  })
+                )}
+              </div>
             </div>
           )}
 
@@ -1149,6 +1553,109 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Smart Whale Watchlist Tab View */}
+          {activeTab === 'WALLETS' && (
+            <div className="h-full flex flex-col space-y-4 pr-2 font-mono">
+              {/* Form to Add Tracked Wallet */}
+              <form onSubmit={handleAddTrackedWallet} className="p-4 rounded-xl bg-[#0c121e]/90 border border-white/10 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 text-cyan-400 font-bold text-xs uppercase tracking-wider">
+                  <Users size={16} />
+                  <span>Add Smart Money / Whale Wallet</span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Wallet address (e.g. 5Q544fKr...)"
+                  value={newWalletAddr}
+                  onChange={(e) => setNewWalletAddr(e.target.value)}
+                  className="px-3 py-1.5 bg-black/60 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 font-mono focus:border-cyan-400 focus:outline-none flex-1 min-w-[240px]"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="Label / Bot tag (e.g. Insider Alpha Bot)"
+                  value={newWalletLabel}
+                  onChange={(e) => setNewWalletLabel(e.target.value)}
+                  className="px-3 py-1.5 bg-black/60 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 font-mono focus:border-cyan-400 focus:outline-none w-48"
+                />
+                <select
+                  value={newWalletChain}
+                  onChange={(e) => setNewWalletChain(e.target.value as 'solana' | 'base')}
+                  className="px-3 py-1.5 bg-black/60 border border-white/10 rounded-lg text-xs text-white font-mono focus:border-cyan-400 focus:outline-none cursor-pointer"
+                >
+                  <option value="solana">🟣 SOLANA</option>
+                  <option value="base">🔵 BASE L2</option>
+                </select>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs flex items-center gap-1 cursor-pointer transition-all shadow-md"
+                >
+                  <Plus size={14} />
+                  <span>TRACK WHALE</span>
+                </button>
+              </form>
+
+              {/* Watchlist Table */}
+              <div className="flex-1 overflow-y-auto space-y-2">
+                {trackedWallets.length === 0 ? (
+                  <div className="p-16 text-center text-slate-500 font-sans">
+                    No smart money wallets tracked yet. Add high-conviction insider or sniper wallets above.
+                  </div>
+                ) : (
+                  trackedWallets.map((w, idx) => (
+                    <div
+                      key={w.address || idx}
+                      className="p-3.5 rounded-xl bg-[#0c121e]/80 border border-white/5 hover:border-cyan-500/40 transition-all flex items-center justify-between gap-4 font-mono shadow-sm"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-center min-w-[44px]">
+                          <span className="text-base font-black text-cyan-300">🐋</span>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-white text-sm">{w.label || 'Smart Wallet'}</span>
+                            <span className="text-[9px] px-2 py-0.2 rounded-full font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase">
+                              {w.chain || 'SOLANA'}
+                            </span>
+                            <span className="text-[9px] px-2 py-0.2 rounded-full font-bold bg-neon-green/20 text-neon-green border border-neon-green/30">
+                              ACTIVE RADAR
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-3">
+                            <span className="font-mono text-slate-300">{w.address}</span>
+                            <button
+                              onClick={() => copyAddress(w.address)}
+                              className="hover:text-white transition-colors cursor-pointer text-slate-400"
+                              title="Copy Address"
+                            >
+                              {copiedAddr === w.address ? <Check size={12} className="text-neon-green" /> : <Copy size={12} />}
+                            </button>
+                            <a
+                              href={w.chain === 'base' ? `https://basescan.org/address/${w.address}` : `https://solscan.io/account/${w.address}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1"
+                            >
+                              Explorer <ExternalLink size={10} />
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleRemoveTrackedWallet(w.address)}
+                        className="px-3 py-1.5 rounded-lg bg-neon-red/15 hover:bg-neon-red/25 text-neon-red border border-neon-red/30 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Remove Wallet from Radar"
+                      >
+                        <Trash2 size={13} />
+                        <span>REMOVE</span>
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>

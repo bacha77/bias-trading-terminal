@@ -1342,6 +1342,20 @@ async def get_alpaca_positions():
         positions = []
         total_pl = 0.0
         total_val = 0.0
+        
+        crypto_pl = 0.0
+        crypto_val = 0.0
+        crypto_count = 0
+        
+        options_pl = 0.0
+        options_val = 0.0
+        options_count = 0
+        
+        equity_pl = 0.0
+        equity_val = 0.0
+        equity_count = 0
+
+        import re
         for p in raw_positions:
             qty = float(p.get("qty", 0))
             entry = float(p.get("avg_entry_price", 0))
@@ -1351,8 +1365,53 @@ async def get_alpaca_positions():
             uplpc = float(p.get("unrealized_plpc", 0)) * 100
             total_pl += upl
             total_val += mkt_val
+
+            psym = (p.get("symbol") or "").upper().strip()
+            raw_asset_class = (p.get("asset_class") or "").lower()
+
+            # Classify Asset Class
+            is_crypto = (
+                raw_asset_class == "crypto" or
+                (psym.endswith("USD") and not any(c in psym for c in ["C", "P"]) and len(psym) <= 8) or
+                "/" in psym
+            )
+            is_option = (
+                raw_asset_class in ["us_option", "option"] or
+                (len(psym) >= 10 and any(c.isdigit() for c in psym) and ("C" in psym or "P" in psym))
+            )
+
+            category = "CRYPTO" if is_crypto else ("OPTION" if is_option else "EQUITY")
+
+            # Parse OCC option details if option
+            strike = None
+            expiry = None
+            option_type = None
+            underlying = psym
+            multiplier = 1
+            if is_option:
+                multiplier = 100
+                m = re.match(r"^([A-Z]+)(\d{6})([CP])(\d{8})$", psym)
+                if m:
+                    underlying, exp_str, cp, strk_str = m.groups()
+                    strike = float(strk_str) / 1000.0
+                    expiry = f"20{exp_str[:2]}-{exp_str[2:4]}-{exp_str[4:6]}"
+                    option_type = "CALL" if cp == "C" else "PUT"
+
+            if is_crypto:
+                crypto_count += 1
+                crypto_val += mkt_val
+                crypto_pl += upl
+            elif is_option:
+                options_count += 1
+                options_val += mkt_val
+                options_pl += upl
+            else:
+                equity_count += 1
+                equity_val += mkt_val
+                equity_pl += upl
+
             positions.append({
-                "symbol": p.get("symbol"),
+                "symbol": psym,
                 "qty": int(qty) if qty.is_integer() else qty,
                 "side": p.get("side", "long").upper(),
                 "avg_entry_price": round(entry, 2),
@@ -1360,14 +1419,36 @@ async def get_alpaca_positions():
                 "market_value": round(mkt_val, 2),
                 "unrealized_pl": round(upl, 2),
                 "unrealized_pl_pct": round(uplpc, 2),
-                "change_today": round(float(p.get("change_today", 0)) * 100, 2)
+                "change_today": round(float(p.get("change_today", 0)) * 100, 2),
+                "asset_class": "crypto" if is_crypto else ("us_option" if is_option else "us_equity"),
+                "category": category,
+                "is_crypto": is_crypto,
+                "is_option": is_option,
+                "underlying": underlying,
+                "strike": strike,
+                "expiry": expiry,
+                "option_type": option_type,
+                "multiplier": multiplier
             })
+
+        c_state = load_copilot_state()
         return {
             "connected": True,
             "positions": positions,
             "total_unrealized_pl": round(total_pl, 2),
             "total_market_value": round(total_val, 2),
-            "count": len(positions)
+            "count": len(positions),
+            "crypto_count": crypto_count,
+            "crypto_market_value": round(crypto_val, 2),
+            "crypto_unrealized_pl": round(crypto_pl, 2),
+            "options_count": options_count,
+            "options_market_value": round(options_val, 2),
+            "options_unrealized_pl": round(options_pl, 2),
+            "equity_count": equity_count,
+            "equity_market_value": round(equity_val, 2),
+            "equity_unrealized_pl": round(equity_pl, 2),
+            "copilot_armed": c_state.get("armed", True),
+            "crypto_armed": c_state.get("crypto_armed", True)
         }
     except Exception as e:
         return {"connected": False, "positions": [], "error": str(e), "total_unrealized_pl": 0, "total_market_value": 0, "count": 0}
@@ -1393,6 +1474,40 @@ async def close_position(symbol: str):
     try:
         res = await asyncio.to_thread(_close)
         return {"status": "SUCCESS", "message": f"Closed position for {symbol.upper()}", "result": res}
+    except Exception as e:
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/alpaca/positions/flatten-crypto")
+async def flatten_crypto_positions():
+    creds = get_alpaca_creds()
+    if not creds["key"] or not creds["secret"]:
+        return {"status": "ERROR", "message": "Missing credentials"}
+    try:
+        active = get_all_active_positions(creds)
+        crypto_positions = active.get("crypto_positions", [])
+        closed = []
+        for p in crypto_positions:
+            psym = p.get("symbol", "")
+            if close_alpaca_position(psym, creds=creds):
+                closed.append(psym)
+        return {"status": "SUCCESS", "message": f"Liquidated {len(closed)} crypto positions", "closed": closed, "count": len(closed)}
+    except Exception as e:
+        return {"status": "ERROR", "message": str(e)}
+
+@app.post("/api/alpaca/positions/flatten-options")
+async def flatten_options_positions():
+    creds = get_alpaca_creds()
+    if not creds["key"] or not creds["secret"]:
+        return {"status": "ERROR", "message": "Missing credentials"}
+    try:
+        active = get_all_active_positions(creds)
+        stock_positions = active.get("alpaca_positions", [])
+        closed = []
+        for p in stock_positions:
+            psym = p.get("symbol", "")
+            if close_alpaca_position(psym, creds=creds):
+                closed.append(psym)
+        return {"status": "SUCCESS", "message": f"Liquidated {len(closed)} options/stock positions", "closed": closed, "count": len(closed)}
     except Exception as e:
         return {"status": "ERROR", "message": str(e)}
 
@@ -3032,10 +3147,19 @@ class DexRiskProfileRequest(BaseModel):
 
 @app.get("/api/dex/new-listings")
 @app.get("/dex/new-listings")
-async def api_get_dex_listings(chain: str = "solana", min_liq: float = 20000.0, min_vol: float = 30000.0):
+async def api_get_dex_listings(chain: str = "both", min_liq: float = 20000.0, min_vol: float = 30000.0):
     import solana_dex_engine
-    listings = await asyncio.to_thread(solana_dex_engine.fetch_new_solana_listings, chain=chain, min_liquidity=min_liq, min_vol_24h=min_vol)
-    return {"status": "SUCCESS", "chain": chain, "count": len(listings), "listings": listings}
+    c = chain.lower().strip()
+    if c in ["both", "dual", "all"]:
+        sol_list, base_list = await asyncio.gather(
+            asyncio.to_thread(solana_dex_engine.fetch_new_solana_listings, chain="solana", min_liquidity=min_liq, min_vol_24h=min_vol),
+            asyncio.to_thread(solana_dex_engine.fetch_new_solana_listings, chain="base", min_liquidity=min_liq, min_vol_24h=min_vol),
+        )
+        combined = (sol_list or []) + (base_list or [])
+        combined.sort(key=lambda x: (x.get("forensic_status") == "PASSED", x.get("safety_score", 0), x.get("volume_1h", 0)), reverse=True)
+        return {"status": "SUCCESS", "chain": "both", "count": len(combined), "listings": combined}
+    listings = await asyncio.to_thread(solana_dex_engine.fetch_new_solana_listings, chain=c, min_liquidity=min_liq, min_vol_24h=min_vol)
+    return {"status": "SUCCESS", "chain": c, "count": len(listings), "listings": listings}
 
 @app.get("/api/dex/quote")
 @app.get("/dex/quote")
@@ -3063,12 +3187,16 @@ async def api_get_dex_positions():
         "status": "SUCCESS",
         "dex_armed": state.get("dex_armed", False),
         "sniper_amount_usd": state.get("sniper_amount_usd", 100.0),
-        "max_positions": state.get("max_dex_positions", 3),
-        "active_chain": state.get("active_chain", "solana"),
+        "max_positions": state.get("max_dex_positions", 6),
+        "active_chain": state.get("active_chain", "both"),
         "risk_profile": state.get("risk_profile", "MOONBAG"),
         "risk_profiles": solana_dex_engine.RISK_PROFILES,
+        "gas_priority": state.get("gas_priority", "TURBO"),
+        "slippage_bps": state.get("slippage_bps", 100),
+        "anti_mev_shield": state.get("anti_mev_shield", True),
         "active_positions": state.get("active_positions", []),
         "closed_trades": state.get("closed_trades", [])[:50],
+        "tracked_wallets": state.get("tracked_wallets", solana_dex_engine.DEFAULT_TRACKED_WALLETS),
         "pnl_summary": pnl_summary
     }
 
@@ -3105,8 +3233,10 @@ class DexSetChainRequest(BaseModel):
 async def api_set_dex_chain(req: DexSetChainRequest):
     import solana_dex_engine
     chain = req.chain.lower().strip()
-    if chain not in ["solana", "base"]:
-        return {"status": "ERROR", "message": "Invalid chain. Must be 'solana' or 'base'."}
+    if chain not in ["solana", "base", "both", "dual", "all"]:
+        return {"status": "ERROR", "message": "Invalid chain. Must be 'solana', 'base', or 'both'."}
+    if chain in ["dual", "all"]:
+        chain = "both"
     state = solana_dex_engine.load_dex_state()
     state["active_chain"] = chain
     solana_dex_engine.save_dex_state(state)
@@ -3124,6 +3254,22 @@ async def api_set_dex_max_positions(req: DexSetMaxPositionsRequest):
     state["max_dex_positions"] = max_p
     solana_dex_engine.save_dex_state(state)
     return {"status": "SUCCESS", "max_positions": max_p}
+
+class DexExecutionSettingsRequest(BaseModel):
+    gas_priority: Optional[str] = None
+    slippage_bps: Optional[int] = None
+    anti_mev_shield: Optional[bool] = None
+
+@app.post("/api/dex/set-execution-settings")
+@app.post("/dex/set-execution-settings")
+async def api_set_dex_execution_settings(req: DexExecutionSettingsRequest):
+    import solana_dex_engine
+    res = solana_dex_engine.set_dex_execution_settings(
+        gas_priority=req.gas_priority,
+        slippage_bps=req.slippage_bps,
+        anti_mev_shield=req.anti_mev_shield
+    )
+    return res
 
 @app.post("/api/dex/close-position")
 @app.post("/dex/close-position")
@@ -3160,6 +3306,52 @@ async def api_close_dex_position(token_address: str):
         solana_dex_engine.save_dex_state(state)
         return {"status": "SUCCESS", "message": f"Closed {target.get('symbol')} position at {pnl_pct*100:+.1f}%."}
     return {"status": "ERROR", "message": "Position not found"}
+
+@app.post("/api/dex/flatten-all")
+@app.post("/dex/flatten-all")
+async def api_flatten_all_dex():
+    import solana_dex_engine
+    res = solana_dex_engine.flatten_all_dex_positions()
+    return res
+
+class DexAddTrackedWalletRequest(BaseModel):
+    address: str
+    label: str = ""
+    chain: str = "solana"
+
+@app.get("/api/dex/tracked-wallets")
+@app.get("/dex/tracked-wallets")
+async def api_get_tracked_wallets():
+    import solana_dex_engine
+    return {"status": "SUCCESS", "wallets": solana_dex_engine.get_tracked_wallets()}
+
+@app.post("/api/dex/add-tracked-wallet")
+@app.post("/dex/add-tracked-wallet")
+async def api_add_tracked_wallet(req: DexAddTrackedWalletRequest):
+    import solana_dex_engine
+    res = solana_dex_engine.add_tracked_wallet(req.address, req.label, req.chain)
+    return res
+
+class DexRemoveTrackedWalletRequest(BaseModel):
+    address: str
+
+@app.post("/api/dex/remove-tracked-wallet")
+@app.post("/dex/remove-tracked-wallet")
+async def api_remove_tracked_wallet(req: DexRemoveTrackedWalletRequest):
+    import solana_dex_engine
+    res = solana_dex_engine.remove_tracked_wallet(req.address)
+    return res
+
+@app.post("/api/telegram/test")
+@app.post("/telegram/test")
+async def api_test_telegram():
+    import desk_notifier
+    res = desk_notifier.dispatch_desk_alert(
+        "🔔 TELEGRAM INTEGRATION TEST",
+        "Institutional DEX terminal notification system online. 2-way phone trading active.",
+        "SYSTEM_ALERT"
+    )
+    return res
 
 _last_eod_flatten_date = None
 
@@ -4195,6 +4387,11 @@ async def start_background_workers():
     asyncio.create_task(_copilot_autonomous_worker())
     asyncio.create_task(_crypto_autonomous_worker())
     asyncio.create_task(_solana_dex_risk_worker())
+    try:
+        import desk_notifier
+        desk_notifier.start_telegram_callback_listener()
+    except Exception as t_err:
+        print(f"[TELEGRAM CALLBACK LISTENER ERROR] {t_err}")
 
 # Automatically mirror all /api/* routes to /* for reverse proxies (like Firebase Hosting) that strip the /api prefix
 for r in list(app.routes):

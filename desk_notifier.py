@@ -168,18 +168,31 @@ def dispatch_desk_alert(
 
     # Dynamic interactive Telegram inline buttons
     reply_markup = None
-    buttons = []
-    token_sym = metadata.get("token") if metadata else None
-    pair_url = metadata.get("pair_url") if metadata else None
+    keyboard = []
     
+    pair_url = metadata.get("pair_url") if metadata and isinstance(metadata, dict) else None
+    token_sym = (metadata.get("symbol") or metadata.get("token")) if metadata and isinstance(metadata, dict) else None
+
+    row1 = []
     if pair_url:
-        buttons.append({"text": "📊 Live Chart", "url": pair_url})
+        row1.append({"text": "📊 Live Chart", "url": pair_url})
     elif token_sym:
-        buttons.append({"text": f"📊 Chart {token_sym}", "url": f"https://dexscreener.com/search?q={token_sym}"})
-        
-    buttons.append({"text": "🖥️ Open Terminal", "url": "https://bias-trading-terminal-app.web.app"})
-    if buttons:
-        reply_markup = {"inline_keyboard": [buttons]}
+        row1.append({"text": f"📊 Chart {token_sym}", "url": f"https://dexscreener.com/search?q={token_sym}"})
+    row1.append({"text": "🖥️ Terminal", "url": "https://bias-trading-terminal-app.web.app"})
+    keyboard.append(row1)
+
+    # Row 2: One-Touch Phone Trading Buttons (Sell 50%, Market Exit, Flatten All)
+    token_addr = (metadata.get("token_address") or metadata.get("address")) if metadata else None
+    if token_addr and category in ("CRYPTO_TRADE", "RATCHET", "TAKE_PROFIT"):
+        keyboard.append([
+            {"text": "💰 Sell 50%", "callback_data": f"half:{token_addr}"},
+            {"text": "🛑 Market Exit", "callback_data": f"exit:{token_addr}"}
+        ])
+    elif category == "RISK_ALERT" or "FLATTEN" in title:
+        keyboard.append([{"text": "⚡ FLATTEN ALL TO CASH", "callback_data": "flatten_all"}])
+
+    if keyboard:
+        reply_markup = {"inline_keyboard": keyboard}
 
     tg_result = send_telegram_alert(tg_text, reply_markup=reply_markup)
     
@@ -203,6 +216,85 @@ def dispatch_desk_alert(
         "alert": alert_record,
         "telegram": tg_result
     }
+
+_CALLBACK_LISTENER_STARTED = False
+
+def process_telegram_callback_action(cq_data: str) -> str:
+    """
+    Executes trades requested from Telegram inline buttons:
+    - half:<address>
+    - exit:<address>
+    - flatten_all
+    """
+    import solana_dex_engine
+    answer_text = "Action completed!"
+
+    if cq_data.startswith("exit:"):
+        addr = cq_data.split("exit:")[1]
+        res = solana_dex_engine.close_dex_position_by_address(addr, partial_pct=1.0)
+        sym = res.get("token", "Token")
+        answer_text = f"🛑 Market exit executed for {sym}!"
+        send_telegram_alert(f"✅ <b>TELEGRAM ONE-TOUCH EXIT</b>: Market liquidated <b>{sym}</b>! Banked P&L: <code>${res.get('pnl', 0.0):+.2f}</code>")
+    elif cq_data.startswith("half:"):
+        addr = cq_data.split("half:")[1]
+        res = solana_dex_engine.close_dex_position_by_address(addr, partial_pct=0.5)
+        sym = res.get("token", "Token")
+        answer_text = f"💰 Sold 50% of {sym}!"
+        send_telegram_alert(f"💰 <b>TELEGRAM 50% CASH OUT</b>: Sold half of <b>{sym}</b>! Banked: <code>${res.get('pnl', 0.0):+.2f}</code>")
+    elif cq_data == "flatten_all":
+        res = solana_dex_engine.flatten_all_dex_positions()
+        answer_text = f"⚡ FLATTEN COMPLETE: Liquidated {res.get('closed_count', 0)} positions!"
+
+    return answer_text
+
+def start_telegram_callback_listener():
+    """
+    Background daemon thread that listens for interactive button taps in Telegram.
+    Allows user to tap [ 💰 Sell 50% ] or [ 🛑 Market Exit ] from their phone!
+    """
+    global _CALLBACK_LISTENER_STARTED
+    if _CALLBACK_LISTENER_STARTED:
+        return
+    _CALLBACK_LISTENER_STARTED = True
+
+    import threading
+    def listener_loop():
+        cfg = get_telegram_config()
+        token = cfg.get("bot_token")
+        if not token:
+            return
+            
+        offset = 0
+        while True:
+            try:
+                url = f"https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=15"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    data = json.loads(resp.read().decode())
+                    for update in data.get("result", []):
+                        offset = max(offset, update["update_id"] + 1)
+                        cq = update.get("callback_query")
+                        if not cq:
+                            continue
+                            
+                        cq_id = cq["id"]
+                        cq_data = cq.get("data", "")
+                        answer_text = process_telegram_callback_action(cq_data)
+                        
+                        # Acknowledge callback query
+                        try:
+                            ack_url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+                            ack_payload = json.dumps({"callback_query_id": cq_id, "text": answer_text}).encode()
+                            ack_req = urllib.request.Request(ack_url, data=ack_payload, headers={"Content-Type": "application/json"})
+                            urllib.request.urlopen(ack_req, timeout=5)
+                        except Exception:
+                            pass
+            except Exception as e:
+                time.sleep(4)
+            time.sleep(1)
+
+    t = threading.Thread(target=listener_loop, daemon=True)
+    t.start()
 
 def get_recent_desk_alerts(limit: int = 40) -> List[Dict[str, Any]]:
     return _recent_alerts[:limit]

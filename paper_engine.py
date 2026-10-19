@@ -73,10 +73,14 @@ def get_paper_positions(current_prices=None):
         curr = float(current_prices.get(sym, entry))
         side = pos.get("side", "BUY").upper()
         is_opt = bool(pos.get("is_option"))
-        is_fx = bool(pos.get("is_forex")) or ("/" in sym and len(sym) <= 8)
+        is_fx = bool(pos.get("is_forex")) or (("/" in sym or sym.endswith("=X")) and any(c in sym for c in ["EUR", "GBP", "JPY", "CHF", "AUD", "CAD"]))
+        is_crypto = bool(pos.get("is_crypto")) or (sym in ["BTC", "ETH", "SOL", "DOGE", "XRP", "AVAX", "LINK", "ADA", "AAVE"] or (sym.endswith("USD") and not is_opt and len(sym) <= 8))
         pip_mult = float(pos.get("pip_mult", 100 if "JPY" in sym else 10000))
         lot_units = float(pos.get("lot_units", 100000.0)) if is_fx else 1.0
         mult = 100.0 if is_opt else (lot_units if is_fx else 1.0)
+        
+        category = "CRYPTO" if is_crypto else ("FOREX" if is_fx else ("OPTION" if is_opt else "EQUITY"))
+        asset_class = "crypto" if is_crypto else ("forex" if is_fx else ("us_option" if is_opt else "us_equity"))
         
         mkt_val = round(curr * qty * mult, 2)
         if side in ["BUY", "LONG"]:
@@ -106,9 +110,12 @@ def get_paper_positions(current_prices=None):
             "stop_loss": pos.get("stop_loss"),
             "entry_time": pos.get("entry_time"),
             "is_option": is_opt,
+            "is_crypto": is_crypto,
             "is_forex": is_fx,
+            "category": category,
+            "asset_class": asset_class,
             "lot_units": lot_units,
-            "underlying": pos.get("underlying"),
+            "underlying": pos.get("underlying") or sym,
             "option_type": pos.get("option_type"),
             "strike": pos.get("strike"),
             "expiry": pos.get("expiry"),
