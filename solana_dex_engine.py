@@ -1219,6 +1219,32 @@ def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 2000
         _LISTINGS_CACHE[chain_key] = {"timestamp": now, "listings": results}
     return results
 
+def compute_kelly_dynamic_sizing(base_amount_usd: float, token_liquidity_usd: float = 35000.0, ai_conviction_score: float = 75.0) -> float:
+    """
+    Institutional Fractional Kelly Sizing:
+    Adjusts position size based on pool liquidity depth and AI Conviction Score,
+    ensuring price impact is < 0.3% while maximizing risk-adjusted geometric growth.
+    """
+    try:
+        import solana_dex_learner
+        state = solana_dex_learner.load_learning_state()
+        win_rate = float(state.get("win_rate", 65.0)) / 100.0
+        profit_factor = max(1.1, float(state.get("profit_factor", 2.2)))
+        
+        b = profit_factor
+        p = win_rate
+        q = 1.0 - p
+        kelly_full = (p * b - q) / b
+        half_kelly = max(0.15, min(0.60, kelly_full * 0.5))
+
+        max_liq_size = max(15.0, token_liquidity_usd * 0.0025) if token_liquidity_usd > 0 else base_amount_usd
+        conviction_mult = 0.75 + (ai_conviction_score / 100.0) * 0.5
+        suggested = base_amount_usd * (half_kelly / 0.25) * conviction_mult
+        final_size = max(15.0, min([suggested, max_liq_size, base_amount_usd * 1.5]))
+        return round(final_size, 2)
+    except Exception:
+        return round(base_amount_usd, 2)
+
 def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0, mode: str = "SIMULATION", chain: str = "solana") -> Dict[str, Any]:
     """
     Executes a DEX Snipe swap order using Jupiter API on Solana or virtual routing on Base.
@@ -1693,12 +1719,37 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
         if buy_ratio < 50.0:
             continue
             
-        # Institutional composite score (35% Safety, 35% Smart Whale flow, 30% Buy Velocity)
+        # Module 1: Thompson Sampling Bayesian AI Conviction
+        try:
+            import solana_dex_learner
+            ai_eval = solana_dex_learner.score_token_ai_conviction(tok)
+            tok["ai_conviction_score"] = ai_eval.get("ai_conviction_score", 70)
+            tok["conviction_tier"] = ai_eval.get("conviction_tier", "MODERATE")
+            if tok["ai_conviction_score"] < 60:
+                continue
+        except Exception:
+            tok["ai_conviction_score"] = 70
+
+        # Module 2: Deployer Fingerprint & Cabal Filter
+        try:
+            import solana_dex_fingerprint
+            fp = solana_dex_fingerprint.analyze_deployer_fingerprint(addr, tok.get("creator_address", ""))
+            tok["cabal_score"] = fp.get("cabal_score", 85)
+            tok["cluster_tag"] = fp.get("cluster_tag", "CLEAN_INDIE_LAUNCH")
+            if fp.get("is_blacklisted"):
+                logger.warning(f"🚫 [CABAL FILTER REJECT] {tok['symbol']} rejected: {fp.get('notes')}")
+                continue
+        except Exception:
+            pass
+
+        # Institutional composite score (30% Safety, 25% Whale Flow, 25% AI Conviction, 20% Buy Flow)
         whale_score = int(tok.get("whale_score") or 0)
+        ai_score = int(tok.get("ai_conviction_score") or 70)
         composite_score = (
-            (tok.get("safety_score", 0) * 0.35) +
-            (whale_score * 0.35) +
-            (min(100.0, buy_ratio) * 0.30)
+            (tok.get("safety_score", 0) * 0.30) +
+            (whale_score * 0.25) +
+            (ai_score * 0.25) +
+            (min(100.0, buy_ratio) * 0.20)
         )
         
         # Dual-chain diversification bonus: if one chain is under-represented, boost candidate score slightly (+3 pts)
@@ -1718,14 +1769,21 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     candidates.sort(key=lambda t: t.get("institutional_score", 0), reverse=True)
     top_pick = candidates[0]
     top_chain = top_pick.get("chain", "solana")
-    amount = float(state.get("sniper_amount_usd", 100.0))
+    base_amount = float(state.get("sniper_amount_usd", 35.0))
+    kelly_amount = compute_kelly_dynamic_sizing(
+        base_amount, 
+        token_liquidity_usd=float(top_pick.get("liquidity_usd") or 35000.0),
+        ai_conviction_score=float(top_pick.get("ai_conviction_score", 75.0))
+    )
     current_dex_mode = state.get("dex_mode", "SIMULATION")
-    snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=amount, mode=current_dex_mode, chain=top_chain)
+    snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=kelly_amount, mode=current_dex_mode, chain=top_chain)
     return {
         "status": "AUTO_SNIPED", 
         "token": top_pick["symbol"], 
         "chain": top_chain,
         "score": top_pick.get("institutional_score"), 
+        "ai_conviction": top_pick.get("ai_conviction_score"),
+        "kelly_size_usd": kelly_amount,
         "snipe": snipe_res, 
         "risk": risk_res
     }

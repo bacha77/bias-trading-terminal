@@ -3369,6 +3369,24 @@ async def api_remove_tracked_wallet(req: DexRemoveTrackedWalletRequest):
     res = solana_dex_engine.remove_tracked_wallet(req.address)
     return res
 
+@app.get("/api/dex/learning-insights")
+@app.get("/dex/learning-insights")
+async def api_get_dex_learning_insights():
+    import solana_dex_learner
+    return solana_dex_learner.get_learning_insights()
+
+@app.get("/api/dex/whale-consensus")
+@app.get("/dex/whale-consensus")
+async def api_get_whale_consensus():
+    import solana_whale_consensus
+    return {"status": "SUCCESS", "consensus_signals": solana_whale_consensus.get_recent_whale_consensus_signals()}
+
+@app.get("/api/dex/check-fingerprint")
+@app.get("/dex/check-fingerprint")
+async def api_check_deployer_fingerprint(address: str):
+    import solana_dex_fingerprint
+    return solana_dex_fingerprint.analyze_deployer_fingerprint(address)
+
 @app.post("/api/telegram/test")
 @app.post("/telegram/test")
 async def api_test_telegram():
