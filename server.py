@@ -3332,37 +3332,7 @@ async def api_set_dex_execution_settings(req: DexExecutionSettingsRequest):
 @app.post("/dex/close-position")
 async def api_close_dex_position(token_address: str):
     import solana_dex_engine
-    state = solana_dex_engine.load_dex_state()
-    active = state.get("active_positions", [])
-    closed = state.get("closed_trades", [])
-    target = None
-    remaining = []
-    for p in active:
-        if p.get("address") == token_address:
-            target = p
-        else:
-            remaining.append(p)
-            
-    if target:
-        cur_px = float(target.get("current_price", target.get("entry_price", 0)))
-        entry_px = float(target.get("entry_price", 0))
-        pnl_pct = (cur_px - entry_px) / entry_px if entry_px > 0 else 0.0
-        pnl_usd = round(float(target.get("unrealized_pnl_usd", (cur_px - entry_px) * float(target.get("tokens_held", 0)))), 2)
-        
-        target["exit_price"] = cur_px
-        target["exit_time"] = datetime.now().strftime("%H:%M:%S")
-        target["realized_pnl_usd"] = pnl_usd
-        target["realized_pnl_pct"] = f"{pnl_pct*100:+.1f}%"
-        target["status"] = "PROFIT_MANUAL_CLOSED" if pnl_usd > 0 else "MANUALLY_CLOSED"
-        target["reason"] = f"Manual Exit ({pnl_pct*100:+.1f}%)"
-        
-        closed.insert(0, target)
-        solana_dex_engine._TOKEN_COOLDOWNS[token_address] = time.time() + solana_dex_engine.TOKEN_COOLDOWN_SECONDS
-        state["active_positions"] = remaining
-        state["closed_trades"] = closed[:50]
-        solana_dex_engine.save_dex_state(state)
-        return {"status": "SUCCESS", "message": f"Closed {target.get('symbol')} position at {pnl_pct*100:+.1f}%."}
-    return {"status": "ERROR", "message": "Position not found"}
+    return solana_dex_engine.close_dex_position_by_address(token_address)
 
 @app.post("/api/dex/flatten-all")
 @app.post("/dex/flatten-all")

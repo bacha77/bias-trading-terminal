@@ -456,6 +456,17 @@ def close_dex_position_by_address(token_address: str, partial_pct: float = 1.0) 
             remaining.append(p)
             
     if not target:
+        # Check live on-chain token accounts
+        try:
+            live_pos = sync_live_positions_from_chain()
+            for lp in live_pos:
+                if lp.get("address") == token_address:
+                    target = lp
+                    break
+        except Exception as e:
+            logger.warning(f"Error checking live positions for exit: {e}")
+
+    if not target:
         return {"status": "ERROR", "message": f"Position {token_address} not found in active book."}
         
     cur_px = float(target.get("current_price", target.get("entry_price", 0)))
@@ -466,12 +477,14 @@ def close_dex_position_by_address(token_address: str, partial_pct: float = 1.0) 
     # If this was executed on-chain, route sell through Jupiter
     onchain_sell_txid = None
     onchain_solscan = None
-    if target.get("mode") == "LIVE_ONCHAIN" and target.get("chain") == "solana":
+    if (target.get("mode") in ["LIVE", "LIVE_ONCHAIN"] or target.get("chain") == "solana") and target.get("tokens_held", 0) > 0:
         tokens_to_sell = float(target.get("tokens_held", 0)) * partial_pct
-        if tokens_to_sell > 0:
-            token_lamports = int(tokens_to_sell * (10 ** 6))
-            logger.info(f"[LIVE ON-CHAIN SELL] Routing Jupiter swap back to SOL for {target.get('symbol')}...")
-            sell_res = execute_jupiter_onchain_sell(token_address, token_lamports, slippage_bps=300)
+        decimals = int(target.get("decimals", 6))
+        raw_amt = int(target.get("raw_amount") or 0)
+        token_lamports = raw_amt if (partial_pct >= 0.99 and raw_amt > 0) else int(tokens_to_sell * (10 ** decimals))
+        if token_lamports > 0:
+            logger.info(f"[LIVE ON-CHAIN SELL] Routing Jupiter swap back to SOL for {target.get('symbol')} ({token_lamports} base units)...")
+            sell_res = execute_jupiter_onchain_sell(token_address, token_lamports, slippage_bps=350)
             if sell_res.get("status") == "SUCCESS":
                 onchain_sell_txid = sell_res.get("txid")
                 onchain_solscan = sell_res.get("solscan_url")
@@ -525,14 +538,12 @@ def flatten_all_dex_positions() -> Dict[str, Any]:
     """
     state = load_dex_state()
     active = state.get("active_positions", [])
-    if not active:
-        return {"status": "SUCCESS", "message": "No active positions to flatten.", "closed_count": 0, "flattened_count": 0, "total_realized_usd": 0.0}
-
     closed = state.get("closed_trades", [])
     total_realized = 0.0
     now_ts = time.time()
     now_str = datetime.now().strftime("%H:%M:%S")
 
+    # 1. Liquidate simulated active positions in book
     for pos in active:
         addr = pos["address"]
         cur_px = float(pos.get("current_price", pos.get("entry_price", 0)))
@@ -552,6 +563,33 @@ def flatten_all_dex_positions() -> Dict[str, Any]:
         }
         closed.insert(0, exit_ticket)
         _TOKEN_COOLDOWNS[addr] = now_ts + TOKEN_COOLDOWN_SECONDS
+
+    # 2. Liquidate any live on-chain token accounts via Jupiter to native SOL
+    live_onchain_closed = 0
+    try:
+        live_tokens = sync_live_positions_from_chain()
+        for ltok in live_tokens:
+            laddr = ltok["address"]
+            raw_amt = int(ltok.get("raw_amount") or 0)
+            if raw_amt == 0:
+                raw_amt = int(float(ltok.get("tokens_held", 0)) * (10 ** int(ltok.get("decimals", 6))))
+            if raw_amt > 0:
+                logger.warning(f"🚨 [FLATTEN ALL ON-CHAIN] Liquidating {ltok.get('symbol')} ({laddr}) to SOL on Jupiter...")
+                sres = execute_jupiter_onchain_sell(laddr, raw_amt, slippage_bps=350)
+                if sres.get("status") == "SUCCESS":
+                    live_onchain_closed += 1
+                    closed.insert(0, {
+                        **ltok,
+                        "exit_price": ltok.get("current_price", 0),
+                        "exit_time": now_str,
+                        "close_txid": sres.get("txid"),
+                        "close_solscan": sres.get("solscan_url"),
+                        "reason": "🚨 EMERGENCY FLATTEN ALL (On-Chain Jupiter Liquidation)",
+                        "status": "FLATTEN_ALL_CLOSED"
+                    })
+                    _TOKEN_COOLDOWNS[laddr] = now_ts + TOKEN_COOLDOWN_SECONDS
+    except Exception as e:
+        logger.error(f"Error during on-chain flatten all: {e}")
 
     state["active_positions"] = []
     state["closed_trades"] = closed[:60]
@@ -1467,6 +1505,20 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 "realized_pnl_usd": pos["unrealized_pnl_usd"],
                 "status": "STOP_LOSS_CLOSED"
             }
+            if pos.get("mode") in ["LIVE", "LIVE_ONCHAIN"] or (state.get("dex_mode") == "LIVE" and pos.get("chain") == "solana"):
+                try:
+                    raw_amt = int(pos.get("raw_amount") or 0)
+                    if raw_amt == 0:
+                        raw_amt = int(float(pos.get("tokens_held", 0)) * (10 ** int(pos.get("decimals", 6))))
+                    if raw_amt > 0:
+                        logger.warning(f"🛑 [LIVE ON-CHAIN STOP LOSS] Liquidating {pos.get('symbol')} ({addr}) to SOL via Jupiter...")
+                        sell_res = execute_jupiter_onchain_sell(addr, raw_amt, slippage_bps=350)
+                        if sell_res.get("status") == "SUCCESS":
+                            exit_ticket["close_txid"] = sell_res.get("txid")
+                            exit_ticket["close_solscan"] = sell_res.get("solscan_url")
+                            logger.info(f"🛑 [LIVE ON-CHAIN STOP LOSS CONFIRMED] TX: {sell_res.get('txid')}")
+                except Exception as sell_err:
+                    logger.error(f"Error executing on-chain stop loss sell: {sell_err}")
             closed_pos.insert(0, exit_ticket)
             _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
             try:
