@@ -1419,23 +1419,27 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
         "message": f"Successfully sniped {symbol} on {chain.upper()} for ${amount_usd:.2f} USD."
     }
 
-def _execute_live_exit_if_needed(pos: Dict[str, Any], exit_ticket: Dict[str, Any], state: Dict[str, Any]) -> None:
-    """Helper to broadcast real on-chain liquidation via Jupiter whenever a live position exits."""
+def _execute_live_exit_if_needed(pos: Dict[str, Any], exit_ticket: Dict[str, Any], state: Dict[str, Any], portion_pct: float = 1.0) -> None:
+    """Helper to broadcast real on-chain liquidation/take-profit via Jupiter whenever a live position exits."""
     if pos.get("mode") in ["LIVE", "LIVE_ONCHAIN"] or (state.get("dex_mode") == "LIVE" and pos.get("chain") == "solana"):
         addr = pos.get("address")
         try:
-            raw_amt = int(pos.get("raw_amount") or 0)
-            if raw_amt == 0:
-                raw_amt = int(float(pos.get("tokens_held", 0)) * (10 ** int(pos.get("decimals", 6))))
+            total_raw = int(pos.get("raw_amount") or 0)
+            if total_raw == 0:
+                total_raw = int(float(pos.get("tokens_held", 0)) * (10 ** int(pos.get("decimals", 6))))
+            raw_amt = total_raw if portion_pct >= 0.99 else int(total_raw * portion_pct)
             if raw_amt > 0 and addr:
-                logger.warning(f"🛑 [LIVE ON-CHAIN LIQUIDATION] Liquidating {pos.get('symbol')} ({addr}) back to SOL via Jupiter...")
+                action_name = "TAKE PROFIT PARTIAL SELL" if portion_pct < 0.99 else "FULL LIQUIDATION"
+                logger.warning(f"🛑 [LIVE ON-CHAIN {action_name}] Selling {raw_amt} units of {pos.get('symbol')} ({addr}) to SOL on Jupiter...")
                 sell_res = execute_jupiter_onchain_sell(addr, raw_amt, slippage_bps=350)
                 if sell_res.get("status") == "SUCCESS":
                     exit_ticket["close_txid"] = sell_res.get("txid")
                     exit_ticket["close_solscan"] = sell_res.get("solscan_url")
-                    logger.info(f"🛑 [LIVE ON-CHAIN LIQUIDATION CONFIRMED] TX: {sell_res.get('txid')}")
+                    if portion_pct < 0.99:
+                        pos["raw_amount"] = max(0, total_raw - raw_amt)
+                    logger.info(f"🛑 [LIVE ON-CHAIN {action_name} CONFIRMED] TX: {sell_res.get('txid')}")
         except Exception as sell_err:
-            logger.error(f"Error executing on-chain liquidation sell: {sell_err}")
+            logger.error(f"Error executing on-chain exit sell: {sell_err}")
 
 def update_dex_positions_risk_cycle() -> Dict[str, Any]:
     """
@@ -1642,6 +1646,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 "realized_pnl_usd": banked_gain,
                 "status": "TAKE_PROFIT_CLOSED"
             }
+            _execute_live_exit_if_needed(pos, tp_ticket, state, portion_pct=0.35)
             closed_pos.insert(0, tp_ticket)
             try:
                 from desk_notifier import dispatch_desk_alert
@@ -1670,6 +1675,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 "realized_pnl_usd": banked_gain,
                 "status": "TAKE_PROFIT_CLOSED"
             }
+            _execute_live_exit_if_needed(pos, tp_ticket, state, portion_pct=0.54)
             closed_pos.insert(0, tp_ticket)
             try:
                 from desk_notifier import dispatch_desk_alert
@@ -1780,17 +1786,24 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
             continue
         if tok.get("forensic_status") != "PASSED":
             continue
-        if tok.get("safety_score", 0) < 68:
+        min_safety = 74 if dex_mode == "LIVE" else 65
+        if tok.get("safety_score", 0) < min_safety:
             continue
             
-        # GMGN Rule 1: No Late FOMO (reject if already pumped >60% in 5m or dumped <-8%)
+        # Institutional Rule 1: Minimum Liquidity Depth ($35k for live)
+        liq_val = float(tok.get("liquidity_usd") or 0.0)
+        if dex_mode == "LIVE" and liq_val < 35000.0:
+            continue
+
+        # Institutional Rule 2: Positive Momentum Only (never buy a dumping coin)
         m5_change = float(tok.get("price_change_5m") or 0.0)
-        if m5_change > 60.0 or m5_change < -8.0:
+        if m5_change > 45.0 or m5_change < -2.5:
             continue
             
-        # GMGN Rule 2: Minimum Buyer Flow Check (buy ratio >= 50%)
+        # Institutional Rule 3: Dominant Buyer Flow Check (buy ratio >= 56% for live)
+        min_buy_ratio = 56.0 if dex_mode == "LIVE" else 50.0
         buy_ratio = float(tok.get("buy_ratio_5m") or tok.get("buy_ratio_1h") or 50.0)
-        if buy_ratio < 50.0:
+        if buy_ratio < min_buy_ratio:
             continue
             
         # Module 1: Thompson Sampling Bayesian AI Conviction

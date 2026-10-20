@@ -6,7 +6,7 @@ import {
   Layers, Target, Shield, Gauge,
   LineChart, Sparkles, Sliders,
   AlertTriangle, Volume2, VolumeX, Star, Diamond, Users, Plus, Trash2, Wallet,
-  Brain, Search, Cpu, Network
+  Brain, Search, Cpu, Network, Power, AlertOctagon
 } from 'lucide-react';
 import { API_BASE } from './config';
 
@@ -184,8 +184,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   const [newWalletChain, setNewWalletChain] = useState<'solana' | 'base'>('solana');
 
   // Real Money On-Chain Wallet & Execution Mode State
-  const [dexMode, setDexMode] = useState<'SIMULATION' | 'LIVE'>('LIVE');
-  const [accountView, setAccountView] = useState<'LIVE' | 'SIMULATION'>('LIVE');
+  const [dexMode, setDexMode] = useState<'SIMULATION' | 'LIVE'>('SIMULATION');
+  const [accountView, setAccountView] = useState<'LIVE' | 'SIMULATION'>('SIMULATION');
   const [livePositions, setLivePositions] = useState<any[]>([]);
   const [paperPositions, setPaperPositions] = useState<any[]>([]);
   const [liveClosedTrades, setLiveClosedTrades] = useState<any[]>([]);
@@ -631,17 +631,30 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                   {dexArmed ? '● 24/7 DAEMON ARMED' : '○ STANDBY'}
                 </span>
                 <button
-                  id="btn-dex-mode-wallet"
-                  onClick={() => setShowWalletModal(true)}
+                  id="btn-dex-mode-toggle"
+                  onClick={() => {
+                    const nextMode = dexMode === 'LIVE' ? 'SIMULATION' : 'LIVE';
+                    setAccountView(nextMode);
+                    handleToggleDexMode(nextMode);
+                  }}
                   className={`text-[10px] px-2.5 py-0.5 rounded font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                     dexMode === 'LIVE'
-                      ? 'bg-neon-red/25 text-neon-red border border-neon-red/50 shadow-[0_0_12px_rgba(255,42,109,0.35)] animate-pulse'
-                      : 'bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 hover:text-white'
+                      ? 'bg-neon-red/25 text-neon-red border border-neon-red/50 shadow-[0_0_12px_rgba(255,42,109,0.35)]'
+                      : 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 hover:text-white'
                   }`}
-                  title="Click to view Real Money On-Chain Wallet Setup & Mode"
+                  title="Click to switch Real Money Trading ON or OFF"
                 >
-                  <Wallet size={11} className={dexMode === 'LIVE' ? 'text-neon-red' : 'text-cyan-400'} />
-                  <span>{dexMode === 'LIVE' ? '🔴 LIVE REAL MONEY (ON-CHAIN)' : '🟡 SIMULATION (PAPER ON-CHAIN)'}</span>
+                  <Power size={11} className={dexMode === 'LIVE' ? 'text-neon-red' : 'text-emerald-400'} />
+                  <span>{dexMode === 'LIVE' ? '🔴 REAL DEX (CLICK TO TURN OFF)' : '🟡 SIMULATION SAFE (CLICK TO ENABLE REAL)'}</span>
+                </button>
+                <button
+                  id="btn-dex-mode-wallet"
+                  onClick={() => setShowWalletModal(true)}
+                  className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-white/5 text-slate-300 border border-white/10 hover:border-white/20 flex items-center gap-1 transition-all cursor-pointer"
+                  title="View Connected Wallet Balance and Keypair Status"
+                >
+                  <Wallet size={11} className="text-cyan-400" />
+                  <span>{walletInfo?.balance_sol != null ? `${walletInfo.balance_sol.toFixed(2)} SOL` : 'WALLET'}</span>
                 </button>
               </div>
               <p className="text-[11px] text-slate-400 font-sans mt-0.5">
@@ -789,6 +802,18 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 <span>{antiMevShield ? 'MEV 🛡️' : 'OFF'}</span>
               </button>
             </div>
+            {livePositions.length > 0 && (
+              <button
+                id="btn-flatten-header"
+                onClick={handleFlattenAll}
+                disabled={isFlattening}
+                className="px-3 py-1.5 rounded-xl font-mono text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 bg-neon-red/25 text-neon-red hover:bg-neon-red hover:text-black border-neon-red/60 shadow-[0_0_15px_rgba(255,42,109,0.4)] animate-pulse"
+                title="Immediately liquidate all open real positions back to native SOL"
+              >
+                <AlertOctagon size={14} />
+                <span>{isFlattening ? 'LIQUIDATING...' : `EXIT ALL ${livePositions.length} POS TO SOL`}</span>
+              </button>
+            )}
             <button
               onClick={handleToggleDaemon}
               className={`px-4 py-1.5 rounded-xl font-mono text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-md ${
@@ -846,7 +871,11 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
           <div className="flex items-center gap-2">
             <span className="text-[10px] uppercase font-bold text-slate-400">DESK ACCOUNT:</span>
             <button
-              onClick={() => { setAccountView('LIVE'); handleSelectChain('solana'); }}
+              onClick={() => { 
+                setAccountView('LIVE'); 
+                handleSelectChain('solana');
+                handleToggleDexMode('LIVE');
+              }}
               className={`px-3 py-1 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                 accountView === 'LIVE'
                   ? 'bg-neon-red/25 text-neon-red border border-neon-red/60 shadow-[0_0_14px_rgba(255,42,109,0.35)]'
@@ -856,11 +885,14 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               <span className="w-2 h-2 rounded-full bg-neon-red animate-ping" />
               <span>🔴 REAL ON-CHAIN ACCOUNT</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-neon-red/20 text-neon-red border border-neon-red/30">
-                {walletInfo?.balance_sol != null ? `${fmtNum(walletInfo.balance_sol, 2)} SOL` : '2.00 SOL'}
+                {walletInfo?.balance_sol != null ? `${fmtNum(walletInfo.balance_sol, 2)} SOL` : '0.79 SOL'}
               </span>
             </button>
             <button
-              onClick={() => setAccountView('SIMULATION')}
+              onClick={() => {
+                setAccountView('SIMULATION');
+                handleToggleDexMode('SIMULATION');
+              }}
               className={`px-3 py-1 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                 accountView === 'SIMULATION'
                   ? 'bg-amber-400/25 text-amber-300 border border-amber-400/60 shadow-[0_0_14px_rgba(251,191,36,0.35)]'

@@ -3250,8 +3250,13 @@ async def api_toggle_dex_daemon(req: DexToggleRequest):
     import solana_dex_engine
     state = solana_dex_engine.load_dex_state()
     state["dex_armed"] = req.armed
+    if not req.armed:
+        state["live_dex_armed"] = False
+    else:
+        if state.get("dex_mode") == "LIVE":
+            state["live_dex_armed"] = True
     if req.amount_usd is not None:
-        state["sniper_amount_usd"] = req.amount_usd
+        state["sniper_amount_usd"] = min(25.0, float(req.amount_usd)) if state.get("dex_mode") == "LIVE" else float(req.amount_usd)
     if req.max_positions is not None:
         state["max_dex_positions"] = req.max_positions
     if req.chain is not None:
@@ -3260,7 +3265,7 @@ async def api_toggle_dex_daemon(req: DexToggleRequest):
         solana_dex_engine.set_dex_risk_profile(req.risk_profile)
         state = solana_dex_engine.load_dex_state()
     solana_dex_engine.save_dex_state(state)
-    return {"status": "SUCCESS", "dex_armed": state["dex_armed"], "config": state}
+    return {"status": "SUCCESS", "dex_armed": state["dex_armed"], "live_dex_armed": state.get("live_dex_armed", False), "config": state}
 
 class DexSetChainRequest(BaseModel):
     chain: str
@@ -3308,9 +3313,14 @@ async def api_set_dex_mode(req: DexSetModeRequest):
     mode_clean = "LIVE" if req.mode.upper().strip() in ["LIVE", "REAL"] else "SIMULATION"
     state = solana_dex_engine.load_dex_state()
     state["dex_mode"] = mode_clean
+    if mode_clean == "SIMULATION":
+        state["live_dex_armed"] = False
+    elif mode_clean == "LIVE":
+        state["live_dex_armed"] = state.get("dex_armed", False)
+        state["sniper_amount_usd"] = min(25.0, float(state.get("sniper_amount_usd", 25.0)))
     solana_dex_engine.save_dex_state(state)
     wallet_info = solana_dex_engine.get_solana_wallet_status()
-    return {"status": "SUCCESS", "dex_mode": mode_clean, "wallet": wallet_info}
+    return {"status": "SUCCESS", "dex_mode": mode_clean, "live_dex_armed": state.get("live_dex_armed", False), "wallet": wallet_info}
 
 class DexExecutionSettingsRequest(BaseModel):
     gas_priority: Optional[str] = None
