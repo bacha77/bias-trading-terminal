@@ -697,6 +697,19 @@ def execute_jupiter_onchain_swap(
         return {"status": "ERROR", "message": "No Solana private key configured."}
 
     user_pubkey = str(kp.pubkey())
+
+    # Gas reserve check: must keep at least 0.025 SOL for network fees and token account rent
+    wallet_stat = get_solana_wallet_status()
+    current_bal = float(wallet_stat.get("balance_sol", 0.0))
+    if current_bal > 0 and current_bal < (amount_sol + 0.025):
+        max_allowed = max(0.0, current_bal - 0.025)
+        if max_allowed < 0.02:
+            return {
+                "status": "ERROR",
+                "message": f"Low balance ({current_bal:.4f} SOL). Must keep at least 0.025 SOL for transaction fees & rent."
+            }
+        amount_sol = round(max_allowed, 4)
+
     quote_res = get_jupiter_quote(output_mint=output_mint, input_mint=input_mint, amount_sol=amount_sol, slippage_bps=slippage_bps)
     if not quote_res.get("success"):
         return {"status": "ERROR", "message": f"Jupiter quote failed: {quote_res.get('error')}"}
@@ -1534,7 +1547,8 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     top_pick = candidates[0]
     top_chain = top_pick.get("chain", "solana")
     amount = float(state.get("sniper_amount_usd", 100.0))
-    snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=amount, mode="SIMULATION", chain=top_chain)
+    current_dex_mode = state.get("dex_mode", "SIMULATION")
+    snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=amount, mode=current_dex_mode, chain=top_chain)
     return {
         "status": "AUTO_SNIPED", 
         "token": top_pick["symbol"], 

@@ -144,7 +144,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
     win_rate: 0.0
   });
   const [dexArmed, setDexArmed] = useState(false);
-  const [snipeAmount, setSnipeAmount] = useState(100);
+  const [snipeAmount, setSnipeAmount] = useState(35);
   const [maxPositions, setMaxPositions] = useState(6);
   const [gasPriority, setGasPriority] = useState<'NORMAL' | 'TURBO' | 'ULTRA_JITO'>('TURBO');
   const [slippageBps, setSlippageBps] = useState<number>(100);
@@ -381,7 +381,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
           token_address: tok.address,
           symbol: tok.symbol,
           amount_usd: snipeAmount,
-          mode: 'SIMULATION',
+          mode: dexMode === 'LIVE' ? 'LIVE' : 'SIMULATION',
           chain: selectedChain
         })
       });
@@ -600,7 +600,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             {/* Snipe Size Presets */}
             <div className="hidden sm:flex items-center gap-1 bg-white/[0.03] px-2.5 py-1 rounded-xl border border-white/10 font-mono text-xs">
               <span className="text-slate-500 text-[10px]">SIZE:</span>
-              {[50, 100, 250, 500].map((amt) => (
+              {[25, 35, 50, 100, 250].map((amt) => (
                 <button
                   key={amt}
                   onClick={() => setSnipeAmount(amt)}
