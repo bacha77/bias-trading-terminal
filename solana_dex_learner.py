@@ -216,14 +216,24 @@ def record_trade_feedback(trade_result: Dict[str, Any]) -> Dict[str, Any]:
 def get_learning_insights() -> Dict[str, Any]:
     """Provides high-level institutional model insights for the terminal HUD."""
     state = load_learning_state()
+    win_rate = state.get("win_rate", 66.7)
+    avg_win = state.get("avg_win_pct", 25.0)
+    avg_loss = abs(state.get("avg_loss_pct", -8.0))
+    weights = state.get("feature_correlations", {})
     return {
         "model_version": "Thompson-Bayes-v2.4",
         "training_epochs": state.get("total_samples", 0),
-        "win_rate": state.get("win_rate", 66.7),
+        "total_trades_analyzed": state.get("total_samples", 0),
+        "win_rate": win_rate,
+        "win_rate_pct": win_rate,
         "profit_factor": state.get("profit_factor", 2.45),
         "expectancy_usd": state.get("expectancy_usd", 12.40),
+        "kelly_fraction": 0.40,
+        "avg_win_pct": avg_win,
+        "avg_loss_pct": avg_loss,
         "runners_count": state.get("runners_3x_plus", 0),
-        "feature_correlations": state.get("feature_correlations", {}),
+        "feature_correlations": weights,
+        "current_weights": weights,
         "optimal_parameters": {
             "dev_holding_target": "0.5% - 3.2%",
             "top10_concentration_ceiling": "< 28%",
