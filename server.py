@@ -2231,15 +2231,15 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
 
     def _scan():
         all_pairs = []
-        # 1. Fetch DexScreener token-boosts (viral trending)
+        # 1. Fetch DexScreener verified token profiles (organic trending)
         try:
-            req_boost = urllib.request.Request(
-                "https://api.dexscreener.com/token-boosts/latest/v1",
+            req_prof = urllib.request.Request(
+                "https://api.dexscreener.com/token-profiles/latest/v1",
                 headers={"User-Agent": "bias-terminal-gem-radar/1.0"}
             )
-            with urllib.request.urlopen(req_boost, timeout=3.5) as r:
-                boosts = json.loads(r.read().decode())
-            addrs = [b["tokenAddress"] for b in boosts[:35] if "tokenAddress" in b]
+            with urllib.request.urlopen(req_prof, timeout=3.5) as r:
+                profs = json.loads(r.read().decode())
+            addrs = [b["tokenAddress"] for b in profs[:35] if "tokenAddress" in b]
             if addrs:
                 req_pairs = urllib.request.Request(
                     f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:30])}",
@@ -2249,7 +2249,7 @@ async def get_gem_radar(chain: str = "all", min_liquidity: float = 5000):
                     data = json.loads(r2.read().decode())
                     all_pairs.extend(data.get("pairs", []))
         except Exception as be:
-            print(f"Gem radar boost error: {be}")
+            print(f"Gem radar profile scan error: {be}")
 
         # 2. Fetch DexScreener search across core narrative sectors: AI, DePIN, RWA, Memes & Ecosystems
         for q in ["solana", "base", "agent", "ai16z", "virtual", "depin", "compute", "rwa", "ondo", "pump"]:

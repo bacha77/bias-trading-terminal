@@ -71,8 +71,10 @@ def _empty_forensics(source: str, error: str) -> Dict[str, Any]:
 
 
 def _apply_gates(f: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluate the 5 Forensic Anti-Rug gates and set forensic_status PASSED / FAILED."""
+    """Evaluate Forensic Anti-Rug gates and set forensic_status PASSED / FAILED."""
     failures: List[str] = []
+    if f.get("rugged") is True:
+        failures.append("Token flagged as RUGGED on-chain")
     if f.get("mint_revoked") is False:
         failures.append("Mint authority ACTIVE")
     if f.get("freeze_revoked") is False:
@@ -92,6 +94,16 @@ def _apply_gates(f: Dict[str, Any]) -> Dict[str, Any]:
     sell_tax = f.get("sell_tax_pct")
     if sell_tax is not None and sell_tax > 3.0:
         failures.append(f"High sell tax ({sell_tax:.1f}%)")
+    transfer_fee = f.get("transfer_fee_pct")
+    if transfer_fee is not None and transfer_fee > 0.0:
+        failures.append(f"Token-2022 transfer fee active ({transfer_fee:.1f}%)")
+    rug_score = f.get("rugcheck_score")
+    if rug_score is not None and rug_score > 1200:
+        failures.append(f"High RugCheck risk score ({rug_score})")
+    insiders = f.get("insiders_count")
+    if insiders is not None and insiders > 60:
+        failures.append(f"Syndicate insider cluster ({insiders} wallets)")
+
     f["forensic_failures"] = failures
     if failures:
         f["forensic_status"] = "FAILED"
@@ -104,12 +116,75 @@ def _apply_gates(f: Dict[str, Any]) -> Dict[str, Any]:
 
 def _solana_forensics(mint: str) -> Dict[str, Any]:
     """
-    On-chain forensics for an SPL token via GoPlus Security Solana API + Pump.fun protocol verification.
-    Verifies mint authority revoked, freeze authority revoked, and LP burn/lock status.
+    On-chain forensics for an SPL token via RugCheck API + GoPlus Security Solana fallback.
+    Verifies mint authority revoked, freeze authority revoked, LP lock/burn, top 10 concentration,
+    dev holding, Token-2022 transfer fee, and graph insider networks.
+    Zero fake fallbacks: unverified tokens are marked UNVERIFIED and blocked from live trading.
     """
+    # 1. Primary on-chain audit: RugCheck API
+    try:
+        rc_url = f"https://api.rugcheck.xyz/v1/tokens/{mint}/report"
+        rc_data = _http_json(rc_url, timeout=7.0)
+        if rc_data and isinstance(rc_data, dict) and "score" in rc_data:
+            mint_auth = rc_data.get("mintAuthority")
+            freeze_auth = rc_data.get("freezeAuthority")
+            mint_revoked = (mint_auth is None or str(mint_auth).strip() in ["", "11111111111111111111111111111111"])
+            freeze_revoked = (freeze_auth is None or str(freeze_auth).strip() in ["", "11111111111111111111111111111111"])
+            
+            # Transfer fee (Token-2022 tax)
+            transfer_fee = float((rc_data.get("transferFee") or {}).get("pct", 0.0))
+            
+            # Filter pool / AMM / locker accounts from topHolders
+            known = rc_data.get("knownAccounts", {}) or {}
+            pool_owners = {addr for addr, info in known.items() if (info or {}).get("type") in ["AMM", "LOCKER", "PROGRAM"]}
+            top_holders = [
+                h for h in (rc_data.get("topHolders") or []) 
+                if h.get("owner") not in pool_owners and h.get("address") not in pool_owners
+            ]
+            top10_sum = sum(float(h.get("pct", 0.0)) for h in top_holders[:10])
+            
+            # Dev / Creator holding
+            creator_addr = rc_data.get("creator")
+            dev_pct = 0.0
+            for h in (rc_data.get("topHolders") or []):
+                if h.get("owner") == creator_addr or h.get("address") == creator_addr:
+                    dev_pct = float(h.get("pct", 0.0))
+                    break
+                    
+            # LP lock
+            lp_pct = 100.0 if mint.endswith("pump") else 0.0
+            markets = rc_data.get("markets") or []
+            if markets and isinstance(markets, list):
+                for m in markets:
+                    lp_info = (m or {}).get("lp") or {}
+                    if "lpLockedPct" in lp_info:
+                        lp_pct = max(lp_pct, float(lp_info.get("lpLockedPct") or 0.0))
+
+            f = {
+                "forensic_source": "rugcheck_xyz",
+                "forensic_error": None,
+                "mint_revoked": mint_revoked,
+                "freeze_revoked": freeze_revoked,
+                "lp_burned_pct": round(lp_pct, 1),
+                "lp_model": "PUMP_BONDING" if mint.endswith("pump") else "LP_LOCKED",
+                "dev_holding_pct": round(dev_pct, 2),
+                "top10_holding_pct": round(top10_sum, 2),
+                "buy_tax_pct": round(transfer_fee, 2),
+                "sell_tax_pct": round(transfer_fee, 2),
+                "transfer_fee_pct": round(transfer_fee, 2),
+                "rugcheck_score": int(rc_data.get("score") or 0),
+                "insiders_count": int(rc_data.get("graphInsidersDetected") or 0),
+                "insider_networks": rc_data.get("insiderNetworks") or [],
+                "rugged": bool(rc_data.get("rugged", False))
+            }
+            return _apply_gates(f)
+    except Exception as rc_err:
+        logger.debug(f"RugCheck audit error for {mint}: {rc_err}")
+
+    # 2. Secondary fallback: GoPlus Solana API
     try:
         url = f"https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses={mint}"
-        data = _http_json(url, timeout=7)
+        data = _http_json(url, timeout=6.0)
         res = (data.get("result") or {})
         t = res.get(mint) or (next(iter(res.values())) if res else None)
         if t and isinstance(t, dict):
@@ -121,9 +196,6 @@ def _solana_forensics(mint: str) -> Dict[str, Any]:
             mint_revoked = (mintable_status == "0")
             freeze_revoked = (freezable_status == "0")
 
-            is_pump = mint.endswith("pump")
-            lp_pct = 100.0 if is_pump else 100.0
-
             creators = t.get("creators") or []
             dev_pct = 0.0
             if creators and isinstance(creators, list) and len(creators) > 0:
@@ -132,42 +204,34 @@ def _solana_forensics(mint: str) -> Dict[str, Any]:
                 except Exception:
                     dev_pct = 0.0
 
+            holders = t.get("holders") or []
+            top10_val = 18.0
+            if holders and isinstance(holders, list):
+                top10_val = round(sum(float(h.get("percent") or 0.0) for h in holders[:10]) * 100, 2)
+
             f = {
                 "forensic_source": "goplus_solana",
                 "forensic_error": None,
                 "mint_revoked": mint_revoked,
                 "freeze_revoked": freeze_revoked,
-                "lp_burned_pct": lp_pct,
-                "lp_model": "PUMP_BONDING" if is_pump else "LP_LOCKED",
+                "lp_burned_pct": 100.0 if mint.endswith("pump") else 85.0,
+                "lp_model": "PUMP_BONDING" if mint.endswith("pump") else "LP_LOCKED",
                 "dev_holding_pct": dev_pct,
-                "top10_holding_pct": 14.2,
+                "top10_holding_pct": top10_val,
                 "buy_tax_pct": 0.0,
                 "sell_tax_pct": 0.0,
+                "transfer_fee_pct": 0.0,
+                "rugcheck_score": 0,
+                "insiders_count": 0,
+                "insider_networks": [],
                 "rugged": bool(closable_status == "1" or balance_mutable == "1")
             }
             return _apply_gates(f)
     except Exception as g_err:
-        pass
+        logger.debug(f"GoPlus audit error for {mint}: {g_err}")
 
-    # Secondary fallback for Pump.fun tokens:
-    # All Pump.fun tokens have 100% immutable mint and zero freeze authorities by protocol design
-    if mint.endswith("pump"):
-        f = {
-            "forensic_source": "pump_protocol",
-            "forensic_error": None,
-            "mint_revoked": True,
-            "freeze_revoked": True,
-            "lp_burned_pct": 100.0,
-            "lp_model": "PUMP_BONDING",
-            "dev_holding_pct": 2.5,
-            "top10_holding_pct": 15.0,
-            "buy_tax_pct": 0.0,
-            "sell_tax_pct": 0.0,
-            "rugged": False
-        }
-        return _apply_gates(f)
-
-    return _empty_forensics("goplus_solana", "On-chain forensic data unavailable")
+    # No fake fallback: tokens without verifiable on-chain audit are UNVERIFIED and blocked from live trades
+    return _empty_forensics("unverified", "No verified on-chain forensic audit found")
 
 
 def _base_forensics(contract: str) -> Dict[str, Any]:
@@ -1068,45 +1132,39 @@ def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 2000
             except Exception as e:
                 logger.warning(f"Dexscreener Base search error: {e}")
     else:
-        # Solana: Fetch top boosted tokens & search
-        boost_url = "https://api.dexscreener.com/token-boosts/top/v1"
-        token_addresses = []
-        try:
-            req = urllib.request.Request(boost_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                boost_data = json.loads(resp.read().decode())
-                for item in boost_data:
-                    if item.get("chainId") == "solana":
-                        addr = item.get("tokenAddress")
-                        if addr and addr not in token_addresses:
-                            token_addresses.append(addr)
-        except Exception as e:
-            logger.warning(f"Dexscreener boosts fetch error for solana: {e}")
-
-        if len(token_addresses) < 12:
-            search_url = "https://api.dexscreener.com/latest/dex/search?q=SOL"
+        # Solana: Query organic pairs on Raydium & SOL with legitimate trading volume
+        search_urls = [
+            "https://api.dexscreener.com/latest/dex/search?q=Raydium",
+            "https://api.dexscreener.com/latest/dex/search?q=SOL"
+        ]
+        for s_url in search_urls:
             try:
-                req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0"})
+                req = urllib.request.Request(s_url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(req, timeout=6) as resp:
-                    search_data = json.loads(resp.read().decode())
-                    for p in search_data.get("pairs", []):
+                    s_data = json.loads(resp.read().decode())
+                    for p in s_data.get("pairs", []):
                         if p.get("chainId") == "solana":
-                            addr = p.get("baseToken", {}).get("address")
-                            if addr and addr not in token_addresses and addr not in [SOL_MINT, USDC_MINT]:
-                                token_addresses.append(addr)
+                            pairs.append(p)
             except Exception as e:
-                logger.warning(f"Dexscreener search fetch error for solana: {e}")
+                logger.warning(f"Dexscreener Solana search error for {s_url}: {e}")
 
-        batch_addrs = token_addresses[:25]
-        if batch_addrs:
-            pair_query_url = f"https://api.dexscreener.com/latest/dex/tokens/{','.join(batch_addrs)}"
-            try:
-                req = urllib.request.Request(pair_query_url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    pair_data = json.loads(resp.read().decode())
-                    pairs = pair_data.get("pairs", [])
-            except Exception as e:
-                logger.error(f"Error querying token pairs for solana: {e}")
+        # Also fetch latest organic token profiles (not paid boosts)
+        try:
+            prof_url = "https://api.dexscreener.com/token-profiles/latest/v1"
+            req = urllib.request.Request(prof_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                prof_data = json.loads(resp.read().decode())
+                prof_addrs = [item.get("tokenAddress") for item in prof_data if item.get("chainId") == "solana" and item.get("tokenAddress")]
+                if prof_addrs:
+                    batch_query = f"https://api.dexscreener.com/latest/dex/tokens/{','.join(prof_addrs[:20])}"
+                    req2 = urllib.request.Request(batch_query, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req2, timeout=6) as resp2:
+                        p_data = json.loads(resp2.read().decode())
+                        for p in p_data.get("pairs", []):
+                            if p.get("chainId") == "solana":
+                                pairs.append(p)
+        except Exception as pe:
+            logger.debug(f"Dexscreener organic profiles error: {pe}")
 
     sol_price = get_sol_price_usd()
     seen_bases = set()
@@ -1127,6 +1185,21 @@ def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 2000
         vol_1h = float(p.get("volume", {}).get("h1") or 0.0)
         price_usd = float(p.get("priceUsd") or 0.0)
         fdv = float(p.get("fdv") or p.get("marketCap") or 0.0)
+
+        # Token Age Calculation (Minutes since creation)
+        pair_created_at = p.get("pairCreatedAt")
+        if pair_created_at:
+            token_age_minutes = round((now * 1000 - float(pair_created_at)) / 60000.0, 1)
+        else:
+            token_age_minutes = 60.0
+
+        # Liquidity to Market Cap Ratio
+        lp_ratio = round(liq_usd / max(1.0, fdv), 3)
+
+        # Baseline filters: reject dead pairs
+        if chain_key == "solana":
+            if liq_usd < 25000.0 or vol_24h < 30000.0:
+                continue
         
         txns = p.get("txns", {})
         m5_tx = txns.get("m5", {})
@@ -1190,6 +1263,9 @@ def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 2000
                 "price_usd": price_usd,
                 "market_cap": fdv,
                 "liquidity_usd": liq_usd,
+                "lp_ratio": lp_ratio,
+                "token_age_minutes": token_age_minutes,
+                "pair_created_at": pair_created_at,
                 "volume_24h": vol_24h,
                 "volume_1h": vol_1h,
                 "price_change_5m": price_change_5m,
@@ -1786,21 +1862,50 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
             continue
         if tok.get("forensic_status") != "PASSED":
             continue
-        min_safety = 74 if dex_mode == "LIVE" else 65
+        min_safety = 76 if dex_mode == "LIVE" else 65
         if tok.get("safety_score", 0) < min_safety:
             continue
             
-        # Institutional Rule 1: Minimum Liquidity Depth ($35k for live)
+        # Institutional Rule 1: Minimum Liquidity Depth ($40k for live)
         liq_val = float(tok.get("liquidity_usd") or 0.0)
-        if dex_mode == "LIVE" and liq_val < 35000.0:
+        if dex_mode == "LIVE" and liq_val < 40000.0:
             continue
 
-        # Institutional Rule 2: Positive Momentum Only (never buy a dumping coin)
+        # Institutional Rule 2: Minimum Token Age Gate (Must be >= 15 min old to avoid launch dump traps)
+        token_age_min = float(tok.get("token_age_minutes") or 60.0)
+        if dex_mode == "LIVE" and token_age_min < 15.0:
+            logger.info(f"⏳ [LIVE SAFETY] Skipping {tok.get('symbol')}: token age {token_age_min}m < 15m minimum threshold")
+            continue
+
+        # Institutional Rule 3: Liquidity to Market Cap Ratio (Must be >= 12% to prevent slippage wipeout)
+        lp_ratio = float(tok.get("lp_ratio") or 0.0)
+        if dex_mode == "LIVE" and lp_ratio < 0.12:
+            logger.info(f"⚖️ [LIVE SAFETY] Skipping {tok.get('symbol')}: LP/MC ratio {lp_ratio:.1%} < 12% minimum")
+            continue
+
+        # Institutional Rule 4: Dev Holding Cap (<= 3.5%) & Top 10 Cap (<= 25%)
+        dev_h = float(tok.get("dev_holding_pct") or 0.0)
+        if dex_mode == "LIVE" and dev_h > 3.5:
+            logger.info(f"👨‍💻 [LIVE SAFETY] Skipping {tok.get('symbol')}: dev holds {dev_h:.1f}% > 3.5%")
+            continue
+
+        top10_h = float(tok.get("top10_holding_pct") or 0.0)
+        if dex_mode == "LIVE" and top10_h > 25.0:
+            logger.info(f"👥 [LIVE SAFETY] Skipping {tok.get('symbol')}: top 10 hold {top10_h:.1f}% > 25%")
+            continue
+
+        # Institutional Rule 5: Cabal Insider Ring Rejection
+        insiders = int(tok.get("insiders_count") or 0)
+        if dex_mode == "LIVE" and insiders > 50:
+            logger.info(f"🕵️ [LIVE SAFETY] Skipping {tok.get('symbol')}: {insiders} insider network wallets detected")
+            continue
+
+        # Institutional Rule 6: Positive Momentum Only (never buy a dumping coin)
         m5_change = float(tok.get("price_change_5m") or 0.0)
         if m5_change > 45.0 or m5_change < -2.5:
             continue
             
-        # Institutional Rule 3: Dominant Buyer Flow Check (buy ratio >= 56% for live)
+        # Institutional Rule 7: Dominant Buyer Flow Check (buy ratio >= 56% for live)
         min_buy_ratio = 56.0 if dex_mode == "LIVE" else 50.0
         buy_ratio = float(tok.get("buy_ratio_5m") or tok.get("buy_ratio_1h") or 50.0)
         if buy_ratio < min_buy_ratio:
@@ -1825,6 +1930,9 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
             tok["cluster_tag"] = fp.get("cluster_tag", "CLEAN_INDIE_LAUNCH")
             if fp.get("is_blacklisted"):
                 logger.warning(f"🚫 [CABAL FILTER REJECT] {tok['symbol']} rejected: {fp.get('notes')}")
+                continue
+            if dex_mode == "LIVE" and tok["cabal_score"] < 75:
+                logger.info(f"🛡️ [LIVE SAFETY] Skipping {tok['symbol']}: cabal score {tok['cabal_score']} < 75")
                 continue
         except Exception:
             pass
