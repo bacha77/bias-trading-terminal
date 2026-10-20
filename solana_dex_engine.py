@@ -314,9 +314,10 @@ DEFAULT_TRACKED_WALLETS = [
 
 DEFAULT_DEX_STATE = {
     "dex_armed": False,
-    "sniper_amount_usd": 100.0,
+    "dex_mode": "SIMULATION",
+    "sniper_amount_usd": 25.0,
     "max_dex_positions": 6,
-    "active_chain": "both",            # "solana", "base", or "both"
+    "active_chain": "solana",            # Default to solana
     "risk_profile": "MOONBAG",         # "SCALPER", "MOONBAG", "HUNTER_10X"
     "gas_priority": "TURBO",           # "NORMAL" (5k lamports), "TURBO" (50k lamports), "ULTRA_JITO" (150k lamports + MEV Shield)
     "slippage_bps": 100,               # 50 (0.5%), 100 (1.0%), 250 (2.5%), 500 (5.0%)
@@ -845,13 +846,22 @@ def execute_jupiter_onchain_swap(
     slippage_bps: int = 250,
     gas_priority: str = "ULTRA_JITO"
 ) -> Dict[str, Any]:
-    """
-    Builds, signs, and broadcasts an authentic Jupiter v6 on-chain transaction.
-    """
+    # LIVE SAFETY LOCK: Never execute automated on-chain buys unless explicitly authorized
+    state = load_dex_state()
+    live_permitted = (
+        os.getenv("SOLANA_LIVE_BUY_ENABLED", "false").lower() in ("true", "1", "yes")
+        or state.get("live_dex_armed") is True
+    )
+    if not live_permitted:
+        logger.warning("[LIVE BUY SAFETY LOCK] On-chain buy blocked to protect wallet funds.")
+        return {
+            "status": "ERROR", 
+            "message": "Live on-chain buying is safety-locked. Explicit live confirmation is required to spend real SOL."
+        }
+
     kp = get_solana_keypair()
     if not kp:
         return {"status": "ERROR", "message": "No Solana private key configured."}
-
     user_pubkey = str(kp.pubkey())
 
     # Gas reserve check: must keep at least 0.025 SOL for network fees and token account rent
@@ -1277,10 +1287,13 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
 
     target_mode = "LIVE" if (mode == "LIVE" or state.get("dex_mode") == "LIVE") else "SIMULATION"
     if target_mode == "LIVE":
+        # Enforce strict user trade cap ($25 max)
+        user_cap = float(state.get("sniper_amount_usd", 25.0))
+        amount_usd = min(float(amount_usd), min(25.0, user_cap))
         if chain.lower() != "solana":
             return {
                 "status": "ERROR",
-                "message": "Live on-chain execution is strictly Solana only (2.0 SOL funded). Base L2 is simulation only."
+                "message": "Live on-chain execution is strictly Solana only. Base L2 is simulation only."
             }
         live_active = [p for p in active_pos if p.get("mode") in ["LIVE", "LIVE_ONCHAIN"]]
         if len(live_active) >= max_pos:
@@ -1712,9 +1725,13 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     if not state.get("dex_armed"):
         return {"status": "STANDBY", "risk": risk_res}
         
+    dex_mode = state.get("dex_mode", "SIMULATION")
+    # SAFETY LOCK: In LIVE mode, require explicit live_dex_armed flag to avoid unintended on-chain buys
+    if dex_mode == "LIVE" and not state.get("live_dex_armed", False):
+        return {"status": "STANDBY_LIVE_SAFETY_LOCKED", "message": "Live mode requires explicit live arming to prevent automated capital drain.", "risk": risk_res}
+        
     active_pos = state.get("active_positions", [])
     max_pos = int(state.get("max_positions") or state.get("max_dex_positions") or 6)
-    dex_mode = state.get("dex_mode", "SIMULATION")
 
     # In LIVE mode, strictly enforce Solana only because user only funded a Solana wallet with 2 SOL
     if dex_mode == "LIVE":
@@ -1827,14 +1844,18 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     top_pick = candidates[0]
     top_chain = top_pick.get("chain", "solana")
     base_amount = float(state.get("sniper_amount_usd", 25.0))
+    current_dex_mode = state.get("dex_mode", "SIMULATION")
+    if current_dex_mode == "LIVE":
+        base_amount = min(25.0, base_amount)
     kelly_amount = compute_kelly_dynamic_sizing(
         base_amount, 
         token_liquidity_usd=float(top_pick.get("liquidity_usd") or 35000.0),
         ai_conviction_score=float(top_pick.get("ai_conviction_score", 75.0))
     )
-    # STRICT CEILING: Trade amount is hard-capped to never exceed user's configured base_amount
+    # STRICT CEILING: Trade amount is hard-capped to never exceed base_amount (and max $25 in live)
     final_trade_amount = min(base_amount, kelly_amount)
-    current_dex_mode = state.get("dex_mode", "SIMULATION")
+    if current_dex_mode == "LIVE":
+        final_trade_amount = min(25.0, final_trade_amount)
     snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=final_trade_amount, mode=current_dex_mode, chain=top_chain)
     return {
         "status": "AUTO_SNIPED", 

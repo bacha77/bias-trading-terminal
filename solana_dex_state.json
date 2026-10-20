@@ -1,7 +1,7 @@
 {
-  "dex_armed": true,
-  "dex_mode": "LIVE",
-  "sniper_amount_usd": 35.0,
+  "dex_armed": false,
+  "dex_mode": "SIMULATION",
+  "sniper_amount_usd": 25.0,
   "max_dex_positions": 6,
   "active_chain": "solana",
   "risk_profile": "MOONBAG",
