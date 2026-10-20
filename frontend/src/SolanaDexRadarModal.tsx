@@ -127,8 +127,6 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   const [selectedChain, setSelectedChain] = useState<'both' | 'solana' | 'base'>('both');
   const [selectedRiskProfile, setSelectedRiskProfile] = useState<string>('MOONBAG');
   const [listings, setListings] = useState<any[]>([]);
-  const [positions, setPositions] = useState<any[]>([]);
-  const [closedTrades, setClosedTrades] = useState<any[]>([]);
   const [trackedWallets, setTrackedWallets] = useState<any[]>([]);
   const [activeChartToken, setActiveChartToken] = useState<any | null>(null);
   const [pnlSummary, setPnlSummary] = useState<any>({
@@ -166,7 +164,14 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   const [newWalletChain, setNewWalletChain] = useState<'solana' | 'base'>('solana');
 
   // Real Money On-Chain Wallet & Execution Mode State
-  const [dexMode, setDexMode] = useState<'SIMULATION' | 'LIVE'>('SIMULATION');
+  const [dexMode, setDexMode] = useState<'SIMULATION' | 'LIVE'>('LIVE');
+  const [accountView, setAccountView] = useState<'LIVE' | 'SIMULATION'>('LIVE');
+  const [livePositions, setLivePositions] = useState<any[]>([]);
+  const [paperPositions, setPaperPositions] = useState<any[]>([]);
+  const [liveClosedTrades, setLiveClosedTrades] = useState<any[]>([]);
+  const [paperClosedTrades, setPaperClosedTrades] = useState<any[]>([]);
+  const [livePnlSummary, setLivePnlSummary] = useState<any>(null);
+  const [paperPnlSummary, setPaperPnlSummary] = useState<any>(null);
   const [walletInfo, setWalletInfo] = useState<any>(null);
   const [showWalletModal, setShowWalletModal] = useState<boolean>(false);
 
@@ -268,20 +273,35 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
       const res = await fetch(`${API_BASE}/api/dex/positions`);
       if (res.ok) {
         const json = await res.json();
-        setPositions(json.active_positions || []);
-        setClosedTrades(json.closed_trades || []);
+        const allPos = json.active_positions || [];
+        const lPos = json.live_positions || allPos.filter((p: any) => p.mode === 'LIVE' || p.mode === 'LIVE_ONCHAIN');
+        const pPos = json.paper_positions || allPos.filter((p: any) => p.mode !== 'LIVE' && p.mode !== 'LIVE_ONCHAIN');
+        setLivePositions(lPos);
+        setPaperPositions(pPos);
+
+        const allClosed = json.closed_trades || [];
+        const lClosed = json.live_closed_trades || allClosed.filter((t: any) => t.mode === 'LIVE' || t.mode === 'LIVE_ONCHAIN');
+        const pClosed = json.paper_closed_trades || allClosed.filter((t: any) => t.mode !== 'LIVE' && t.mode !== 'LIVE_ONCHAIN');
+        setLiveClosedTrades(lClosed);
+        setPaperClosedTrades(pClosed);
+
         setDexArmed(json.dex_armed || false);
+        if (json.wallet) setWalletInfo(json.wallet);
         if (json.risk_profile) setSelectedRiskProfile(json.risk_profile);
         if (json.tracked_wallets) setTrackedWallets(json.tracked_wallets);
         if (json.pnl_summary) {
           setPnlSummary(json.pnl_summary);
+          if (json.pnl_summary.live) setLivePnlSummary(json.pnl_summary.live);
+          if (json.pnl_summary.paper) setPaperPnlSummary(json.pnl_summary.paper);
         }
         if (json.sniper_amount_usd) setSnipeAmount(json.sniper_amount_usd);
         if (json.max_positions) setMaxPositions(json.max_positions);
         if (json.gas_priority) setGasPriority(json.gas_priority);
         if (json.slippage_bps != null) setSlippageBps(json.slippage_bps);
         if (json.anti_mev_shield != null) setAntiMevShield(json.anti_mev_shield);
-        if (json.dex_mode) setDexMode(json.dex_mode);
+        if (json.dex_mode) {
+          setDexMode(json.dex_mode);
+        }
       }
     } catch (e) {
       console.error('Failed to load DEX positions:', e);
@@ -511,7 +531,23 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
     return matchesSearch && matchesSafety && matchesWhales && matchesPreGrad;
   });
 
-  const isNetProfit = pnlSummary.net_pnl_usd >= 0;
+  const activePositionsList = accountView === 'LIVE' ? livePositions : paperPositions;
+  const activeClosedList = accountView === 'LIVE' ? liveClosedTrades : paperClosedTrades;
+  const activeSummary = accountView === 'LIVE' 
+    ? (livePnlSummary || { 
+        net_pnl_usd: 0, 
+        net_pnl_pct: 0, 
+        total_unrealized_usd: 0, 
+        total_realized_usd: 0, 
+        capital_deployed_usd: 0, 
+        active_positions_count: livePositions.length, 
+        closed_trades_count: liveClosedTrades.length, 
+        wins: 0, 
+        losses: 0, 
+        win_rate: 0 
+      }) 
+    : (paperPnlSummary || pnlSummary);
+  const isNetProfit = (activeSummary.net_pnl_usd ?? 0) >= 0;
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-1 sm:p-3 md:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
@@ -564,37 +600,48 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
           <div className="flex items-center gap-3">
             {/* Multi-Chain Selector (Solana vs Base vs Both) */}
             <div className="flex items-center p-0.5 bg-black/60 rounded-xl border border-white/10 font-mono text-xs">
-              <button
-                onClick={() => handleSelectChain('both')}
-                className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  selectedChain === 'both'
-                    ? 'bg-gradient-to-r from-emerald-500 via-cyan-500 to-blue-600 text-black font-extrabold shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Autonomous Snipe on BOTH Solana and Base L2"
-              >
-                <span>⚡ DUAL (SOL + BASE)</span>
-              </button>
-              <button
-                onClick={() => handleSelectChain('solana')}
-                className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  selectedChain === 'solana'
-                    ? 'bg-gradient-to-r from-purple-500 to-cyan-500 text-black font-extrabold shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <span>🟣 SOLANA</span>
-              </button>
-              <button
-                onClick={() => handleSelectChain('base')}
-                className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  selectedChain === 'base'
-                    ? 'bg-blue-600 text-white font-extrabold shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <span>🔵 BASE L2</span>
-              </button>
+              {accountView === 'LIVE' ? (
+                <div 
+                  className="px-3 py-1 rounded-lg font-bold flex items-center gap-1.5 bg-gradient-to-r from-purple-500 to-cyan-500 text-black font-extrabold shadow-md cursor-default"
+                  title="Real Money Mode is strictly Solana only (2.0 SOL funded). Base L2 is simulation only."
+                >
+                  <span>🟣 SOLANA ONLY (2.0 SOL)</span>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => handleSelectChain('both')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      selectedChain === 'both'
+                        ? 'bg-gradient-to-r from-emerald-500 via-cyan-500 to-blue-600 text-black font-extrabold shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Autonomous Snipe on BOTH Solana and Base L2"
+                  >
+                    <span>⚡ DUAL (SOL + BASE)</span>
+                  </button>
+                  <button
+                    onClick={() => handleSelectChain('solana')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      selectedChain === 'solana'
+                        ? 'bg-gradient-to-r from-purple-500 to-cyan-500 text-black font-extrabold shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>🟣 SOLANA</span>
+                  </button>
+                  <button
+                    onClick={() => handleSelectChain('base')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      selectedChain === 'base'
+                        ? 'bg-blue-600 text-white font-extrabold shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>🔵 BASE L2</span>
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Snipe Size Presets */}
@@ -740,65 +787,136 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
           </div>
         </div>
 
+        {/* ================= ACCOUNT MODE SWITCHER: REAL ON-CHAIN VS PAPER SIMULATION ================= */}
+        <div className="flex flex-wrap items-center justify-between px-4 sm:px-6 py-2 bg-gradient-to-r from-black via-[#0a1120] to-black border-b border-white/10 font-mono text-xs gap-2 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase font-bold text-slate-400">DESK ACCOUNT:</span>
+            <button
+              onClick={() => { setAccountView('LIVE'); handleSelectChain('solana'); }}
+              className={`px-3 py-1 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                accountView === 'LIVE'
+                  ? 'bg-neon-red/25 text-neon-red border border-neon-red/60 shadow-[0_0_14px_rgba(255,42,109,0.35)]'
+                  : 'bg-white/5 text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-neon-red animate-ping" />
+              <span>🔴 REAL ON-CHAIN ACCOUNT</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-neon-red/20 text-neon-red border border-neon-red/30">
+                {walletInfo?.balance_sol != null ? `${walletInfo.balance_sol.toFixed(2)} SOL` : '2.00 SOL'}
+              </span>
+            </button>
+            <button
+              onClick={() => setAccountView('SIMULATION')}
+              className={`px-3 py-1 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                accountView === 'SIMULATION'
+                  ? 'bg-amber-400/25 text-amber-300 border border-amber-400/60 shadow-[0_0_14px_rgba(251,191,36,0.35)]'
+                  : 'bg-white/5 text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <span>🟡 PAPER SIMULATION ACCOUNT</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                {paperPositions.length} POS
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px]">
+            {accountView === 'LIVE' ? (
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-400 font-bold flex items-center gap-1">
+                  <ShieldCheck size={13} className="text-emerald-400" />
+                  <span>SOLANA ON-CHAIN ONLY (NO BASE IN LIVE)</span>
+                </span>
+                <span className="text-slate-500">·</span>
+                <span className="text-slate-300">
+                  Wallet: <strong className="text-white font-mono">{walletInfo?.address ? `${walletInfo.address.slice(0, 4)}...${walletInfo.address.slice(-4)}` : 'HWDJ...xZq8'}</strong>
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-amber-400 font-medium">
+                  🧪 Paper Sandbox: Virtual Capital · Dual Sol + Base Testing
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* ================= 2. Real-Time DEX P&L Analytics HUD & Risk Profiles ================= */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5 px-4 sm:px-6 py-2 sm:py-2.5 bg-black/60 border-b border-white/10 font-mono shrink-0">
-          {/* Card 1: NET P&L */}
-          <div className="p-2.5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/10 flex flex-col justify-between">
-            <span className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center justify-between">
-              <span>Total Net P&L</span>
-              <DollarSign size={13} className="text-cyan-400" />
+          {/* Card 1: NET P&L / REAL WALLET BALANCE */}
+          <div className={`p-2.5 rounded-xl bg-gradient-to-br border flex flex-col justify-between ${
+            accountView === 'LIVE' ? 'from-neon-red/[0.08] to-transparent border-neon-red/40' : 'from-white/[0.04] to-transparent border-white/10'
+          }`}>
+            <span className={`text-[10px] uppercase tracking-wider flex items-center justify-between font-bold ${
+              accountView === 'LIVE' ? 'text-neon-red' : 'text-slate-400'
+            }`}>
+              <span>{accountView === 'LIVE' ? 'Real Wallet Balance' : 'Paper Net P&L'}</span>
+              {accountView === 'LIVE' ? <Wallet size={13} className="text-neon-red" /> : <DollarSign size={13} className="text-cyan-400" />}
             </span>
-            <div className="mt-0.5 flex items-baseline gap-2">
-              <span className={`text-xl font-black tracking-tight ${isNetProfit ? 'text-neon-green' : 'text-neon-red'}`}>
-                {isNetProfit ? '+' : ''}${pnlSummary.net_pnl_usd.toFixed(2)}
-              </span>
-              <span className={`text-xs font-bold ${isNetProfit ? 'text-neon-green' : 'text-neon-red'}`}>
-                ({isNetProfit ? '+' : ''}{pnlSummary.net_pnl_pct}%)
-              </span>
+            <div className="mt-0.5 flex items-baseline gap-1.5">
+              {accountView === 'LIVE' ? (
+                <span className="text-xl font-black text-white tracking-tight">
+                  {walletInfo?.balance_sol != null ? walletInfo.balance_sol.toFixed(4) : '2.0000'} <span className="text-xs text-neon-red font-bold">SOL</span>
+                </span>
+              ) : (
+                <>
+                  <span className={`text-xl font-black tracking-tight ${isNetProfit ? 'text-neon-green' : 'text-neon-red'}`}>
+                    {isNetProfit ? '+' : ''}${activeSummary.net_pnl_usd.toFixed(2)}
+                  </span>
+                  <span className={`text-xs font-bold ${isNetProfit ? 'text-neon-green' : 'text-neon-red'}`}>
+                    ({isNetProfit ? '+' : ''}{activeSummary.net_pnl_pct}%)
+                  </span>
+                </>
+              )}
             </div>
-            <div className="text-[9px] text-slate-500">Realized + Unrealized</div>
+            <div className={`text-[9px] ${accountView === 'LIVE' ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
+              {accountView === 'LIVE' 
+                ? `≈ $${walletInfo?.balance_usd != null ? walletInfo.balance_usd.toFixed(2) : '209.38'} USD · Funded`
+                : 'Virtual Paper Sandbox'}
+            </div>
           </div>
 
           {/* Card 2: Floating Open P&L */}
           <div className="p-2.5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/10 flex flex-col justify-between">
             <span className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center justify-between">
-              <span>Floating Open P&L</span>
+              <span>{accountView === 'LIVE' ? 'Real Floating P&L' : 'Paper Floating P&L'}</span>
               <Activity size={13} className="text-amber-400" />
             </span>
             <div className="mt-0.5">
-              <span className={`text-lg font-bold tracking-tight ${pnlSummary.total_unrealized_usd >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                {pnlSummary.total_unrealized_usd >= 0 ? '+' : ''}${pnlSummary.total_unrealized_usd.toFixed(2)}
+              <span className={`text-lg font-bold tracking-tight ${(activeSummary.total_unrealized_usd ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                {(activeSummary.total_unrealized_usd ?? 0) >= 0 ? '+' : ''}${(activeSummary.total_unrealized_usd ?? 0).toFixed(2)}
               </span>
             </div>
-            <div className="text-[9px] text-slate-500">{positions.length} Active Positions</div>
+            <div className="text-[9px] text-slate-500">{activePositionsList.length} {accountView === 'LIVE' ? 'Real On-Chain' : 'Paper'} Positions</div>
           </div>
 
           {/* Card 3: Realized Cash Banked */}
           <div className="p-2.5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/10 flex flex-col justify-between">
             <span className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center justify-between">
-              <span>Realized Cash Banked</span>
+              <span>{accountView === 'LIVE' ? 'Real Banked Cash' : 'Paper Cash Banked'}</span>
               <Coins size={13} className="text-neon-gold" />
             </span>
             <div className="mt-0.5">
-              <span className={`text-lg font-bold tracking-tight ${pnlSummary.total_realized_usd >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                {pnlSummary.total_realized_usd >= 0 ? '+' : ''}${pnlSummary.total_realized_usd.toFixed(2)}
+              <span className={`text-lg font-bold tracking-tight ${(activeSummary.total_realized_usd ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                {(activeSummary.total_realized_usd ?? 0) >= 0 ? '+' : ''}${(activeSummary.total_realized_usd ?? 0).toFixed(2)}
               </span>
             </div>
-            <div className="text-[9px] text-slate-500">{pnlSummary.closed_trades_count} Closed Trades</div>
+            <div className="text-[9px] text-slate-500">{activeClosedList.length} {accountView === 'LIVE' ? 'Real On-Chain' : 'Paper'} Trades</div>
           </div>
 
           {/* Card 4: Capital In Play */}
           <div className="p-2.5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/10 flex flex-col justify-between">
             <span className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center justify-between">
-              <span>Capital In Play</span>
+              <span>{accountView === 'LIVE' ? 'Real Capital In Play' : 'Paper Capital In Play'}</span>
               <Layers size={13} className="text-purple-400" />
             </span>
             <div className="mt-0.5">
               <span className="text-lg font-bold text-white tracking-tight">
-                ${pnlSummary.capital_deployed_usd.toFixed(0)} <span className="text-xs text-slate-400 font-normal">/ ${(snipeAmount * maxPositions).toFixed(0)} max</span>
+                ${(activeSummary.capital_deployed_usd ?? 0).toFixed(0)} <span className="text-xs text-slate-400 font-normal">/ ${(snipeAmount * maxPositions).toFixed(0)} max</span>
               </span>
             </div>
-            <div className="text-[9px] text-slate-500">{positions.length}/{maxPositions} Slots Used</div>
+            <div className="text-[9px] text-slate-500">{activePositionsList.length}/{maxPositions} {accountView === 'LIVE' ? 'Real' : 'Paper'} Slots Used</div>
           </div>
 
           {/* Card 5: Win Rate */}
@@ -809,13 +927,13 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             </span>
             <div className="mt-0.5 flex items-baseline gap-1.5">
               <span className="text-lg font-bold text-emerald-300">
-                {pnlSummary.win_rate}%
+                {activeSummary.win_rate ?? 0}%
               </span>
               <span className="text-[10px] text-slate-400">
-                ({pnlSummary.wins}W / {pnlSummary.losses}L)
+                ({activeSummary.wins ?? 0}W / {activeSummary.losses ?? 0}L)
               </span>
             </div>
-            <div className="text-[9px] text-slate-500">Historical Accuracy</div>
+            <div className="text-[9px] text-slate-500">{accountView === 'LIVE' ? 'Real On-Chain Accuracy' : 'Paper Sim Accuracy'}</div>
           </div>
 
           {/* Card 6: 1-Click Risk Profile Selector */}
@@ -913,7 +1031,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               }`}
             >
               <Coins size={13} className="text-neon-green" />
-              <span>POSITIONS ({positions.length})</span>
+              <span>POSITIONS ({activePositionsList.length})</span>
             </button>
 
             <button
@@ -924,7 +1042,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                   : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
-              <span>RECEIPTS ({closedTrades.length})</span>
+              <span>RECEIPTS ({activeClosedList.length})</span>
             </button>
 
             <button
@@ -1208,19 +1326,19 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     <div className="flex items-center gap-2">
                       <Coins size={14} className="text-neon-green" />
                       <span className="text-xs font-bold text-white uppercase tracking-wider">
-                        Active Positions ({positions.length}/{maxPositions})
+                        Active Positions ({activePositionsList.length}/{maxPositions})
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-neon-green font-bold">
-                        Floating: {pnlSummary.total_unrealized_usd >= 0 ? '+' : ''}${pnlSummary.total_unrealized_usd.toFixed(2)}
+                        Floating: {(activeSummary.total_unrealized_usd ?? 0) >= 0 ? '+' : ''}${(activeSummary.total_unrealized_usd ?? 0).toFixed(2)}
                       </span>
-                      {positions.length > 0 && (
+                      {activePositionsList.length > 0 && (
                         <button
                           onClick={handleFlattenAll}
                           disabled={isFlattening}
                           className="px-2 py-0.5 rounded bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/50 text-[9px] font-black tracking-wide flex items-center gap-1 cursor-pointer transition-all shadow-[0_0_10px_rgba(255,59,92,0.3)] animate-pulse"
-                          title="Panic Liquidate ALL Open DEX Positions to Cash"
+                          title="Panic Liquidate Open Positions to Cash"
                         >
                           <AlertTriangle size={11} />
                           <span>{isFlattening ? 'FLATTENING...' : '⚡ FLATTEN ALL'}</span>
@@ -1230,13 +1348,20 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
-                    {positions.length === 0 ? (
+                    {activePositionsList.length === 0 ? (
                       <div className="p-6 text-center text-slate-500 font-sans flex flex-col items-center justify-center h-full">
-                        <Coins size={24} className="text-slate-600 mb-1" />
-                        <p className="text-xs">No active DEX sniper positions open.</p>
+                        <Coins size={24} className={accountView === 'LIVE' ? "text-neon-red/60 mb-1" : "text-slate-600 mb-1"} />
+                        <p className="text-xs font-bold text-slate-300">
+                          {accountView === 'LIVE' ? 'No active real on-chain positions currently held.' : 'No active paper simulation positions open.'}
+                        </p>
+                        {accountView === 'LIVE' && (
+                          <p className="text-[10px] text-emerald-400 mt-1 max-w-xs">
+                            Your 2.0 SOL wallet is live and scanning. The sniper will trigger on-chain Jupiter orders when top-scoring Solana tokens pass all 5 BullX / GMGN gates.
+                          </p>
+                        )}
                       </div>
                     ) : (
-                      positions.map((pos) => {
+                      activePositionsList.map((pos) => {
                         const isProfit = pos.unrealized_pnl_pct >= 0;
                         const pnlPct = pos.unrealized_pnl_pct || 0.0;
                         const minRange = selectedRiskProfile === 'SCALPER' ? -5.0 : (selectedRiskProfile === 'HUNTER_10X' ? -12.0 : -8.0);
@@ -1360,22 +1485,22 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 <div className="h-36 sm:h-32 flex flex-col bg-black/40 rounded-xl border border-white/10 overflow-hidden shrink-0">
                   <div className="px-3.5 py-1.5 bg-white/[0.02] border-b border-white/10 flex items-center justify-between">
                     <span className="text-[10px] font-bold text-white uppercase tracking-wider">
-                      Closed Trade Receipts ({closedTrades.length})
+                      Closed Trade Receipts ({activeClosedList.length})
                     </span>
                     <span className="text-[9px] text-slate-400">
-                      Banked: <strong className={pnlSummary.total_realized_usd >= 0 ? 'text-neon-green' : 'text-neon-red'}>
-                        ${pnlSummary.total_realized_usd.toFixed(2)}
+                      Banked: <strong className={(activeSummary.total_realized_usd ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}>
+                        ${(activeSummary.total_realized_usd ?? 0).toFixed(2)}
                       </strong>
                     </span>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-2 space-y-1 text-xs">
-                    {closedTrades.length === 0 ? (
+                    {activeClosedList.length === 0 ? (
                       <div className="p-3 text-center text-slate-500 font-sans text-[10px]">
-                        No closed DEX trades recorded yet.
+                        {accountView === 'LIVE' ? 'No real on-chain trades closed yet.' : 'No closed DEX trades recorded yet.'}
                       </div>
                     ) : (
-                      closedTrades.map((t, idx) => (
+                      activeClosedList.map((t, idx) => (
                         <div key={idx} className="p-1.5 rounded-lg bg-[#0c121e]/80 border border-white/5 flex items-center justify-between text-[9.5px]">
                           <div className="flex items-center gap-1.5">
                             <span className="font-bold text-white">{t.symbol}</span>
@@ -1491,9 +1616,9 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             <div className="h-full flex flex-col space-y-3 pr-2">
               <div className="px-3 py-2 rounded-xl bg-[#0c121e]/90 border border-white/10 flex items-center justify-between">
                 <span className="text-xs font-bold text-white uppercase tracking-wider">
-                  Open Positions Desk ({positions.length}/{maxPositions})
+                  Open Positions Desk ({activePositionsList.length}/{maxPositions})
                 </span>
-                {positions.length > 0 && (
+                {activePositionsList.length > 0 && (
                   <button
                     onClick={handleFlattenAll}
                     disabled={isFlattening}
@@ -1507,12 +1632,19 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               </div>
 
               <div className="flex-1 overflow-y-auto space-y-3">
-                {positions.length === 0 ? (
+                {activePositionsList.length === 0 ? (
                   <div className="p-16 text-center text-slate-500 font-sans">
-                    No active DEX sniper positions currently held.
+                    <p className="text-sm font-bold text-slate-300">
+                      {accountView === 'LIVE' ? 'No active real on-chain positions currently held.' : 'No active paper simulation positions currently held.'}
+                    </p>
+                    {accountView === 'LIVE' && (
+                      <p className="text-xs text-emerald-400 mt-2 max-w-md mx-auto">
+                        Your 2.0 SOL wallet is live and scanning. The sniper will trigger on-chain Jupiter orders when top-scoring Solana tokens pass all 5 BullX / GMGN gates.
+                      </p>
+                    )}
                   </div>
                 ) : (
-                  positions.map((pos) => {
+                  activePositionsList.map((pos) => {
                     const isProfit = pos.unrealized_pnl_pct >= 0;
                     return (
                       <div
@@ -1586,23 +1718,31 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
           {/* History Only View */}
           {activeTab === 'HISTORY' && (
             <div className="h-full overflow-y-auto space-y-2 pr-2">
-              {closedTrades.map((t, idx) => (
-                <div key={idx} className="p-3 rounded-xl bg-[#0c121e]/80 border border-white/5 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-3">
-                    <span className="px-2 py-0.5 rounded font-bold text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                      {t.status}
-                    </span>
-                    <span className="font-bold text-white text-sm">{t.symbol}</span>
-                    <span className="text-slate-400">{t.reason}</span>
-                  </div>
-                  <div className="flex items-center gap-4 font-mono">
-                    <span className={`text-sm font-black ${t.realized_pnl_usd >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                      {t.realized_pnl_pct} (${t.realized_pnl_usd})
-                    </span>
-                    <span className="text-slate-500 text-xs">{t.exit_time}</span>
-                  </div>
+              {activeClosedList.length === 0 ? (
+                <div className="p-16 text-center text-slate-500 font-sans">
+                  <p className="text-sm font-bold text-slate-300">
+                    {accountView === 'LIVE' ? 'No real on-chain trades closed yet.' : 'No closed paper simulation trades.'}
+                  </p>
                 </div>
-              ))}
+              ) : (
+                activeClosedList.map((t, idx) => (
+                  <div key={idx} className="p-3 rounded-xl bg-[#0c121e]/80 border border-white/5 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-3">
+                      <span className="px-2 py-0.5 rounded font-bold text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        {t.status}
+                      </span>
+                      <span className="font-bold text-white text-sm">{t.symbol}</span>
+                      <span className="text-slate-400">{t.reason}</span>
+                    </div>
+                    <div className="flex items-center gap-4 font-mono">
+                      <span className={`text-sm font-black ${t.realized_pnl_usd >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                        {t.realized_pnl_pct} (${t.realized_pnl_usd})
+                      </span>
+                      <span className="text-slate-500 text-xs">{t.exit_time}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
 

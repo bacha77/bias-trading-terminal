@@ -1,8 +1,9 @@
 {
   "dex_armed": true,
-  "sniper_amount_usd": 100.0,
+  "dex_mode": "LIVE",
+  "sniper_amount_usd": 35.0,
   "max_dex_positions": 6,
-  "active_chain": "both",
+  "active_chain": "solana",
   "risk_profile": "MOONBAG",
   "gas_priority": "ULTRA_JITO",
   "slippage_bps": 250,

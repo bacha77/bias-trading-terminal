@@ -3177,26 +3177,62 @@ async def api_execute_dex_swap(req: DexSnipeRequest):
 
 @app.get("/api/dex/positions")
 @app.get("/dex/positions")
-async def api_get_dex_positions():
+async def api_get_dex_positions(mode: Optional[str] = None):
     import solana_dex_engine
     # Update live prices & risk ratchet so UI sees live tick updates
     solana_dex_engine.update_dex_positions_risk_cycle()
     state = solana_dex_engine.load_dex_state()
-    pnl_summary = solana_dex_engine.get_dex_pnl_summary(state)
+    pnl_summary = solana_dex_engine.get_dex_pnl_summary(state, mode=mode)
+    wallet_info = solana_dex_engine.get_solana_wallet_status()
+    
+    all_active = state.get("active_positions", [])
+    all_closed = state.get("closed_trades", [])
+    
+    # Live on-chain tokens actively scanned from wallet
+    onchain_live_positions = solana_dex_engine.sync_live_positions_from_chain()
+    live_active = onchain_live_positions if onchain_live_positions else [p for p in all_active if p.get("mode") in ["LIVE", "LIVE_ONCHAIN"]]
+    paper_active = [p for p in all_active if p.get("mode") not in ["LIVE", "LIVE_ONCHAIN"]]
+
+    live_closed = [t for t in all_closed if t.get("mode") in ["LIVE", "LIVE_ONCHAIN"]]
+    paper_closed = [t for t in all_closed if t.get("mode") not in ["LIVE", "LIVE_ONCHAIN"]]
+    
+    # Calculate live portfolio equity
+    live_tokens_val_usd = round(sum(float(p.get("current_value_usd", 0.0)) for p in live_active), 2)
+    wallet_sol_val_usd = float(wallet_info.get("balance_usd", 0.0))
+    total_live_equity_usd = round(wallet_sol_val_usd + live_tokens_val_usd, 2)
+    
+    wallet_info["tokens_value_usd"] = live_tokens_val_usd
+    wallet_info["total_equity_usd"] = total_live_equity_usd
+    wallet_info["onchain_tokens_count"] = len(live_active)
+
+    if isinstance(pnl_summary, dict) and "live" in pnl_summary:
+        pnl_summary["live"]["tokens_value_usd"] = live_tokens_val_usd
+        pnl_summary["live"]["total_equity_usd"] = total_live_equity_usd
+        pnl_summary["live"]["capital_deployed_usd"] = live_tokens_val_usd
+        pnl_summary["live"]["active_positions_count"] = len(live_active)
+        pnl_summary["live"]["total_unrealized_usd"] = round(sum(float(p.get("unrealized_pnl_usd", 0.0)) for p in live_active), 2)
+        pnl_summary["live"]["net_pnl_usd"] = round(pnl_summary["live"]["total_realized_usd"] + pnl_summary["live"]["total_unrealized_usd"], 2)
+
+    current_mode = state.get("dex_mode", "SIMULATION")
     return {
         "status": "SUCCESS",
         "dex_armed": state.get("dex_armed", False),
-        "dex_mode": state.get("dex_mode", "SIMULATION"),
-        "sniper_amount_usd": state.get("sniper_amount_usd", 100.0),
+        "dex_mode": current_mode,
+        "sniper_amount_usd": state.get("sniper_amount_usd", 35.0),
         "max_positions": state.get("max_dex_positions", 6),
-        "active_chain": state.get("active_chain", "both"),
+        "active_chain": state.get("active_chain", "solana" if current_mode == "LIVE" else "both"),
         "risk_profile": state.get("risk_profile", "MOONBAG"),
         "risk_profiles": solana_dex_engine.RISK_PROFILES,
         "gas_priority": state.get("gas_priority", "TURBO"),
         "slippage_bps": state.get("slippage_bps", 100),
         "anti_mev_shield": state.get("anti_mev_shield", True),
-        "active_positions": state.get("active_positions", []),
-        "closed_trades": state.get("closed_trades", [])[:50],
+        "wallet": wallet_info,
+        "active_positions": all_active,
+        "live_positions": live_active,
+        "paper_positions": paper_active,
+        "closed_trades": all_closed[:50],
+        "live_closed_trades": live_closed[:50],
+        "paper_closed_trades": paper_closed[:50],
         "tracked_wallets": state.get("tracked_wallets", solana_dex_engine.DEFAULT_TRACKED_WALLETS),
         "pnl_summary": pnl_summary
     }
