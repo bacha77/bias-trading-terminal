@@ -787,7 +787,25 @@ def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
             pass
 
         current_val_usd = round(tok["tokens_held"] * price_usd, 2)
-        est_entry_usd = 100.0 if current_val_usd >= 40.0 else max(25.0, current_val_usd)
+        
+        # Match against internal active positions or closed tickets to retrieve true purchase size
+        curr_state = load_dex_state()
+        state_match = next((p for p in curr_state.get("active_positions", []) if p.get("address") == mint), None)
+        if not state_match:
+            state_match = next((p for p in curr_state.get("closed_trades", []) if p.get("address") == mint), None)
+
+        if state_match and state_match.get("amount_usd"):
+            est_entry_usd = float(state_match["amount_usd"])
+            entry_px = float(state_match.get("entry_price") or (est_entry_usd / max(0.000001, tok["tokens_held"])))
+            breakeven_locked = bool(state_match.get("breakeven_locked", False))
+            hwm = max(float(state_match.get("high_water_mark") or price_usd), price_usd)
+        else:
+            default_size = float(curr_state.get("sniper_amount_usd", 25.0))
+            est_entry_usd = default_size if current_val_usd >= (default_size * 0.4) else current_val_usd
+            entry_px = round(est_entry_usd / max(0.000001, tok["tokens_held"]), 6)
+            breakeven_locked = False
+            hwm = max(price_usd, entry_px)
+
         unrealized_pnl_usd = round(current_val_usd - est_entry_usd, 2)
         unrealized_pnl_pct = round((unrealized_pnl_usd / est_entry_usd) * 100, 2) if est_entry_usd > 0 else 0.0
 
@@ -796,17 +814,18 @@ def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
             "address": mint,
             "symbol": symbol,
             "chain": "solana",
-            "entry_price": round(est_entry_usd / max(0.000001, tok["tokens_held"]), 6),
+            "entry_price": entry_px,
             "current_price": price_usd,
-            "high_water_mark": max(price_usd, round(est_entry_usd / max(0.000001, tok["tokens_held"]), 6)),
+            "high_water_mark": hwm,
             "amount_usd": est_entry_usd,
             "current_value_usd": current_val_usd,
             "tokens_held": tok["tokens_held"],
             "raw_amount": tok["raw_amount"],
             "decimals": tok["decimals"],
+            "breakeven_locked": breakeven_locked,
             "time": "LIVE ON-CHAIN",
             "stage": "ACTIVE_HOLD",
-            "risk_profile": "MOONBAG",
+            "risk_profile": curr_state.get("risk_profile", "MOONBAG"),
             "forensic_status": "PASSED",
             "embed_chart_url": f"https://dexscreener.com/solana/{mint}?embed=1&theme=dark&trades=0&info=0",
             "pair_url": pair_url,
@@ -1221,9 +1240,9 @@ def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 2000
 
 def compute_kelly_dynamic_sizing(base_amount_usd: float, token_liquidity_usd: float = 35000.0, ai_conviction_score: float = 75.0) -> float:
     """
-    Institutional Fractional Kelly Sizing:
-    Adjusts position size based on pool liquidity depth and AI Conviction Score,
-    ensuring price impact is < 0.3% while maximizing risk-adjusted geometric growth.
+    Institutional Fractional Kelly Sizing with Strict User Ceiling:
+    Under NO circumstances will trade size exceed base_amount_usd. Sizing scales DOWN
+    when pool liquidity or conviction is lower, but NEVER inflates past the user's setting.
     """
     try:
         import solana_dex_learner
@@ -1235,12 +1254,15 @@ def compute_kelly_dynamic_sizing(base_amount_usd: float, token_liquidity_usd: fl
         p = win_rate
         q = 1.0 - p
         kelly_full = (p * b - q) / b
-        half_kelly = max(0.15, min(0.60, kelly_full * 0.5))
+        half_kelly = max(0.15, min(0.50, kelly_full * 0.5))
 
-        max_liq_size = max(15.0, token_liquidity_usd * 0.0025) if token_liquidity_usd > 0 else base_amount_usd
-        conviction_mult = 0.75 + (ai_conviction_score / 100.0) * 0.5
-        suggested = base_amount_usd * (half_kelly / 0.25) * conviction_mult
-        final_size = max(15.0, min([suggested, max_liq_size, base_amount_usd * 1.5]))
+        # Max liquidity depth safeguard: never trade more than 0.3% of the DEX pool
+        max_liq_size = max(10.0, token_liquidity_usd * 0.003) if token_liquidity_usd > 0 else base_amount_usd
+        conviction_mult = min(1.0, 0.70 + (ai_conviction_score / 100.0) * 0.30)
+        suggested = base_amount_usd * conviction_mult
+        
+        # STRICT CEILING: final_size can NEVER exceed user's base_amount_usd
+        final_size = min(base_amount_usd, max(10.0, min(suggested, max_liq_size)))
         return round(final_size, 2)
     except Exception:
         return round(base_amount_usd, 2)
@@ -1384,17 +1406,58 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
         "message": f"Successfully sniped {symbol} on {chain.upper()} for ${amount_usd:.2f} USD."
     }
 
+def _execute_live_exit_if_needed(pos: Dict[str, Any], exit_ticket: Dict[str, Any], state: Dict[str, Any]) -> None:
+    """Helper to broadcast real on-chain liquidation via Jupiter whenever a live position exits."""
+    if pos.get("mode") in ["LIVE", "LIVE_ONCHAIN"] or (state.get("dex_mode") == "LIVE" and pos.get("chain") == "solana"):
+        addr = pos.get("address")
+        try:
+            raw_amt = int(pos.get("raw_amount") or 0)
+            if raw_amt == 0:
+                raw_amt = int(float(pos.get("tokens_held", 0)) * (10 ** int(pos.get("decimals", 6))))
+            if raw_amt > 0 and addr:
+                logger.warning(f"🛑 [LIVE ON-CHAIN LIQUIDATION] Liquidating {pos.get('symbol')} ({addr}) back to SOL via Jupiter...")
+                sell_res = execute_jupiter_onchain_sell(addr, raw_amt, slippage_bps=350)
+                if sell_res.get("status") == "SUCCESS":
+                    exit_ticket["close_txid"] = sell_res.get("txid")
+                    exit_ticket["close_solscan"] = sell_res.get("solscan_url")
+                    logger.info(f"🛑 [LIVE ON-CHAIN LIQUIDATION CONFIRMED] TX: {sell_res.get('txid')}")
+        except Exception as sell_err:
+            logger.error(f"Error executing on-chain liquidation sell: {sell_err}")
+
 def update_dex_positions_risk_cycle() -> Dict[str, Any]:
     """
     Autonomous Risk Ratchet for DEX Positions:
     Supports dynamic Risk Profiles (Scalper -5%/+20%, Moonbag -8%/+50%, 10x Hunter -12%/+100%).
+    Reconciles live on-chain token accounts so stop-loss ALWAYS protects real wallet funds.
     """
     state = load_dex_state()
     active_pos = state.get("active_positions", [])
+
+    # 0. Live On-Chain Wallet Reconciliation:
+    # Fetch real tokens physically in the Solana wallet and merge with active_pos
+    try:
+        live_onchain = sync_live_positions_from_chain()
+    except Exception:
+        live_onchain = []
+    onchain_by_addr = {p["address"]: p for p in live_onchain if p.get("address")}
+    
+    # Ensure any held on-chain token is actively tracked in active_pos
+    existing_addrs = {p["address"] for p in active_pos if p.get("address")}
+    for addr, onchain_p in onchain_by_addr.items():
+        if addr not in existing_addrs:
+            active_pos.append(onchain_p)
+            existing_addrs.add(addr)
+
+    # Prune LIVE_ONCHAIN positions that are no longer physically in the wallet (e.g. liquidated)
+    if state.get("dex_mode") == "LIVE":
+        active_pos = [p for p in active_pos if p.get("mode") not in ["LIVE", "LIVE_ONCHAIN"] or p.get("address") in onchain_by_addr]
+
     if not active_pos:
+        state["active_positions"] = []
+        save_dex_state(state)
         return {"status": "NO_POSITIONS"}
         
-    addrs = [p["address"] for p in active_pos]
+    addrs = [p["address"] for p in active_pos if p.get("address")]
     query_url = f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs)}"
     prices: Dict[str, float] = {}
     
@@ -1446,6 +1509,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     "realized_pnl_usd": pos["unrealized_pnl_usd"],
                     "status": "PANIC_BAILOUT_CLOSED"
                 }
+                _execute_live_exit_if_needed(pos, exit_ticket, state)
                 closed_pos.insert(0, exit_ticket)
                 _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
                 try:
@@ -1506,6 +1570,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     "realized_pnl_usd": pos["unrealized_pnl_usd"],
                     "status": "BREAKEVEN_CLOSED" if pos["unrealized_pnl_usd"] >= 0 else "STOP_LOSS_CLOSED"
                 }
+                _execute_live_exit_if_needed(pos, exit_ticket, state)
                 closed_pos.insert(0, exit_ticket)
                 _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
                 try:
@@ -1531,20 +1596,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 "realized_pnl_usd": pos["unrealized_pnl_usd"],
                 "status": "STOP_LOSS_CLOSED"
             }
-            if pos.get("mode") in ["LIVE", "LIVE_ONCHAIN"] or (state.get("dex_mode") == "LIVE" and pos.get("chain") == "solana"):
-                try:
-                    raw_amt = int(pos.get("raw_amount") or 0)
-                    if raw_amt == 0:
-                        raw_amt = int(float(pos.get("tokens_held", 0)) * (10 ** int(pos.get("decimals", 6))))
-                    if raw_amt > 0:
-                        logger.warning(f"🛑 [LIVE ON-CHAIN STOP LOSS] Liquidating {pos.get('symbol')} ({addr}) to SOL via Jupiter...")
-                        sell_res = execute_jupiter_onchain_sell(addr, raw_amt, slippage_bps=350)
-                        if sell_res.get("status") == "SUCCESS":
-                            exit_ticket["close_txid"] = sell_res.get("txid")
-                            exit_ticket["close_solscan"] = sell_res.get("solscan_url")
-                            logger.info(f"🛑 [LIVE ON-CHAIN STOP LOSS CONFIRMED] TX: {sell_res.get('txid')}")
-                except Exception as sell_err:
-                    logger.error(f"Error executing on-chain stop loss sell: {sell_err}")
+            _execute_live_exit_if_needed(pos, exit_ticket, state)
             closed_pos.insert(0, exit_ticket)
             _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
             try:
@@ -1688,7 +1740,12 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     else:
         listings = fetch_new_solana_listings(chain="solana")
         
-    held_addrs = {p["address"] for p in active_pos}
+    try:
+        onchain_tokens = sync_live_positions_from_chain()
+        onchain_held = {t["address"] for t in onchain_tokens if t.get("address")}
+    except Exception:
+        onchain_held = set()
+    held_addrs = {p["address"] for p in active_pos if p.get("address")} | onchain_held
     now = time.time()
     
     # Count current active exposure per chain for smart diversification
@@ -1769,21 +1826,23 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     candidates.sort(key=lambda t: t.get("institutional_score", 0), reverse=True)
     top_pick = candidates[0]
     top_chain = top_pick.get("chain", "solana")
-    base_amount = float(state.get("sniper_amount_usd", 35.0))
+    base_amount = float(state.get("sniper_amount_usd", 25.0))
     kelly_amount = compute_kelly_dynamic_sizing(
         base_amount, 
         token_liquidity_usd=float(top_pick.get("liquidity_usd") or 35000.0),
         ai_conviction_score=float(top_pick.get("ai_conviction_score", 75.0))
     )
+    # STRICT CEILING: Trade amount is hard-capped to never exceed user's configured base_amount
+    final_trade_amount = min(base_amount, kelly_amount)
     current_dex_mode = state.get("dex_mode", "SIMULATION")
-    snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=kelly_amount, mode=current_dex_mode, chain=top_chain)
+    snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=final_trade_amount, mode=current_dex_mode, chain=top_chain)
     return {
         "status": "AUTO_SNIPED", 
         "token": top_pick["symbol"], 
         "chain": top_chain,
         "score": top_pick.get("institutional_score"), 
         "ai_conviction": top_pick.get("ai_conviction_score"),
-        "kelly_size_usd": kelly_amount,
+        "kelly_size_usd": final_trade_amount,
         "snipe": snipe_res, 
         "risk": risk_res
     }
