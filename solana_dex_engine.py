@@ -760,6 +760,7 @@ def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
             "chain": "solana",
             "entry_price": round(est_entry_usd / max(0.000001, tok["tokens_held"]), 6),
             "current_price": price_usd,
+            "high_water_mark": max(price_usd, round(est_entry_usd / max(0.000001, tok["tokens_held"]), 6)),
             "amount_usd": est_entry_usd,
             "current_value_usd": current_val_usd,
             "tokens_held": tok["tokens_held"],

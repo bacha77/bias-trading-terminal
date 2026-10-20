@@ -122,6 +122,20 @@ const ForensicStrip: React.FC<{ tok: any }> = ({ tok }) => {
   );
 };
 
+// Robust numeric formatters ensuring undefined/null values never crash React rendering
+const fmtPrice = (val: any): string => {
+  const n = Number(val);
+  if (val == null || isNaN(n) || n === 0) return '0.0000';
+  if (n < 0.0001) return n.toExponential(2);
+  return n.toFixed(4);
+};
+
+const fmtNum = (val: any, decimals: number = 2): string => {
+  const n = Number(val);
+  if (val == null || isNaN(n)) return (0).toFixed(decimals);
+  return n.toFixed(decimals);
+};
+
 export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [selectedChain, setSelectedChain] = useState<'both' | 'solana' | 'base'>('both');
@@ -802,7 +816,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               <span className="w-2 h-2 rounded-full bg-neon-red animate-ping" />
               <span>🔴 REAL ON-CHAIN ACCOUNT</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-neon-red/20 text-neon-red border border-neon-red/30">
-                {walletInfo?.balance_sol != null ? `${walletInfo.balance_sol.toFixed(2)} SOL` : '2.00 SOL'}
+                {walletInfo?.balance_sol != null ? `${fmtNum(walletInfo.balance_sol, 2)} SOL` : '2.00 SOL'}
               </span>
             </button>
             <button
@@ -857,22 +871,22 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             <div className="mt-0.5 flex items-baseline gap-1.5">
               {accountView === 'LIVE' ? (
                 <span className="text-xl font-black text-white tracking-tight">
-                  {walletInfo?.balance_sol != null ? walletInfo.balance_sol.toFixed(4) : '2.0000'} <span className="text-xs text-neon-red font-bold">SOL</span>
+                  {walletInfo?.balance_sol != null ? fmtNum(walletInfo.balance_sol, 4) : '0.0234'} <span className="text-xs text-neon-red font-bold">SOL</span>
                 </span>
               ) : (
                 <>
                   <span className={`text-xl font-black tracking-tight ${isNetProfit ? 'text-neon-green' : 'text-neon-red'}`}>
-                    {isNetProfit ? '+' : ''}${activeSummary.net_pnl_usd.toFixed(2)}
+                    {isNetProfit ? '+' : ''}${fmtNum(activeSummary.net_pnl_usd, 2)}
                   </span>
                   <span className={`text-xs font-bold ${isNetProfit ? 'text-neon-green' : 'text-neon-red'}`}>
-                    ({isNetProfit ? '+' : ''}{activeSummary.net_pnl_pct}%)
+                    ({isNetProfit ? '+' : ''}{fmtNum(activeSummary.net_pnl_pct, 1)}%)
                   </span>
                 </>
               )}
             </div>
             <div className={`text-[9px] ${accountView === 'LIVE' ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
               {accountView === 'LIVE' 
-                ? `≈ $${walletInfo?.balance_usd != null ? walletInfo.balance_usd.toFixed(2) : '209.38'} USD · Funded`
+                ? `≈ $${walletInfo?.total_equity_usd != null ? fmtNum(walletInfo.total_equity_usd, 2) : (walletInfo?.balance_usd != null ? fmtNum(walletInfo.balance_usd, 2) : '205.57')} Total Equity`
                 : 'Virtual Paper Sandbox'}
             </div>
           </div>
@@ -884,8 +898,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               <Activity size={13} className="text-amber-400" />
             </span>
             <div className="mt-0.5">
-              <span className={`text-lg font-bold tracking-tight ${(activeSummary.total_unrealized_usd ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                {(activeSummary.total_unrealized_usd ?? 0) >= 0 ? '+' : ''}${(activeSummary.total_unrealized_usd ?? 0).toFixed(2)}
+              <span className={`text-lg font-bold tracking-tight ${(Number(activeSummary.total_unrealized_usd) || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                {(Number(activeSummary.total_unrealized_usd) || 0) >= 0 ? '+' : ''}${fmtNum(activeSummary.total_unrealized_usd, 2)}
               </span>
             </div>
             <div className="text-[9px] text-slate-500">{activePositionsList.length} {accountView === 'LIVE' ? 'Real On-Chain' : 'Paper'} Positions</div>
@@ -898,8 +912,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               <Coins size={13} className="text-neon-gold" />
             </span>
             <div className="mt-0.5">
-              <span className={`text-lg font-bold tracking-tight ${(activeSummary.total_realized_usd ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                {(activeSummary.total_realized_usd ?? 0) >= 0 ? '+' : ''}${(activeSummary.total_realized_usd ?? 0).toFixed(2)}
+              <span className={`text-lg font-bold tracking-tight ${(Number(activeSummary.total_realized_usd) || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                {(Number(activeSummary.total_realized_usd) || 0) >= 0 ? '+' : ''}${fmtNum(activeSummary.total_realized_usd, 2)}
               </span>
             </div>
             <div className="text-[9px] text-slate-500">{activeClosedList.length} {accountView === 'LIVE' ? 'Real On-Chain' : 'Paper'} Trades</div>
@@ -913,7 +927,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             </span>
             <div className="mt-0.5">
               <span className="text-lg font-bold text-white tracking-tight">
-                ${(activeSummary.capital_deployed_usd ?? 0).toFixed(0)} <span className="text-xs text-slate-400 font-normal">/ ${(snipeAmount * maxPositions).toFixed(0)} max</span>
+                ${fmtNum(activeSummary.capital_deployed_usd, 0)} <span className="text-xs text-slate-400 font-normal">/ ${(Number(snipeAmount || 35) * Number(maxPositions || 6)).toFixed(0)} max</span>
               </span>
             </div>
             <div className="text-[9px] text-slate-500">{activePositionsList.length}/{maxPositions} {accountView === 'LIVE' ? 'Real' : 'Paper'} Slots Used</div>
@@ -927,7 +941,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
             </span>
             <div className="mt-0.5 flex items-baseline gap-1.5">
               <span className="text-lg font-bold text-emerald-300">
-                {activeSummary.win_rate ?? 0}%
+                {fmtNum(activeSummary.win_rate, 0)}%
               </span>
               <span className="text-[10px] text-slate-400">
                 ({activeSummary.wins ?? 0}W / {activeSummary.losses ?? 0}L)
@@ -1238,22 +1252,22 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                               <div>
                                 <span className="text-[8px] text-slate-500 uppercase block font-bold">Price</span>
                                 <span className="font-bold text-white font-mono">
-                                  ${tok.price_usd < 0.0001 ? tok.price_usd.toExponential(2) : tok.price_usd.toFixed(4)}
+                                  ${fmtPrice(tok.price_usd)}
                                 </span>
                               </div>
                               <div>
                                 <span className="text-[8px] text-slate-500 uppercase block font-bold">5m Gain</span>
-                                <span className={`font-bold flex items-center justify-end ${tok.price_change_5m >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                                  {tok.price_change_5m >= 0 ? '+' : ''}{tok.price_change_5m}%
+                                <span className={`font-bold flex items-center justify-end ${(Number(tok.price_change_5m) || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                                  {(Number(tok.price_change_5m) || 0) >= 0 ? '+' : ''}{fmtNum(tok.price_change_5m, 1)}%
                                 </span>
                               </div>
                               <div>
                                 <span className="text-[8px] text-slate-500 uppercase block font-bold">Liquidity</span>
-                                <span className="font-bold text-cyan-300">${(tok.liquidity_usd / 1000).toFixed(0)}k</span>
+                                <span className="font-bold text-cyan-300">${fmtNum((Number(tok.liquidity_usd) || 0) / 1000, 0)}k</span>
                               </div>
                               <div>
                                 <span className="text-[8px] text-slate-500 uppercase block font-bold">Buy Ratio</span>
-                                <span className="font-bold text-neon-gold">{tok.buy_ratio_1h}%</span>
+                                <span className="font-bold text-neon-gold">{tok.buy_ratio_1h ?? 50}%</span>
                               </div>
                             </div>
 
@@ -1331,7 +1345,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-neon-green font-bold">
-                        Floating: {(activeSummary.total_unrealized_usd ?? 0) >= 0 ? '+' : ''}${(activeSummary.total_unrealized_usd ?? 0).toFixed(2)}
+                        Floating: {(Number(activeSummary.total_unrealized_usd) || 0) >= 0 ? '+' : ''}${fmtNum(activeSummary.total_unrealized_usd, 2)}
                       </span>
                       {activePositionsList.length > 0 && (
                         <button
@@ -1389,7 +1403,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                 <div>
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-extrabold text-white text-xs">
-                                      ${pos.entry_price < 0.0001 ? pos.entry_price.toExponential(2) : pos.entry_price.toFixed(4)}
+                                      ${fmtPrice(pos.entry_price)}
                                     </span>
                                     <span className={`text-[8.5px] px-1.5 py-0.2 rounded font-black border ${
                                       (pos.chain || 'solana').toLowerCase() === 'base'
@@ -1399,7 +1413,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                       {(pos.chain || 'solana').toLowerCase() === 'base' ? '🔵 BASE' : '🟣 SOL'}
                                     </span>
                                     <span className="text-[8.5px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-bold">
-                                      {pos.stage}
+                                      {pos.stage || 'ACTIVE_HOLD'}
                                     </span>
 
                                     {/* Breakeven Locked Badge */}
@@ -1419,18 +1433,18 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                     )}
                                   </div>
                                   <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-2">
-                                    <span>Now: <strong className="text-white">${pos.current_price < 0.0001 ? pos.current_price.toExponential(2) : pos.current_price.toFixed(4)}</strong></span>
-                                    <span>Peak: <strong className="text-cyan-300">${pos.high_water_mark < 0.0001 ? pos.high_water_mark.toExponential(2) : pos.high_water_mark.toFixed(4)}</strong></span>
+                                    <span>Now: <strong className="text-white">${fmtPrice(pos.current_price)}</strong></span>
+                                    <span>Peak: <strong className="text-cyan-300">${fmtPrice(pos.high_water_mark || pos.current_price || pos.entry_price)}</strong></span>
                                   </div>
                                 </div>
                               </div>
 
                               <div className="text-right">
                                 <div className={`text-sm font-black ${isProfit ? 'text-neon-green' : 'text-neon-red'}`}>
-                                  {isProfit ? '+' : ''}{pos.unrealized_pnl_pct}%
+                                  {isProfit ? '+' : ''}{fmtNum(pos.unrealized_pnl_pct, 1)}%
                                 </div>
                                 <div className={`text-[9.5px] font-bold ${isProfit ? 'text-neon-green/90' : 'text-neon-red/90'}`}>
-                                  {isProfit ? '+' : ''}${pos.unrealized_pnl_usd} USD
+                                  {isProfit ? '+' : ''}${fmtNum(pos.unrealized_pnl_usd, 2)} USD
                                 </div>
                               </div>
                             </div>
@@ -1488,8 +1502,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                       Closed Trade Receipts ({activeClosedList.length})
                     </span>
                     <span className="text-[9px] text-slate-400">
-                      Banked: <strong className={(activeSummary.total_realized_usd ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}>
-                        ${(activeSummary.total_realized_usd ?? 0).toFixed(2)}
+                      Banked: <strong className={(Number(activeSummary.total_realized_usd) || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}>
+                        ${fmtNum(activeSummary.total_realized_usd, 2)}
                       </strong>
                     </span>
                   </div>
@@ -1580,21 +1594,21 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                   <div className="grid grid-cols-4 gap-4 text-right">
                     <div>
                       <span className="text-[8.5px] text-slate-500 uppercase block font-bold">Price</span>
-                      <span className="font-bold text-white text-xs">${tok.price_usd.toFixed(4)}</span>
+                      <span className="font-bold text-white text-xs">${fmtPrice(tok.price_usd)}</span>
                     </div>
                     <div>
                       <span className="text-[8.5px] text-slate-500 uppercase block font-bold">5m Change</span>
-                      <span className={`font-bold text-xs ${tok.price_change_5m >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                        {tok.price_change_5m >= 0 ? '+' : ''}{tok.price_change_5m}%
+                      <span className={`font-bold text-xs ${(Number(tok.price_change_5m) || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                        {(Number(tok.price_change_5m) || 0) >= 0 ? '+' : ''}{fmtNum(tok.price_change_5m, 1)}%
                       </span>
                     </div>
                     <div>
                       <span className="text-[8.5px] text-slate-500 uppercase block font-bold">Liquidity</span>
-                      <span className="font-bold text-cyan-300 text-xs">${(tok.liquidity_usd / 1000).toFixed(0)}k</span>
+                      <span className="font-bold text-cyan-300 text-xs">${fmtNum((Number(tok.liquidity_usd) || 0) / 1000, 0)}k</span>
                     </div>
                     <div>
                       <span className="text-[8.5px] text-slate-500 uppercase block font-bold">Buy Flow</span>
-                      <span className="font-bold text-neon-gold text-xs">{tok.buy_ratio_1h}%</span>
+                      <span className="font-bold text-neon-gold text-xs">{tok.buy_ratio_1h ?? 50}%</span>
                     </div>
                   </div>
 
@@ -1658,7 +1672,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-black text-white text-sm">
-                                ${pos.entry_price.toFixed(4)} Entry
+                                ${fmtPrice(pos.entry_price)} Entry
                               </span>
                               <span className={`text-[9px] px-2 py-0.5 rounded-full font-black border ${
                                 (pos.chain || 'solana').toLowerCase() === 'base'
@@ -1668,7 +1682,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                 {(pos.chain || 'solana').toLowerCase() === 'base' ? '🔵 BASE L2' : '🟣 SOLANA'}
                               </span>
                               <span className="px-2 py-0.5 rounded-full font-bold bg-cyan-500/20 text-cyan-300 text-[10px]">
-                                {pos.stage}
+                                {pos.stage || 'ACTIVE_HOLD'}
                               </span>
                               {pos.breakeven_locked && (
                                 <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-black flex items-center gap-1">
@@ -1684,8 +1698,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                               )}
                             </div>
                             <div className="text-xs text-slate-400 mt-1 flex items-center gap-3">
-                              <span>Current: <strong>${pos.current_price.toFixed(4)}</strong></span>
-                              <span>Peak: <strong className="text-cyan-300">${pos.high_water_mark.toFixed(4)}</strong></span>
+                              <span>Current: <strong>${fmtPrice(pos.current_price)}</strong></span>
+                              <span>Peak: <strong className="text-cyan-300">${fmtPrice(pos.high_water_mark || pos.current_price || pos.entry_price)}</strong></span>
                             </div>
                           </div>
                         </div>
@@ -1693,10 +1707,10 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                         <div className="flex items-center gap-4">
                           <div className="text-right">
                             <div className={`text-xl font-black ${isProfit ? 'text-neon-green' : 'text-neon-red'}`}>
-                              {isProfit ? '+' : ''}{pos.unrealized_pnl_pct}%
+                              {isProfit ? '+' : ''}{fmtNum(pos.unrealized_pnl_pct, 1)}%
                             </div>
                             <div className={`text-xs font-bold ${isProfit ? 'text-neon-green/90' : 'text-neon-red/90'}`}>
-                              {isProfit ? '+' : ''}${pos.unrealized_pnl_usd} USD
+                              {isProfit ? '+' : ''}${fmtNum(pos.unrealized_pnl_usd, 2)} USD
                             </div>
                           </div>
 
