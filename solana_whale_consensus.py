@@ -7,7 +7,7 @@ import urllib.request
 import json
 import time
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("whale_consensus")
 
