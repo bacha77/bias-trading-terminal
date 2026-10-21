@@ -35,7 +35,7 @@ async def normalize_api_paths(request: Request, call_next):
             "/forex/", "/backtest", "/market-data/", "/scanner/",
             "/options/", "/algo/", "/market/", "/alpaca/",
             "/paper/", "/crypto/", "/news/", "/alerts/", "/copilot/", "/macro/",
-            "/dex/", "/telegram/", "/desk/", "/hyperliquid/"
+            "/dex/", "/telegram/", "/desk/", "/hyperliquid/", "/institutional/"
         )
         if any(path.startswith(kp) or path == kp for kp in known_prefixes):
             request.scope["path"] = f"/api{path}"
@@ -3706,6 +3706,23 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
 
                 res_sym = resolve_symbol(sym)
                 should_sim = state.get("is_simulated", False) or (not market_open and not res_sym["is_crypto"])
+
+                # -------------------------------------------------------------
+                # Institutional Quant Confluence Gatekeeper (Citadel GEX + Jane Street VRP + Renaissance Credit + Dark Pool Sweep)
+                # Trade MUST score >= 70 Confluence to execute, stopping retail gambling.
+                # -------------------------------------------------------------
+                if not res_sym["is_crypto"] and not forced_symbol:
+                    try:
+                        import institutional_quant_engine
+                        iq_eval = institutional_quant_engine.get_institutional_confluence(sym)
+                        c_score = iq_eval.get("confluence_score", 0)
+                        c_verdict = iq_eval.get("trade_verdict", "")
+                        if c_score < 70.0:
+                            print(f"[INSTITUTIONAL GATE] Vetoed trade on {sym}: Confluence Score {c_score}/100 < 70 min threshold. Verdict: {c_verdict}. Standing down from retail noise.")
+                            continue
+                        print(f"[INSTITUTIONAL GATE] APPROVED trade on {sym}: Confluence Score {c_score}/100. Bias: {iq_eval.get('bias')}")
+                    except Exception as iq_err:
+                        print(f"[INSTITUTIONAL GATE WARNING] {iq_err}")
                 
                 # Strict Options Only guard: Exclude crypto and non-optionable assets
                 if options_only and res_sym["is_crypto"]:
@@ -4439,6 +4456,22 @@ async def close_hyperliquid_vault(req: CloseVaultRequest):
     import hyperliquid_arb_engine
     res = await asyncio.to_thread(hyperliquid_arb_engine.close_basis_vault, req.vault_id)
     return res
+
+# -------------------------------------------------------------
+# Institutional Quant Alpha Matrix (Citadel GEX, Jane Street VRP, Renaissance Credit, Dark Pool Sweep)
+# -------------------------------------------------------------
+@app.get("/api/institutional/confluence")
+async def get_institutional_confluence_api(symbol: str = "SPY"):
+    import institutional_quant_engine
+    res = await asyncio.to_thread(institutional_quant_engine.get_institutional_confluence, symbol)
+    return res
+
+@app.get("/api/institutional/radar")
+async def get_institutional_radar_api():
+    import institutional_quant_engine
+    symbols = ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "AMD", "MSFT", "META", "AMZN", "GOOGL"]
+    res = await asyncio.to_thread(institutional_quant_engine.get_institutional_radar, symbols)
+    return {"status": "SUCCESS", "count": len(res), "radar": res}
 
 async def _hyperliquid_arb_worker():
     while True:

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Activity, Target, BrainCircuit, AlertTriangle, Crosshair, Gauge, 
   Layers, Zap, Waves, ShieldAlert, RefreshCw, Search, 
-  Volume2, VolumeX, Landmark, BellRing, BarChart3, Flame, Compass, Radio, LogOut, Coins, Sparkles, Percent
+  Volume2, VolumeX, Landmark, BellRing, BarChart3, Flame, Compass, Radio, LogOut, Coins, Sparkles, Percent, Cpu
 } from 'lucide-react';
 import { PanelTitle, Metric, GexLadder, Playbook, RegimeCard, OptionsChain, UnusualFlow, VolPanel } from './OptionsPanels';
 import { MultiChartGrid } from './MultiChartGrid';
@@ -16,6 +16,7 @@ import { OptionsRiskSimulatorModal } from './OptionsRiskSimulatorModal';
 import { DeskPerformanceModal } from './DeskPerformanceModal';
 import { SolanaDexRadarModal } from './SolanaDexRadarModal';
 import { HyperliquidArbModal } from './HyperliquidArbModal';
+import { InstitutionalQuantModal } from './InstitutionalQuantModal';
 import { SmartAlgoBoard } from './SmartAlgoBoard';
 import { WallReversalRadarCard } from './WallReversalRadarCard';
 import { MultiTimeframeRibbon } from './MultiTimeframeRibbon';
@@ -103,6 +104,7 @@ function App() {
   const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState(false);
   const [isDexModalOpen, setIsDexModalOpen] = useState(false);
   const [isHyperliquidModalOpen, setIsHyperliquidModalOpen] = useState(false);
+  const [isInstitutionalModalOpen, setIsInstitutionalModalOpen] = useState(false);
 
   // Authentication & Portal Access State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -799,6 +801,16 @@ function App() {
           >
             <Percent size={12} className="text-emerald-400 animate-pulse" />
             <span>⚡ DELTA-NEUTRAL ARB (20-50% APR)</span>
+          </button>
+
+          {/* Institutional Quant Alpha Matrix (Citadel, Jane Street, Renaissance) */}
+          <button
+            onClick={() => setIsInstitutionalModalOpen(true)}
+            className="text-[10px] font-mono px-2.5 py-1 rounded border border-indigo-400/50 bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-transparent text-indigo-300 hover:text-white flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(99,102,241,0.3)] cursor-pointer"
+            title="Open Institutional Quant Alpha Matrix (Citadel GEX, Jane Street VRP, Renaissance Credit, Dark Pool Sweeps)"
+          >
+            <Cpu size={12} className="text-indigo-400 animate-pulse" />
+            <span>🏛️ QUANT ALPHA (4 PILLARS)</span>
           </button>
         </div>
         <div className="flex gap-4 font-mono text-sm">
@@ -1765,6 +1777,11 @@ function App() {
       <HyperliquidArbModal
         isOpen={isHyperliquidModalOpen}
         onClose={() => setIsHyperliquidModalOpen(false)}
+      />
+
+      <InstitutionalQuantModal
+        isOpen={isInstitutionalModalOpen}
+        onClose={() => setIsInstitutionalModalOpen(false)}
       />
 
       <footer className="text-center text-[10px] text-slate-600 font-mono pb-2">
