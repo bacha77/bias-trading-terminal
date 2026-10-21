@@ -146,10 +146,10 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
   const isApproved = confluence?.execution_permitted ?? false;
 
   return (
-    <div className="w-full space-y-4 font-sans text-slate-100 animate-in fade-in duration-200">
+    <div className="w-full min-w-0 max-w-full space-y-4 font-sans text-slate-100 animate-in fade-in duration-200 overflow-x-hidden">
       
       {/* Institutional Top Control Bar */}
-      <div className="w-full glass-panel px-5 py-3 border border-indigo-500/30 bg-gradient-to-r from-slate-950 via-indigo-950/20 to-slate-950 flex flex-wrap items-center justify-between gap-4 rounded-xl shadow-lg">
+      <div className="w-full min-w-0 max-w-full glass-panel px-4 sm:px-5 py-3 border border-indigo-500/30 bg-gradient-to-r from-slate-950 via-indigo-950/20 to-slate-950 flex flex-wrap items-center justify-between gap-4 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           {onReturnToOverview && (
             <button
@@ -224,12 +224,12 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
         </div>
       </div>
 
-      {/* Universe Quick Ticker Bar (Full Width) */}
-      <div className="w-full glass-panel px-4 py-2 border border-slate-800 bg-slate-950/70 flex items-center gap-2 overflow-x-auto text-xs font-mono rounded-xl">
-        <span className="text-slate-500 font-bold flex items-center gap-1 shrink-0">
-          <Compass size={13} /> SELECT TICKER:
+      {/* Universe Quick Ticker Bar (Full Width with isolated horizontal scroll) */}
+      <div className="w-full min-w-0 max-w-full glass-panel px-4 py-2 border border-slate-800 bg-slate-950/70 flex items-center gap-3 rounded-xl overflow-hidden shadow-md">
+        <span className="text-slate-400 font-bold flex items-center gap-1 shrink-0 text-xs font-mono">
+          <Compass size={13} className="text-indigo-400" /> SELECT TICKER:
         </span>
-        <div className="flex items-center gap-1.5 pb-1">
+        <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1.5 py-1 scrollbar-thin">
           {UNIVERSE.map((sym) => {
             const item = tape?.[sym] || overview?.[sym];
             const p = item?.price;
@@ -274,7 +274,7 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
           <div className="space-y-4">
             
             {/* Master Executive Verdict Banner (Full Width) */}
-            <div className={`w-full p-5 rounded-xl border flex flex-col lg:flex-row items-center justify-between gap-6 transition-all ${
+            <div className={`w-full min-w-0 max-w-full p-4 sm:p-5 rounded-xl border flex flex-col xl:flex-row items-center justify-between gap-4 sm:gap-6 transition-all ${
               isApproved 
                 ? 'bg-emerald-950/25 border-emerald-500/50 shadow-[0_0_25px_rgba(16,185,129,0.15)]'
                 : 'bg-amber-950/25 border-amber-500/50 shadow-[0_0_25px_rgba(245,158,11,0.15)]'
@@ -292,7 +292,7 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
                   </div>
                 </div>
 
-                <div className="space-y-1.5 text-center sm:text-left">
+                <div className="space-y-1.5 text-center sm:text-left min-w-0">
                   <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
                     <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">
                       INSTITUTIONAL VERDICT:
@@ -317,7 +317,7 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
               </div>
 
               {/* Execution Gate Status */}
-              <div className="flex flex-col items-center lg:items-end gap-2 shrink-0">
+              <div className="flex flex-col items-center xl:items-end gap-2 shrink-0">
                 <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border font-mono text-xs font-bold ${
                   isApproved 
                     ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
@@ -326,14 +326,14 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
                   {isApproved ? <ShieldCheck size={16} className="text-emerald-400" /> : <Lock size={16} className="text-amber-400" />}
                   <span>{isApproved ? 'AUTONOMOUS EXECUTION PERMITTED' : 'EXECUTION LOCKED (< 70 PTS)'}</span>
                 </div>
-                <span className="text-[11px] text-slate-400 font-mono text-center lg:text-right">
+                <span className="text-[11px] text-slate-400 font-mono text-center xl:text-right">
                   System strictly blocks retail impulse orders into dealer resistance walls
                 </span>
               </div>
             </div>
 
-            {/* 4 Quantitative Alpha Pillars - Full Responsive 4-Column Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 4 Quantitative Alpha Pillars - Full Responsive Multi-Column Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-3.5 min-w-0 max-w-full">
               
               {/* Pillar 1: Citadel Dealer Gamma (GEX) */}
               <div className="glass-panel p-4 rounded-xl border border-blue-500/30 bg-gradient-to-b from-blue-950/20 via-slate-950 to-slate-950 flex flex-col justify-between hover:border-blue-500/50 transition-all shadow-md">

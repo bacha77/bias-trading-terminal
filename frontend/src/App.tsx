@@ -450,7 +450,7 @@ function App() {
 
   return (
     <CardHelpProvider>
-      <div className="min-h-screen w-full p-4 flex flex-col gap-3 font-sans">
+      <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-hidden p-4 flex flex-col gap-3 font-sans">
         {/* ================= Dumay Command Bar (<GO> Omnibar) ================= */}
         <DumayCommandBar
           isOpen={isCommandBarOpen}
@@ -481,13 +481,13 @@ function App() {
         />
 
       {/* ================= Institutional Live Ticker Tape (1s Ticks) ================= */}
-      <div className="glass-panel py-1.5 px-4 flex items-center overflow-hidden text-xs font-mono border-b border-neon-green/20 bg-black/60 shadow-[0_0_15px_rgba(0,255,163,0.08)]">
+      <div className="w-full min-w-0 max-w-full glass-panel py-1.5 px-4 flex items-center overflow-hidden text-xs font-mono border-b border-neon-green/20 bg-black/60 shadow-[0_0_15px_rgba(0,255,163,0.08)]">
         <div className="flex items-center gap-2 pr-4 border-r border-white/10 shrink-0">
           <span className="w-2 h-2 rounded-full bg-neon-green animate-ping shadow-[0_0_8px_#00ffa3]"></span>
           <span className="text-[10px] uppercase font-bold text-neon-green tracking-widest">SIP TAPE 1s</span>
           <span className="text-[10px] text-slate-500">{lastTickTime || '--:--:--'}</span>
         </div>
-        <div className="flex gap-4 overflow-x-auto py-0.5 px-3 items-center w-full">
+        <div className="flex-1 min-w-0 flex gap-4 overflow-x-auto py-0.5 px-3 items-center scrollbar-thin">
           {ALL_QUICK.map((sym: string) => {
             const item = tape[sym];
             const p = item?.price;
@@ -515,7 +515,7 @@ function App() {
 
       {/* ================= Demo Mode Alert Banner ================= */}
       {isDemoMode && (
-        <div className="bg-amber-500/15 border-b border-amber-500/30 px-6 py-2 flex items-center justify-between text-xs font-mono text-amber-200 sticky top-0 z-40 backdrop-blur-md">
+        <div className="w-full min-w-0 max-w-full bg-amber-500/15 border-b border-amber-500/30 px-6 py-2 flex items-center justify-between text-xs font-mono text-amber-200 sticky top-0 z-40 backdrop-blur-md">
           <div className="flex items-center gap-2.5">
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
             <strong className="text-amber-300 font-bold uppercase tracking-wider">SIMULATED DEMO SANDBOX</strong>
@@ -533,9 +533,8 @@ function App() {
       )}
 
       {/* ================= Header ================= */}
-      {/* ================= Header ================= */}
-      <header className="glass-panel py-3 px-6 flex flex-wrap gap-4 justify-between items-center">
-        <div className="flex flex-wrap items-center gap-2.5">
+      <header className="w-full min-w-0 max-w-full glass-panel py-3 px-4 sm:px-6 flex flex-wrap gap-4 justify-between items-center">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-lg overflow-hidden border border-cyan-400/40 shadow-[0_0_12px_rgba(6,182,212,0.45)] bg-black/60 shrink-0">
             <img src="/dumay-logo.jpg" alt="DUMAY" className="w-full h-full object-cover" />
           </div>
@@ -891,8 +890,8 @@ function App() {
       </header>
 
       {/* ================= Institutional Quick-Action Command Ribbon ================= */}
-      <div className="glass-panel py-2 px-4 flex flex-wrap items-center justify-between gap-3 border border-cyan-500/40 bg-gradient-to-r from-black/90 via-cyan-950/20 to-black/90 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-        <div className="flex flex-wrap items-center gap-2.5">
+      <div className="w-full min-w-0 max-w-full glass-panel py-2 px-4 flex flex-wrap items-center justify-between gap-3 border border-cyan-500/40 bg-gradient-to-r from-black/90 via-cyan-950/20 to-black/90 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
           <span className="text-[10px] font-mono font-bold tracking-widest text-cyan-400 uppercase bg-cyan-950/80 px-2.5 py-1 rounded border border-cyan-500/40 flex items-center gap-1.5 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
             <Sparkles size={12} className="text-cyan-400 animate-spin" />
             NEW POWER DESK MODULES:
@@ -1082,13 +1081,15 @@ function App() {
       )}
 
       {terminalView === 'QUANT_ALPHA' ? (
-        <InstitutionalQuantWorkspace 
-          selectedSymbol={optTicker} 
-          onSelectSymbol={(s) => selectTicker(s)}
-          onReturnToOverview={() => setTerminalView('OVERVIEW')}
-          tape={tape}
-          overview={overview}
-        />
+        <div className="w-full min-w-0 max-w-full overflow-hidden">
+          <InstitutionalQuantWorkspace 
+            selectedSymbol={optTicker} 
+            onSelectSymbol={(s) => selectTicker(s)}
+            onReturnToOverview={() => setTerminalView('OVERVIEW')}
+            tape={tape}
+            overview={overview}
+          />
+        </div>
       ) : (
         <>
           {/* ================= Options / Asset Command Bar ================= */}
@@ -1279,14 +1280,14 @@ function App() {
       </section>
 
       {/* ================= Institutional Dark Pool & Block Prints Feed ================= */}
-      <div className="glass-panel py-1.5 px-4 flex items-center overflow-hidden text-xs font-mono border-b border-purple-500/30 bg-black/60 shadow-[0_0_15px_rgba(168,85,247,0.08)]">
+      <div className="w-full min-w-0 max-w-full glass-panel py-1.5 px-4 flex items-center overflow-hidden text-xs font-mono border-b border-purple-500/30 bg-black/60 shadow-[0_0_15px_rgba(168,85,247,0.08)]">
         <div className="flex items-center gap-2 pr-4 border-r border-white/10 shrink-0">
           <Landmark size={14} className="text-purple-400" />
           <span className="text-[10px] uppercase font-bold text-purple-300 tracking-wider">DARK POOL & BLOCKS ({optTicker})</span>
           <HelpButton cardId="darkpool" title="Explain Dark Pool & Block Sweeps Feed" />
           {blockLoading && <RefreshCw size={10} className="animate-spin text-purple-400" />}
         </div>
-        <div className="flex gap-3 overflow-x-auto py-0.5 px-3 items-center w-full">
+        <div className="flex-1 min-w-0 flex gap-3 overflow-x-auto py-0.5 px-3 items-center scrollbar-thin">
           {blockPrints.length === 0 ? (
             <span className="text-slate-500 text-[10px] italic">No institutional prints &gt;$80K detected in recent SIP tape</span>
           ) : (

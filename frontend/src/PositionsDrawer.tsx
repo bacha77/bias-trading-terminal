@@ -304,10 +304,10 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
   const stocksTotalUpl = stockOptionPositions.reduce((acc, p) => acc + (p.unrealized_pl || 0), 0);
 
   return (
-    <div id="positions-drawer-root" className="glass-panel border-t border-neon-green/20 bg-black/90 backdrop-blur-2xl shadow-2xl transition-all duration-300">
+    <div id="positions-drawer-root" className="w-full min-w-0 max-w-full glass-panel border-t border-neon-green/20 bg-black/90 backdrop-blur-2xl shadow-2xl transition-all duration-300">
       {/* Drawer Toggle Header Bar */}
-      <div className="px-4 py-2 flex items-center justify-between text-xs font-mono">
-        <div className="flex items-center gap-3">
+      <div className="w-full min-w-0 max-w-full px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
           <button
             id="positions-drawer-toggle-btn"
             onClick={() => setIsOpen(!isOpen)}
