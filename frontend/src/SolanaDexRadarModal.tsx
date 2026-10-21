@@ -670,9 +670,9 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               {accountView === 'LIVE' ? (
                 <div 
                   className="px-3 py-1 rounded-lg font-bold flex items-center gap-1.5 bg-gradient-to-r from-purple-500 to-cyan-500 text-black font-extrabold shadow-md cursor-default"
-                  title="Real Money Mode is strictly Solana only (2.0 SOL funded). Base L2 is simulation only."
+                  title={`Real Money Mode is strictly Solana only (${(walletInfo?.sol_balance ?? 0.79).toFixed(2)} SOL funded). Base L2 is simulation only.`}
                 >
-                  <span>🟣 SOLANA ONLY (2.0 SOL)</span>
+                  <span>🟣 SOLANA ONLY ({(walletInfo?.sol_balance ?? 0.79).toFixed(2)} SOL)</span>
                 </div>
               ) : (
                 <>
@@ -1002,7 +1002,14 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 ${fmtNum(activeSummary.capital_deployed_usd, 0)} <span className="text-xs text-slate-400 font-normal">/ ${(Number(snipeAmount || 35) * Number(maxPositions || 6)).toFixed(0)} max</span>
               </span>
             </div>
-            <div className="text-[9px] text-slate-500">{activePositionsList.length}/{maxPositions} {accountView === 'LIVE' ? 'Real' : 'Paper'} Slots Used</div>
+            <div className="text-[9px] text-slate-500 flex items-center justify-between">
+              <span>{activePositionsList.length}/{maxPositions} {accountView === 'LIVE' ? 'Real' : 'Paper'} Slots</span>
+              {accountView === 'LIVE' && (
+                <span className="text-amber-400 font-bold" title="Maximum funded concurrent slots based on current SOL balance">
+                  Cap: {Math.max(1, Math.floor(((walletInfo?.usd_balance || (walletInfo?.sol_balance || 0.79) * 106.6)) / Math.max(1, Number(snipeAmount || 25))))} slots funded
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Card 5: Win Rate */}
@@ -1228,7 +1235,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     </span>
                   </div>
                   <span className="text-[10px] text-slate-400">
-                    Min Liquidity: $20k · Min 24h Vol: $30k
+                    Min Liquidity: $50k · Min 24h Vol: $50k · GeckoTerminal & Raydium
                   </span>
                 </div>
 
@@ -1290,7 +1297,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                   )}
                                 </div>
 
-                                <div className="flex items-center gap-2 text-[9.5px] text-slate-400 pt-0.5">
+                                <div className="flex items-center gap-2 text-[9.5px] text-slate-400 pt-0.5 flex-wrap">
                                   <span className="font-mono text-slate-500">
                                     {tok.address.slice(0, 4)}...{tok.address.slice(-4)}
                                   </span>
@@ -1301,6 +1308,28 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                                   >
                                     {copiedAddr === tok.address ? <Check size={11} className="text-neon-green" /> : <Copy size={11} />}
                                   </button>
+                                  {tok.chain === 'solana' && (
+                                    <a
+                                      href={`https://rugcheck.xyz/tokens/${tok.address}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="text-amber-400 hover:text-amber-300 font-bold flex items-center gap-0.5"
+                                      title="Open RugCheck Forensics"
+                                    >
+                                      Audit <ExternalLink size={8} />
+                                    </a>
+                                  )}
+                                  <a
+                                    href={tok.chain === 'solana' ? `https://solscan.io/token/${tok.address}` : `https://basescan.org/token/${tok.address}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-purple-400 hover:text-purple-300 font-bold flex items-center gap-0.5"
+                                    title="Explorer"
+                                  >
+                                    Explorer <ExternalLink size={8} />
+                                  </a>
                                   <span className="text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-0.5">
                                     <LineChart size={11} /> Chart Active
                                   </span>
@@ -1391,14 +1420,50 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                       </span>
                     </div>
                     {activeChartToken && (
-                      <a 
-                        href={activeChartToken.pair_url} 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-bold"
-                      >
-                        DexScreener <ExternalLink size={10} />
-                      </a>
+                      <div className="flex items-center gap-2">
+                        {activeChartToken.chain === 'solana' && (
+                          <>
+                            <a 
+                              href={`https://rugcheck.xyz/tokens/${activeChartToken.address}`}
+                              target="_blank" 
+                              rel="noreferrer" 
+                              className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-0.5 font-bold"
+                              title="View RugCheck On-Chain Audit Report"
+                            >
+                              RugCheck <ExternalLink size={9} />
+                            </a>
+                            <span className="text-white/20">|</span>
+                            <a 
+                              href={`https://jup.ag/swap/SOL-${activeChartToken.address}`}
+                              target="_blank" 
+                              rel="noreferrer" 
+                              className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-0.5 font-bold"
+                              title="Open in Jupiter DEX Aggregator"
+                            >
+                              Jupiter <ExternalLink size={9} />
+                            </a>
+                            <span className="text-white/20">|</span>
+                          </>
+                        )}
+                        <a 
+                          href={activeChartToken.chain === 'solana' ? `https://solscan.io/token/${activeChartToken.address}` : `https://basescan.org/token/${activeChartToken.address}`}
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-0.5 font-bold"
+                          title="Open Blockchain Explorer"
+                        >
+                          Explorer <ExternalLink size={9} />
+                        </a>
+                        <span className="text-white/20">|</span>
+                        <a 
+                          href={activeChartToken.pair_url} 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5 font-bold"
+                        >
+                          Chart <ExternalLink size={9} />
+                        </a>
+                      </div>
                     )}
                   </div>
 
@@ -1454,7 +1519,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                         </p>
                         {accountView === 'LIVE' && (
                           <p className="text-[10px] text-emerald-400 mt-1 max-w-xs">
-                            Your 2.0 SOL wallet is live and scanning. The sniper will trigger on-chain Jupiter orders when top-scoring Solana tokens pass all 5 BullX / GMGN gates.
+                            Your {(walletInfo?.sol_balance ?? 0.79).toFixed(2)} SOL wallet is live and scanning. The sniper will trigger on-chain Jupiter orders when top-scoring Solana tokens pass all 5 BullX / GMGN gates.
                           </p>
                         )}
                       </div>
@@ -1737,7 +1802,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     </p>
                     {accountView === 'LIVE' && (
                       <p className="text-xs text-emerald-400 mt-2 max-w-md mx-auto">
-                        Your 2.0 SOL wallet is live and scanning. The sniper will trigger on-chain Jupiter orders when top-scoring Solana tokens pass all 5 BullX / GMGN gates.
+                        Your {(walletInfo?.sol_balance ?? 0.79).toFixed(2)} SOL wallet is live and scanning. The sniper will trigger on-chain Jupiter orders when top-scoring Solana tokens pass all 5 BullX / GMGN gates.
                       </p>
                     )}
                   </div>
