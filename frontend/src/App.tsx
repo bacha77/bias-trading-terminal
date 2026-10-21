@@ -1093,7 +1093,7 @@ function App() {
       ) : (
         <>
           {/* ================= Options / Asset Command Bar ================= */}
-      <section className="glass-panel px-4 py-3 flex flex-wrap items-center gap-3">
+      <section className="w-full min-w-0 max-w-full glass-panel px-4 py-3 flex flex-wrap items-center gap-3 overflow-hidden">
         {/* Asset Class Switcher */}
         <div className="flex bg-black/60 p-0.5 rounded-lg border border-white/10 shrink-0 shadow-inner">
           <button
@@ -1183,7 +1183,7 @@ function App() {
           </div>
         )}
 
-        <div className="flex gap-1 flex-wrap">
+        <div className="w-full min-w-0 max-w-full flex items-center gap-1 overflow-x-auto py-1 scrollbar-thin">
           {(assetClass === 'FOREX' 
             ? FOREX_QUICK 
             : assetClass === 'CRYPTO' 
@@ -1225,7 +1225,7 @@ function App() {
               : '';
             return (
               <button key={t} onClick={() => selectTicker(t)}
-                className={`text-[11px] font-mono px-2 py-1 rounded border transition-all duration-300 ${fBorder || (optTicker === t ? (assetClass === 'FOREX' ? 'border-cyan-400 text-cyan-300 bg-cyan-500/10' : assetClass === 'CRYPTO' ? 'border-amber-400 text-amber-300 bg-amber-500/10' : 'border-neon-green text-neon-green bg-neon-green/10') : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white')}`}>
+                className={`text-[11px] font-mono px-2 py-1 rounded border transition-all duration-300 shrink-0 ${fBorder || (optTicker === t ? (assetClass === 'FOREX' ? 'border-cyan-400 text-cyan-300 bg-cyan-500/10' : assetClass === 'CRYPTO' ? 'border-amber-400 text-amber-300 bg-amber-500/10' : 'border-neon-green text-neon-green bg-neon-green/10') : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white')}`}>
                 <span className="font-bold">{t}</span>
                 {priceStr ? <span className="ml-1 text-slate-200">{priceStr}</span> : null}
               </button>
@@ -1323,24 +1323,24 @@ function App() {
       {quantConfluence && (
         <div 
           onClick={() => setTerminalView('QUANT_ALPHA')}
-          className={`glass-panel py-2 px-4 rounded-xl border flex flex-wrap items-center justify-between gap-3 text-xs font-mono cursor-pointer transition-all hover:scale-[1.002] ${
+          className={`w-full min-w-0 max-w-full glass-panel py-2 px-4 rounded-xl border flex flex-wrap items-center justify-between gap-3 text-xs font-mono cursor-pointer transition-all hover:scale-[1.002] overflow-hidden ${
             quantConfluence.execution_permitted
               ? 'bg-gradient-to-r from-emerald-950/40 via-black to-emerald-950/30 border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
               : 'bg-gradient-to-r from-slate-950 via-indigo-950/30 to-slate-950 border-indigo-500/40 shadow-[0_0_20px_rgba(99,102,241,0.15)]'
           }`}
           title="Click to expand the full 4-Pillar Quantitative Alpha Workspace"
         >
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-400/40 text-indigo-300 font-bold text-[10px]">
+          <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-400/40 text-indigo-300 font-bold text-[10px] shrink-0">
               <Cpu size={12} className="animate-pulse" />
               CITADEL · JANE STREET · RENAISSANCE
             </span>
 
-            <span className="font-bold text-white">
+            <span className="font-bold text-white shrink-0">
               {optTicker} CONFLUENCE:
             </span>
 
-            <span className={`px-2 py-0.5 rounded font-black text-xs ${
+            <span className={`px-2 py-0.5 rounded font-black text-xs shrink-0 ${
               quantConfluence.execution_permitted 
                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
                 : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
@@ -1350,24 +1350,24 @@ function App() {
 
             <span className="text-slate-500 hidden md:inline">·</span>
 
-            <span className="text-slate-300 hidden md:inline text-[11px]">
+            <span className="text-slate-300 hidden md:inline text-[11px] truncate">
               Call Wall: <strong className="text-rose-400">${quantConfluence.pillars?.pillar_1_dealer_gex?.call_wall?.toFixed(2)}</strong> · Put Wall: <strong className="text-emerald-400">${quantConfluence.pillars?.pillar_1_dealer_gex?.put_wall?.toFixed(2)}</strong>
             </span>
 
             <span className="text-slate-500 hidden lg:inline">·</span>
 
-            <span className="text-slate-300 hidden lg:inline text-[11px]">
+            <span className="text-slate-300 hidden lg:inline text-[11px] truncate">
               VRP: <strong className="text-purple-300">+{quantConfluence.pillars?.pillar_2_variance_risk_premium?.variance_risk_premium}%</strong> (IVR: {quantConfluence.pillars?.pillar_2_variance_risk_premium?.iv_rank_pct?.toFixed(0)}%)
             </span>
 
             <span className="text-slate-500 hidden xl:inline">·</span>
 
-            <span className="text-slate-300 hidden xl:inline text-[11px]">
+            <span className="text-slate-300 hidden xl:inline text-[11px] truncate">
               Credit: <strong className="text-amber-300">{quantConfluence.pillars?.pillar_3_credit_lead_lag?.divergence_state?.replace(/_/g, ' ')}</strong>
             </span>
           </div>
 
-          <div className="flex items-center gap-2 text-indigo-300 text-xs font-bold hover:text-white transition-colors">
+          <div className="flex items-center gap-2 text-indigo-300 text-xs font-bold hover:text-white transition-colors shrink-0">
             <span>{quantConfluence.execution_permitted ? 'APPROVED SETUP' : 'RETAIL NOISE: STAND DOWN'}</span>
             <span className="px-2 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-mono">
               EXPAND DESK →
@@ -1377,8 +1377,8 @@ function App() {
       )}
 
       {/* ================= Key metrics strip ================= */}
-      <section className={`grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 transition-opacity ${optLoading && !opt ? 'opacity-40' : ''}`}>
-        <div className={`transition-all duration-300 rounded-lg ${flash[optTicker] === 'up' ? 'ring-2 ring-neon-green' : flash[optTicker] === 'down' ? 'ring-2 ring-neon-red' : ''}`}>
+      <section className={`w-full min-w-0 max-w-full grid grid-cols-2 sm:grid-cols-4 2xl:grid-cols-8 gap-2 transition-opacity ${optLoading && !opt ? 'opacity-40' : ''}`}>
+        <div className={`transition-all duration-300 rounded-lg min-w-0 ${flash[optTicker] === 'up' ? 'ring-2 ring-neon-green' : flash[optTicker] === 'down' ? 'ring-2 ring-neon-red' : ''}`}>
           <Metric 
             label={`${optTicker} Spot`} 
             value={fmt(spot)} 
@@ -1402,9 +1402,9 @@ function App() {
       )}
 
       {/* ================= Row 1: Breakout Scanner | Multi-Chart Grid | Smart Algo ================= */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+      <div className="w-full min-w-0 max-w-full grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
         {/* Breakout scanner */}
-        <div className={`glass-panel p-4 flex flex-col transition-all duration-300 ${
+        <div className={`glass-panel p-4 flex flex-col transition-all duration-300 min-w-0 max-w-full ${
           isExpandedCanvas ? 'xl:col-span-4 order-2 min-h-[560px] max-h-[560px]' : 'xl:col-span-3 order-1 min-h-[690px] max-h-[690px]'
         }`}>
           <PanelTitle 
@@ -1540,7 +1540,7 @@ function App() {
         </div>
 
         {/* Center: Multi-Chart Grid (Single, Dual Split, Quad Matrix) */}
-        <div className={`glass-panel p-4 flex flex-col transition-all duration-300 overflow-hidden ${
+        <div className={`glass-panel p-4 flex flex-col transition-all duration-300 overflow-hidden min-w-0 max-w-full ${
           isExpandedCanvas ? 'xl:col-span-12 order-1 min-h-[780px] max-h-[780px] shadow-[0_0_25px_rgba(0,255,163,0.1)]' : 'xl:col-span-6 order-2 min-h-[690px] max-h-[690px]'
         }`}>
           {/* Wall Proximity Reversal Banner */}
@@ -1589,10 +1589,10 @@ function App() {
         </div>
 
         {/* Right Panel: Smart Algo Board / Wall Reversal Radar / Playbook / Macro Regime */}
-        <div className={`flex flex-col gap-4 transition-all duration-300 min-h-0 ${
+        <div className={`flex flex-col gap-4 transition-all duration-300 min-h-0 min-w-0 max-w-full ${
           isExpandedCanvas ? 'xl:col-span-8 order-3' : 'xl:col-span-3 order-3'
         }`}>
-          <div className={`glass-panel p-4 flex-1 flex flex-col overflow-hidden transition-all duration-300 ${
+          <div className={`glass-panel p-4 flex-1 flex flex-col overflow-hidden transition-all duration-300 min-w-0 max-w-full ${
             isExpandedCanvas ? 'min-h-[780px] max-h-[780px]' : 'min-h-[690px] max-h-[690px]'
           }`}>
             <div className="flex justify-between items-center mb-3 pb-2 border-b border-white/5">

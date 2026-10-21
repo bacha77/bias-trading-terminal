@@ -37,13 +37,13 @@ export function Metric({ label, value, sub, tone = 'white', hint, helpKey }: { l
     cyan: 'text-cyan-300',
   };
   return (
-    <div title={hint} className="metric-tile rounded-lg bg-black/30 border border-white/5 px-3 py-2 hover:border-neon-green/30 transition-colors relative group">
-      <div className="flex justify-between items-center">
-        <span className="text-[10px] uppercase tracking-wider text-slate-500">{label}</span>
+    <div title={hint} className="metric-tile rounded-lg bg-black/30 border border-white/5 px-3 py-2 hover:border-neon-green/30 transition-colors relative group min-w-0 overflow-hidden">
+      <div className="flex justify-between items-center gap-1 min-w-0">
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 truncate">{label}</span>
         {helpKey && <HelpButton cardId={helpKey} title={`Explain ${label}`} />}
       </div>
-      <div className={`font-mono font-bold text-lg leading-tight ${toneCls[tone] || toneCls.white}`}>{value}</div>
-      {sub && <div className="text-[10px] font-mono text-slate-400">{sub}</div>}
+      <div className={`font-mono font-bold text-lg leading-tight truncate ${toneCls[tone] || toneCls.white}`}>{value}</div>
+      {sub && <div className="text-[10px] font-mono text-slate-400 truncate">{sub}</div>}
     </div>
   );
 }
