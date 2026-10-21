@@ -3147,7 +3147,7 @@ class DexRiskProfileRequest(BaseModel):
 
 @app.get("/api/dex/new-listings")
 @app.get("/dex/new-listings")
-async def api_get_dex_listings(chain: str = "both", min_liq: float = 20000.0, min_vol: float = 30000.0):
+async def api_get_dex_listings(chain: str = "both", min_liq: float = 50000.0, min_vol: float = 50000.0):
     import solana_dex_engine
     c = chain.lower().strip()
     if c in ["both", "dual", "all"]:
