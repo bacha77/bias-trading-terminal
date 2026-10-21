@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   Cpu, Target, Shield, ShieldCheck, CheckCircle2, Zap, Send, AlertCircle, Sparkles, 
   Activity, Clock, BarChart3, RefreshCw, Dna, Bot, Play, Square, Radio, DollarSign, Award, Coins
@@ -240,8 +240,6 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape, initialMod
   const [cryptoStatusMsg, setCryptoStatusMsg] = useState<string>('Crypto 24/7 Daemon Initializing...');
   const [isEvaluatingCryptoNow, setIsEvaluatingCryptoNow] = useState<boolean>(false);
 
-  const lastExecutedKeyRef = useRef<string>('');
-  const lastExecutedTimeRef = useRef<number>(0);
 
   // Renaissance Technologies Statistical Arbitrage Cointegration Radar state
   const [statArbPairs, setStatArbPairs] = useState<any[]>([]);
@@ -529,28 +527,6 @@ export function SmartAlgoBoard({ data, loading, onSelectTicker, tape, initialMod
     }
   };
 
-  // Client-side instant evaluation trigger for active tab
-  useEffect(() => {
-    if (!autoPilotEnabled || !data || !data.bracket_setup) return;
-    if (data.confidence < minConfidenceThreshold) return;
-
-    const currentSetup = data.bracket_setup;
-    const triggerKey = `${data.ticker}-${currentSetup.side}-${currentSetup.entry_price}`;
-    const now = Date.now();
-
-    // Prevent duplicate firing within 10 minutes
-    if (lastExecutedKeyRef.current === triggerKey && (now - lastExecutedTimeRef.current < 600000)) {
-      return;
-    }
-
-    lastExecutedKeyRef.current = triggerKey;
-    lastExecutedTimeRef.current = now;
-
-    // Trigger immediate server evaluation and execution
-    fetch(`${API_BASE}/api/copilot/trigger-now?symbol=${data.ticker}`, { method: 'POST' })
-      .then(() => fetchCopilotStatus())
-      .catch((err) => console.error('Auto trigger error:', err));
-  }, [autoPilotEnabled, data, minConfidenceThreshold, fetchCopilotStatus]);
 
   const handleToggleCryptoCopilot = async () => {
     const next = !cryptoArmed;

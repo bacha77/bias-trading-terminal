@@ -3518,7 +3518,7 @@ async def trigger_flatten_options():
 
 async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     state = load_copilot_state()
-    if not state.get("armed", True) and not forced_symbol:
+    if not state.get("armed", True):
         return {"status": "SKIPPED", "reason": "Co-Pilot disarmed"}
     
     try:
@@ -3531,13 +3531,13 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     # 1. Market Timing Gates:
     # A) Strict 15:30 ET Hard Cutoff: Absolutely NO new positions opened past 15:30 ET
     past_cutoff = (et.weekday() < 5) and ((et.hour == 15 and et.minute >= 30) or (et.hour >= 16))
-    if past_cutoff and not forced_symbol:
+    if past_cutoff:
         msg = "Late Session Cutoff Active: No new trades allowed past 15:30 ET."
         state["last_status_message"] = msg
         save_copilot_state(state)
         return {"status": "SKIPPED", "reason": msg}
 
-    # B) Opening Settle Gate: Avoid first 15 mins (9:30-9:45 AM ET) where bid-ask spreads are widest and auctions settle
+    # B) Opening Settle Gate: Avoid first 15 mins (9:30-9:45 AM ET) where bid-ask spreads are widest
     market_opening_churn = (et.weekday() < 5) and (et.hour == 9 and 30 <= et.minute < 45)
     if market_opening_churn and not forced_symbol:
         return {"status": "SKIPPED", "reason": "Market Opening Settle Gate (9:30-9:45 AM ET) active: waiting for spread compression."}
@@ -3550,7 +3550,7 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     if forced_symbol:
         candidates = [forced_symbol.upper().strip()]
     elif options_only:
-        # Liquid US equity/ETF underlyings for options
+        # Full 55 liquid US equity/ETF underlyings for options
         candidates = state.get("active_monitors", [
             "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
             "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM",
@@ -3564,7 +3564,6 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
         )
     
     base_min_conf = state.get("min_confidence", 70)
-    # Elevate confidence required during midday low-volume lull (12:00-13:15 ET)
     min_conf = max(base_min_conf, 80) if (is_lunch_lull and not forced_symbol) else base_min_conf
     cooldown = state.get("cooldown_sec", 600)
     trigger_times = state.get("last_trigger_times", {})
@@ -3577,7 +3576,7 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
         state["daily_trades_count"] = 0
         
     max_daily = int(state.get("max_daily_trades", 8))
-    if state.get("daily_trades_count", 0) >= max_daily and not forced_symbol:
+    if state.get("daily_trades_count", 0) >= max_daily:
         msg = f"Daily trade cap reached ({state['daily_trades_count']}/{max_daily} trades today). Preserving capital until tomorrow."
         state["last_status_message"] = msg
         save_copilot_state(state)
@@ -3594,25 +3593,37 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     last_global = state.get("last_global_trade_time", 0)
     now_ts = time.time()
     
-    # Active open underlyings across both Alpaca and Paper to prevent doubling down on same correlated sector
+    # Active open underlyings across both Alpaca and Paper to prevent duplicate or correlated exposure
     open_underlyings = set(active_pos_info["open_underlyings"])
     
     for sym in candidates:
-        if not forced_symbol and (now_ts - trigger_times.get(sym, 0) < cooldown):
+        # HARD RULE 1: STRICT 1 POSITION PER UNDERLYING (Never stack multiple contracts on SPY, DIA, etc.)
+        if sym in open_underlyings:
             continue
-            
-        # Correlated Exposure Check: Do not hold both NVDA and AMD or SPY and QQQ in the same direction
-        if not forced_symbol:
-            correlated_pairs = [("NVDA", "AMD"), ("SPY", "QQQ"), ("COIN", "MSTR")]
-            skip_correlated = False
-            for p1, p2 in correlated_pairs:
-                other = p2 if sym == p1 else (p1 if sym == p2 else None)
-                if other and other in open_underlyings:
-                    print(f"[CORRELATION GUARD] Skipped {sym}: Already holding correlated exposure in {other}.")
-                    skip_correlated = True
-                    break
-            if skip_correlated:
-                continue
+
+        # HARD RULE 2: Minimum 600s Cooldown per symbol
+        if (now_ts - trigger_times.get(sym, 0) < cooldown):
+            continue
+
+        # HARD RULE 3: STRICT 5 CONCURRENT POSITIONS CAP
+        if total_active_pos >= max_concurrent:
+            break
+
+        # HARD RULE 4: Global Pacing Cooldown (180s minimum between any new position)
+        if (now_ts - last_global < 180):
+            break
+
+        # HARD RULE 5: Correlated Exposure Check (Don't hold both NVDA & AMD, or SPY & QQQ simultaneously)
+        correlated_pairs = [("NVDA", "AMD"), ("SPY", "QQQ"), ("COIN", "MSTR")]
+        skip_correlated = False
+        for p1, p2 in correlated_pairs:
+            other = p2 if sym == p1 else (p1 if sym == p2 else None)
+            if other and other in open_underlyings:
+                print(f"[CORRELATION GUARD] Skipped {sym}: Already holding correlated exposure in {other}.")
+                skip_correlated = True
+                break
+        if skip_correlated:
+            continue
 
         try:
             algo_res = await get_smart_intelligence(sym)
@@ -3623,45 +3634,6 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             setup = algo_res["bracket_setup"]
             
             if conf >= min_conf:
-                # -------------------------------------------------------------
-                # A+ ALPHA PRIORITY PASS & DYNAMIC ALLOCATION LOGIC
-                # If a setup has exceptional conviction (>= 85% "Sure Trade"):
-                # 1. Bypasses the 180s global pacing cooldown.
-                # 2. Utilizes an A+ Alpha Reserve Slot (up to max_concurrent + 1, e.g. 6).
-                # 3. If all slots full, actively reallocates capital by closing any stagnant/flat trade (PnL between -3% and +3%).
-                # Normal setups (70% - 84%) strictly respect the standard 5-position cap and 180s cooldown.
-                # -------------------------------------------------------------
-                is_a_plus_trade = (conf >= 85)
-                
-                # Check Global Inter-Trade Spacing Cooldown (180s)
-                if (now_ts - last_global < 180) and not forced_symbol:
-                    if not is_a_plus_trade:
-                        # Normal trade must wait for cooldown
-                        continue
-                    else:
-                        print(f"[A+ PRIORITY PASS] Bypassing global pacing cooldown for high-conviction setup on {sym} ({conf}% conf).")
-
-                # Check Concurrent Position Limit
-                effective_pos_cap = (max_concurrent + 1) if is_a_plus_trade else max_concurrent
-                if total_active_pos >= effective_pos_cap and not forced_symbol:
-                    if is_a_plus_trade:
-                        # Attempt Dynamic Capital Reallocation: Find a stagnant flat trade to replace
-                        reallocated = False
-                        for pos in active_pos_info.get("alpaca_positions", []):
-                            p_plpc = float(pos.get("unrealized_plpc") or 0.0)
-                            p_sym = pos.get("symbol", "")
-                            if abs(p_plpc) <= 0.035: # Flat / stagnant position within +/- 3.5%
-                                print(f"[DYNAMIC REALLOCATION] Closing stagnant position {p_sym} (PnL: {p_plpc*100:+.1f}%) to fund A+ setup {sym} ({conf}% conf).")
-                                if close_alpaca_position(p_sym, creds=creds):
-                                    reallocated = True
-                                    total_active_pos -= 1
-                                    open_underlyings.discard(p_sym)
-                                    break
-                        if not reallocated:
-                            print(f"[PORTFOLIO HEAT] All {total_active_pos} slots active with strong momentum. Holding open slots.")
-                            continue
-                    else:
-                        continue
                 # -------------------------------------------------------------
                 # Automated News & Earnings Safety Filter
                 # -------------------------------------------------------------
