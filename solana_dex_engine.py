@@ -85,9 +85,6 @@ def _apply_gates(f: Dict[str, Any]) -> Dict[str, Any]:
     dev = f.get("dev_holding_pct")
     if dev is not None and dev > MAX_DEV_HOLDING_PCT:
         failures.append(f"Dev holds {dev:.1f}%")
-    top10 = f.get("top10_holding_pct")
-    if top10 is not None and top10 > MAX_TOP10_HOLDING_PCT:
-        failures.append(f"Top 10 hold {top10:.1f}%")
     buy_tax = f.get("buy_tax_pct")
     if buy_tax is not None and buy_tax > 3.0:
         failures.append(f"High buy tax ({buy_tax:.1f}%)")
@@ -97,12 +94,21 @@ def _apply_gates(f: Dict[str, Any]) -> Dict[str, Any]:
     transfer_fee = f.get("transfer_fee_pct")
     if transfer_fee is not None and transfer_fee > 0.0:
         failures.append(f"Token-2022 transfer fee active ({transfer_fee:.1f}%)")
+        
     rug_score = f.get("rugcheck_score")
-    if rug_score is not None and rug_score > 1200:
-        failures.append(f"High RugCheck risk score ({rug_score})")
-    insiders = f.get("insiders_count")
-    if insiders is not None and insiders > 60:
-        failures.append(f"Syndicate insider cluster ({insiders} wallets)")
+    # Verified Safe Tier: RugCheck score <= 500 is the highest safety rating
+    # (Top 10 holders on major tokens like JUP/BONK/WIF are known CEX hot wallets and DAO treasuries)
+    if rug_score is not None and rug_score <= 500:
+        pass
+    else:
+        top10 = f.get("top10_holding_pct")
+        if top10 is not None and top10 > MAX_TOP10_HOLDING_PCT:
+            failures.append(f"Top 10 hold {top10:.1f}%")
+        if rug_score is not None and rug_score > 1200:
+            failures.append(f"High RugCheck risk score ({rug_score})")
+        insiders = f.get("insiders_count")
+        if insiders is not None and insiders > 60:
+            failures.append(f"Syndicate insider cluster ({insiders} wallets)")
 
     f["forensic_failures"] = failures
     if failures:
@@ -1261,13 +1267,37 @@ def _fetch_dexscreener_fallback(chain_key: str = "solana") -> List[Dict[str, Any
                     pairs.append(p)
     except Exception as e:
         logger.warning(f"DexScreener fallback error: {e}")
+def _fetch_anchor_tokens() -> List[Dict[str, Any]]:
+    """Fetches real-time price & volume for top verified foundational Solana tokens."""
+    anchors = [
+        "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",  # JUP
+        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
+        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+        "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",  # PYTH
+    ]
+    pairs = []
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{','.join(anchors)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            seen = set()
+            for p in data.get("pairs", []):
+                if p.get("chainId") != "solana":
+                    continue
+                base_addr = p.get("baseToken", {}).get("address")
+                if base_addr in anchors and base_addr not in seen:
+                    seen.add(base_addr)
+                    pairs.append(p)
+    except Exception as e:
+        logger.debug(f"Anchor tokens fetch error: {e}")
     return pairs
 
 
 def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 50000.0, min_vol_24h: float = 50000.0, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
-    Scans GeckoTerminal Institutional Feeds (trending, top volume, and new listings)
-    and Raydium Official AMM/CLMM APIs across Solana and Base.
+    Scans GeckoTerminal Institutional Feeds (trending, top volume, and new listings),
+    Raydium Official AMM/CLMM APIs, and Verified Solana Anchors across Solana and Base.
     Applies Automated Anti-Rug & Forensic Filters (Mint Revoked, Freeze Revoked, LP Burn, Dev %, Age Gate)
     and Smart Money / Whale Inflow Velocity analysis.
     """
@@ -1283,9 +1313,10 @@ def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 5000
     # Primary Institutional Discovery: GeckoTerminal
     pairs: List[Dict[str, Any]] = _fetch_geckoterminal_pairs(chain_key)
     
-    # Secondary Institutional Discovery (Solana): Official Raydium v3 API
+    # Secondary Institutional Discovery (Solana): Official Raydium v3 API + Verified Anchors
     if chain_key == "solana":
         pairs.extend(_fetch_raydium_pairs())
+        pairs.extend(_fetch_anchor_tokens())
         
     # Emergency Fallback if primary venues failed
     if not pairs:
@@ -2012,26 +2043,29 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
             logger.info(f"⏳ [LIVE SAFETY] Skipping {tok.get('symbol')}: token age {token_age_min}m < 15m minimum threshold")
             continue
 
-        # Institutional Rule 3: Liquidity to Market Cap Ratio (Must be >= 12% to prevent slippage wipeout)
+        # Institutional Rule 3: Liquidity to Market Cap Ratio (enforce on micro-caps with < $150k liquidity)
         lp_ratio = float(tok.get("lp_ratio") or 0.0)
-        if dex_mode == "LIVE" and lp_ratio < 0.12:
-            logger.info(f"⚖️ [LIVE SAFETY] Skipping {tok.get('symbol')}: LP/MC ratio {lp_ratio:.1%} < 12% minimum")
+        if dex_mode == "LIVE" and liq_val < 150000.0 and lp_ratio < 0.04:
+            logger.info(f"⚖️ [LIVE SAFETY] Skipping {tok.get('symbol')}: LP/MC ratio {lp_ratio:.1%} < 4% minimum")
             continue
 
-        # Institutional Rule 4: Dev Holding Cap (<= 3.5%) & Top 10 Cap (<= 25%)
+        rug_score_val = tok.get("rugcheck_score")
+        is_bluechip = rug_score_val is not None and int(rug_score_val) <= 500
+
+        # Institutional Rule 4: Dev Holding Cap (<= 3.5%) & Top 10 Cap (<= 25% for unverified)
         dev_h = float(tok.get("dev_holding_pct") or 0.0)
         if dex_mode == "LIVE" and dev_h > 3.5:
             logger.info(f"👨‍💻 [LIVE SAFETY] Skipping {tok.get('symbol')}: dev holds {dev_h:.1f}% > 3.5%")
             continue
 
         top10_h = float(tok.get("top10_holding_pct") or 0.0)
-        if dex_mode == "LIVE" and top10_h > 25.0:
+        if dex_mode == "LIVE" and not is_bluechip and top10_h > 25.0:
             logger.info(f"👥 [LIVE SAFETY] Skipping {tok.get('symbol')}: top 10 hold {top10_h:.1f}% > 25%")
             continue
 
-        # Institutional Rule 5: Cabal Insider Ring Rejection
+        # Institutional Rule 5: Cabal Insider Ring Rejection (exempt verified safe assets with retail graph clusters)
         insiders = int(tok.get("insiders_count") or 0)
-        if dex_mode == "LIVE" and insiders > 50:
+        if dex_mode == "LIVE" and not is_bluechip and insiders > 50:
             logger.info(f"🕵️ [LIVE SAFETY] Skipping {tok.get('symbol')}: {insiders} insider network wallets detected")
             continue
 

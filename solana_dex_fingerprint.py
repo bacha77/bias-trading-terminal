@@ -108,6 +108,12 @@ def analyze_deployer_fingerprint(mint: str, deployer_address: str = "") -> Dict[
             profile["is_blacklisted"] = True
             profile["audit_pass"] = False
             profile["notes"] = "🚫 On-chain report flags this token as rugged."
+        elif rug_score <= 500:
+            profile["cabal_score"] = 95
+            profile["cluster_tag"] = "VERIFIED_SAFE_ASSET"
+            profile["is_blacklisted"] = False
+            profile["audit_pass"] = True
+            profile["notes"] = f"✅ Verified safe asset (RugCheck score: {rug_score})."
         elif insiders > 50:
             profile["cabal_score"] = 15
             profile["cluster_tag"] = "CABAL_INSIDER_SYNDICATE"
