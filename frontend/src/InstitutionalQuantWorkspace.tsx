@@ -1,0 +1,608 @@
+import { useState, useEffect, useCallback } from 'react';
+import { 
+  RefreshCw, ShieldCheck, Zap, Activity, Target, 
+  Layers, Lock, BarChart2, Compass, Cpu, ArrowLeft
+} from 'lucide-react';
+import { API_BASE } from './config';
+
+interface Pillar1GEX {
+  symbol: string;
+  spot_price: number;
+  net_gex_millions: number;
+  regime: string;
+  call_wall: number;
+  put_wall: number;
+  zero_gamma_level: number;
+  dist_to_call_wall_pct: number;
+  dist_to_put_wall_pct: number;
+  score: number;
+  edge_verdict: string;
+  rationale: string;
+}
+
+interface Pillar2VRP {
+  symbol: string;
+  realized_vol_30d: number;
+  implied_vol_atm: number;
+  variance_risk_premium: number;
+  iv_rank_pct: number;
+  score: number;
+  strategy_recommendation: string;
+  rationale: string;
+}
+
+interface Pillar3Credit {
+  hyg_4h_change_pct: number;
+  spy_4h_change_pct: number;
+  credit_divergence_spread: number;
+  divergence_state: string;
+  score: number;
+  rationale: string;
+}
+
+interface Pillar4Sweep {
+  symbol: string;
+  swing_low: number;
+  swing_high: number;
+  volume_ratio: number;
+  lower_wick_ratio: number;
+  upper_wick_ratio: number;
+  sweep_pattern: string;
+  invalidation_level: number;
+  target_level: number;
+  score: number;
+  rationale: string;
+}
+
+interface ConfluenceData {
+  symbol: string;
+  timestamp: string;
+  confluence_score: number;
+  max_score: number;
+  bias: string;
+  trade_verdict: string;
+  verdict_color: string;
+  execution_permitted: boolean;
+  pillars: {
+    pillar_1_dealer_gex: Pillar1GEX;
+    pillar_2_variance_risk_premium: Pillar2VRP;
+    pillar_3_credit_lead_lag: Pillar3Credit;
+    pillar_4_liquidity_sweep: Pillar4Sweep;
+  };
+  summary_memo: string;
+}
+
+interface RadarItem {
+  symbol: string;
+  confluence_score: number;
+  bias: string;
+  trade_verdict: string;
+  execution_permitted: boolean;
+  spot_price: number;
+  call_wall: number;
+  put_wall: number;
+  iv_rank: number;
+  credit_state: string;
+  sweep_pattern: string;
+}
+
+interface Props {
+  selectedSymbol: string;
+  onSelectSymbol: (sym: string) => void;
+  onReturnToOverview?: () => void;
+}
+
+const UNIVERSE = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MSFT', 'META', 'AMZN', 'GOOGL'];
+
+export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, onReturnToOverview }: Props) {
+  const [confluence, setConfluence] = useState<ConfluenceData | null>(null);
+  const [radar, setRadar] = useState<RadarItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [radarLoading, setRadarLoading] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'WORKSPACE' | 'RADAR'>('WORKSPACE');
+
+  const fetchConfluence = useCallback(async (sym: string) => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/api/institutional/confluence?symbol=${sym}`);
+      if (res.ok) {
+        const data = await res.json();
+        setConfluence(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch institutional confluence:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const fetchRadar = useCallback(async () => {
+    try {
+      setRadarLoading(true);
+      const res = await fetch(`${API_BASE}/api/institutional/radar`);
+      if (res.ok) {
+        const data = await res.json();
+        setRadar(data.radar || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch institutional radar:', err);
+    } finally {
+      setRadarLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchConfluence(selectedSymbol);
+    fetchRadar();
+  }, [selectedSymbol, fetchConfluence, fetchRadar]);
+
+  const score = confluence?.confluence_score || 0;
+  const isApproved = confluence?.execution_permitted ?? false;
+
+  return (
+    <div className="w-full space-y-4 font-sans text-slate-100 animate-in fade-in duration-200">
+      
+      {/* Institutional Top Control Bar */}
+      <div className="w-full glass-panel px-5 py-3 border border-indigo-500/30 bg-gradient-to-r from-slate-950 via-indigo-950/20 to-slate-950 flex flex-wrap items-center justify-between gap-4 rounded-xl shadow-lg">
+        <div className="flex items-center gap-3">
+          {onReturnToOverview && (
+            <button
+              onClick={onReturnToOverview}
+              className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1.5 text-xs font-mono transition-all"
+            >
+              <ArrowLeft size={14} />
+              <span>OVERVIEW DESK</span>
+            </button>
+          )}
+
+          <div className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
+            <Cpu size={20} className="animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-black tracking-wide text-white">
+                INSTITUTIONAL QUANT ALPHA MATRIX
+              </h1>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-indigo-400/40 bg-indigo-500/20 text-indigo-300 font-bold">
+                CITADEL · JANE STREET · RENAISSANCE
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 font-mono">
+              Live quantitative order flow &amp; microstructure models fully integrated with the terminal
+            </p>
+          </div>
+        </div>
+
+        {/* View Switcher & Action Controls */}
+        <div className="flex items-center gap-3">
+          <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-xs font-mono">
+            <button
+              onClick={() => setActiveTab('WORKSPACE')}
+              className={`px-3 py-1.5 rounded-md transition-all ${
+                activeTab === 'WORKSPACE'
+                  ? 'bg-indigo-600 text-white font-bold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              ACTIVE TICKER ({selectedSymbol})
+            </button>
+            <button
+              onClick={() => setActiveTab('RADAR')}
+              className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
+                activeTab === 'RADAR'
+                  ? 'bg-indigo-600 text-white font-bold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>UNIVERSE SCANNER</span>
+              {radar.length > 0 && (
+                <span className="text-[10px] bg-indigo-400/30 text-indigo-200 px-1.5 py-0.2 rounded-full font-bold">
+                  {radar.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          <button
+            onClick={() => {
+              fetchConfluence(selectedSymbol);
+              fetchRadar();
+            }}
+            disabled={loading || radarLoading}
+            className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1.5 text-xs font-mono transition-all"
+            title="Refresh Quant Stream"
+          >
+            <RefreshCw size={13} className={loading || radarLoading ? 'animate-spin text-indigo-400' : ''} />
+            <span>SYNC</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Universe Quick Ticker Bar (Full Width) */}
+      <div className="w-full glass-panel px-4 py-2 border border-slate-800 bg-slate-950/70 flex items-center gap-2 overflow-x-auto text-xs font-mono rounded-xl">
+        <span className="text-slate-500 font-bold flex items-center gap-1 shrink-0">
+          <Compass size={13} /> SELECT TICKER:
+        </span>
+        <div className="flex items-center gap-1.5">
+          {UNIVERSE.map((sym) => (
+            <button
+              key={sym}
+              onClick={() => onSelectSymbol(sym)}
+              className={`px-3 py-1 rounded-md transition-all cursor-pointer font-bold ${
+                selectedSymbol === sym
+                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-400/60 shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                  : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-white'
+              }`}
+            >
+              {sym}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === 'WORKSPACE' ? (
+        loading && !confluence ? (
+          <div className="h-72 w-full glass-panel border border-slate-800 rounded-xl flex flex-col items-center justify-center gap-3">
+            <RefreshCw size={32} className="animate-spin text-indigo-400" />
+            <span className="text-xs font-mono text-slate-400">
+              Evaluating Citadel GEX, Jane Street VRP, Renaissance Credit &amp; Dark Pool Sweeps for {selectedSymbol}...
+            </span>
+          </div>
+        ) : confluence ? (
+          <div className="space-y-4">
+            
+            {/* Master Executive Verdict Banner (Full Width) */}
+            <div className={`w-full p-5 rounded-xl border flex flex-col lg:flex-row items-center justify-between gap-6 transition-all ${
+              isApproved 
+                ? 'bg-emerald-950/25 border-emerald-500/50 shadow-[0_0_25px_rgba(16,185,129,0.15)]'
+                : 'bg-amber-950/25 border-amber-500/50 shadow-[0_0_25px_rgba(245,158,11,0.15)]'
+            }`}>
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                {/* Score Gauge */}
+                <div className="relative flex items-center justify-center w-24 h-24 rounded-full bg-slate-950/90 border-2 border-slate-800 shrink-0 shadow-inner">
+                  <div className="text-center font-mono">
+                    <div className={`text-3xl font-black ${
+                      score >= 75 ? 'text-emerald-400' : score >= 60 ? 'text-amber-400' : 'text-slate-400'
+                    }`}>
+                      {score}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-bold uppercase">/ 100 PTS</div>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 text-center sm:text-left">
+                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+                    <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">
+                      INSTITUTIONAL VERDICT:
+                    </span>
+                    <span className={`text-sm font-black font-mono px-3 py-0.5 rounded border ${
+                      isApproved 
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50' 
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                    }`}>
+                      {confluence.trade_verdict}
+                    </span>
+                  </div>
+                  
+                  <div className="text-sm font-bold text-slate-200">
+                    Active Symbol: <span className="text-white font-mono font-black text-base">{selectedSymbol}</span> · Spot: <span className="text-cyan-300 font-mono">${confluence.pillars.pillar_1_dealer_gex.spot_price.toFixed(2)}</span> · Bias: <span className="text-indigo-400 font-mono">{confluence.bias}</span>
+                  </div>
+
+                  <p className="text-xs text-slate-300 font-mono max-w-4xl leading-relaxed">
+                    {confluence.summary_memo}
+                  </p>
+                </div>
+              </div>
+
+              {/* Execution Gate Status */}
+              <div className="flex flex-col items-center lg:items-end gap-2 shrink-0">
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border font-mono text-xs font-bold ${
+                  isApproved 
+                    ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                    : 'bg-slate-900 border-slate-700 text-slate-300'
+                }`}>
+                  {isApproved ? <ShieldCheck size={16} className="text-emerald-400" /> : <Lock size={16} className="text-amber-400" />}
+                  <span>{isApproved ? 'AUTONOMOUS EXECUTION PERMITTED' : 'EXECUTION LOCKED (< 70 PTS)'}</span>
+                </div>
+                <span className="text-[11px] text-slate-400 font-mono text-center lg:text-right">
+                  System strictly blocks retail impulse orders into dealer resistance walls
+                </span>
+              </div>
+            </div>
+
+            {/* 4 Quantitative Alpha Pillars - Full Responsive 4-Column Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              
+              {/* Pillar 1: Citadel Dealer Gamma (GEX) */}
+              <div className="glass-panel p-4 rounded-xl border border-blue-500/30 bg-gradient-to-b from-blue-950/20 via-slate-950 to-slate-950 flex flex-col justify-between hover:border-blue-500/50 transition-all shadow-md">
+                <div>
+                  <div className="flex items-center justify-between border-b border-blue-500/20 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        <Activity size={16} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white">
+                          Pillar 1: Citadel GEX
+                        </h3>
+                        <span className="text-[10px] font-mono text-slate-400">Dealer Gamma Hedging</span>
+                      </div>
+                    </div>
+                    <div className="text-right font-mono">
+                      <span className="text-sm font-bold text-blue-400">
+                        {confluence.pillars.pillar_1_dealer_gex.score}
+                      </span>
+                      <span className="text-[10px] text-slate-500"> / 25</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mt-3 font-mono text-xs">
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">CALL WALL</span>
+                      <span className="font-bold text-rose-400">${confluence.pillars.pillar_1_dealer_gex.call_wall.toFixed(2)}</span>
+                      <span className="text-[9px] text-slate-500 block">+{confluence.pillars.pillar_1_dealer_gex.dist_to_call_wall_pct}%</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">PUT WALL</span>
+                      <span className="font-bold text-emerald-400">${confluence.pillars.pillar_1_dealer_gex.put_wall.toFixed(2)}</span>
+                      <span className="text-[9px] text-slate-500 block">-{confluence.pillars.pillar_1_dealer_gex.dist_to_put_wall_pct}%</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5 col-span-2">
+                      <span className="text-[10px] text-slate-500 block">DEALER NET GAMMA</span>
+                      <span className="font-bold text-cyan-300">${confluence.pillars.pillar_1_dealer_gex.net_gex_millions.toFixed(1)}M GEX</span>
+                      <span className="text-[9px] text-slate-400 block">{confluence.pillars.pillar_1_dealer_gex.regime}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 p-2.5 rounded bg-blue-950/30 border border-blue-500/20 text-xs font-mono text-blue-200/90 leading-relaxed">
+                  {confluence.pillars.pillar_1_dealer_gex.rationale}
+                </div>
+              </div>
+
+              {/* Pillar 2: Jane Street Variance Risk Premium (VRP) */}
+              <div className="glass-panel p-4 rounded-xl border border-purple-500/30 bg-gradient-to-b from-purple-950/20 via-slate-950 to-slate-950 flex flex-col justify-between hover:border-purple-500/50 transition-all shadow-md">
+                <div>
+                  <div className="flex items-center justify-between border-b border-purple-500/20 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                        <BarChart2 size={16} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white">
+                          Pillar 2: Jane Street VRP
+                        </h3>
+                        <span className="text-[10px] font-mono text-slate-400">Volatility Mispricing</span>
+                      </div>
+                    </div>
+                    <div className="text-right font-mono">
+                      <span className="text-sm font-bold text-purple-400">
+                        {confluence.pillars.pillar_2_variance_risk_premium.score}
+                      </span>
+                      <span className="text-[10px] text-slate-500"> / 25</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mt-3 font-mono text-xs">
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">IMPLIED VOL (IV)</span>
+                      <span className="font-bold text-purple-300">{confluence.pillars.pillar_2_variance_risk_premium.implied_vol_atm.toFixed(1)}%</span>
+                      <span className="text-[9px] text-slate-500 block">ATM Option</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">REALIZED VOL</span>
+                      <span className="font-bold text-slate-300">{confluence.pillars.pillar_2_variance_risk_premium.realized_vol_30d.toFixed(1)}%</span>
+                      <span className="text-[9px] text-slate-500 block">30d Actual</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5 col-span-2">
+                      <span className="text-[10px] text-slate-500 block">IV RANK &amp; SPREAD</span>
+                      <span className="font-bold text-amber-300">{confluence.pillars.pillar_2_variance_risk_premium.iv_rank_pct.toFixed(1)}% IVR</span>
+                      <span className="text-[9px] text-slate-400 block">VRP Spread: +{confluence.pillars.pillar_2_variance_risk_premium.variance_risk_premium}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 p-2.5 rounded bg-purple-950/30 border border-purple-500/20 text-xs font-mono text-purple-200/90 leading-relaxed">
+                  {confluence.pillars.pillar_2_variance_risk_premium.rationale}
+                </div>
+              </div>
+
+              {/* Pillar 3: Renaissance Credit Lead-Lag */}
+              <div className="glass-panel p-4 rounded-xl border border-amber-500/30 bg-gradient-to-b from-amber-950/20 via-slate-950 to-slate-950 flex flex-col justify-between hover:border-amber-500/50 transition-all shadow-md">
+                <div>
+                  <div className="flex items-center justify-between border-b border-amber-500/20 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        <Layers size={16} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white">
+                          Pillar 3: Credit Lead
+                        </h3>
+                        <span className="text-[10px] font-mono text-slate-400">HYG Bonds vs SPY</span>
+                      </div>
+                    </div>
+                    <div className="text-right font-mono">
+                      <span className="text-sm font-bold text-amber-400">
+                        {confluence.pillars.pillar_3_credit_lead_lag.score}
+                      </span>
+                      <span className="text-[10px] text-slate-500"> / 25</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mt-3 font-mono text-xs">
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">HYG (JUNK BONDS)</span>
+                      <span className={`font-bold ${confluence.pillars.pillar_3_credit_lead_lag.hyg_4h_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {confluence.pillars.pillar_3_credit_lead_lag.hyg_4h_change_pct >= 0 ? '+' : ''}{confluence.pillars.pillar_3_credit_lead_lag.hyg_4h_change_pct.toFixed(2)}%
+                      </span>
+                      <span className="text-[9px] text-slate-500 block">4h Flow</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">SPY (EQUITIES)</span>
+                      <span className={`font-bold ${confluence.pillars.pillar_3_credit_lead_lag.spy_4h_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {confluence.pillars.pillar_3_credit_lead_lag.spy_4h_change_pct >= 0 ? '+' : ''}{confluence.pillars.pillar_3_credit_lead_lag.spy_4h_change_pct.toFixed(2)}%
+                      </span>
+                      <span className="text-[9px] text-slate-500 block">4h Equity</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5 col-span-2">
+                      <span className="text-[10px] text-slate-500 block">DIVERGENCE STATE</span>
+                      <span className="font-bold text-amber-300">{confluence.pillars.pillar_3_credit_lead_lag.divergence_state.replace(/_/g, ' ')}</span>
+                      <span className="text-[9px] text-slate-400 block">Credit Spread: {confluence.pillars.pillar_3_credit_lead_lag.credit_divergence_spread > 0 ? '+' : ''}{confluence.pillars.pillar_3_credit_lead_lag.credit_divergence_spread.toFixed(2)}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 p-2.5 rounded bg-amber-950/30 border border-amber-500/20 text-xs font-mono text-amber-200/90 leading-relaxed">
+                  {confluence.pillars.pillar_3_credit_lead_lag.rationale}
+                </div>
+              </div>
+
+              {/* Pillar 4: Dark Pool Liquidity Sweep */}
+              <div className="glass-panel p-4 rounded-xl border border-emerald-500/30 bg-gradient-to-b from-emerald-950/20 via-slate-950 to-slate-950 flex flex-col justify-between hover:border-emerald-500/50 transition-all shadow-md">
+                <div>
+                  <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <Target size={16} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white">
+                          Pillar 4: Stop-Hunt
+                        </h3>
+                        <span className="text-[10px] font-mono text-slate-400">Dark Pool Absorption</span>
+                      </div>
+                    </div>
+                    <div className="text-right font-mono">
+                      <span className="text-sm font-bold text-emerald-400">
+                        {confluence.pillars.pillar_4_liquidity_sweep.score}
+                      </span>
+                      <span className="text-[10px] text-slate-500"> / 25</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mt-3 font-mono text-xs">
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">VOLUME EXPANSION</span>
+                      <span className={`font-bold ${confluence.pillars.pillar_4_liquidity_sweep.volume_ratio >= 1.5 ? 'text-emerald-400' : 'text-slate-300'}`}>
+                        {confluence.pillars.pillar_4_liquidity_sweep.volume_ratio.toFixed(1)}x
+                      </span>
+                      <span className="text-[9px] text-slate-500 block">vs baseline</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5">
+                      <span className="text-[10px] text-slate-500 block">INVALIDATION (STOP)</span>
+                      <span className="font-bold text-rose-400">${confluence.pillars.pillar_4_liquidity_sweep.invalidation_level.toFixed(2)}</span>
+                      <span className="text-[9px] text-slate-500 block">Risk Invalidation</span>
+                    </div>
+                    <div className="p-2 rounded bg-black/50 border border-white/5 col-span-2">
+                      <span className="text-[10px] text-slate-500 block">SWEEP ORDER FLOW</span>
+                      <span className="font-bold text-emerald-300">{confluence.pillars.pillar_4_liquidity_sweep.sweep_pattern.replace(/_/g, ' ')}</span>
+                      <span className="text-[9px] text-slate-400 block">Target: ${confluence.pillars.pillar_4_liquidity_sweep.target_level.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 p-2.5 rounded bg-emerald-950/30 border border-emerald-500/20 text-xs font-mono text-emerald-200/90 leading-relaxed">
+                  {confluence.pillars.pillar_4_liquidity_sweep.rationale}
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        ) : null
+      ) : (
+        /* UNIVERSE SCANNER TAB (Full Width Table) */
+        <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-white uppercase font-mono">
+                Full-Universe Institutional Confluence Radar
+              </h3>
+              <p className="text-xs text-slate-400 font-mono">
+                Ranked by Confluence Score. Setups scoring &gt;= 75 points qualify for autonomous firm execution.
+              </p>
+            </div>
+            {radarLoading && (
+              <div className="flex items-center gap-2 text-xs font-mono text-indigo-400">
+                <RefreshCw size={14} className="animate-spin" />
+                <span>Scanning feeds...</span>
+              </div>
+            )}
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-950/50">
+            <table className="w-full text-left font-mono text-xs">
+              <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                <tr>
+                  <th className="py-3 px-4">Symbol</th>
+                  <th className="py-3 px-4">Spot</th>
+                  <th className="py-3 px-4">Confluence Score</th>
+                  <th className="py-3 px-4">Verdict</th>
+                  <th className="py-3 px-4">Call Wall</th>
+                  <th className="py-3 px-4">Put Wall</th>
+                  <th className="py-3 px-4">IV Rank</th>
+                  <th className="py-3 px-4">Credit Lead</th>
+                  <th className="py-3 px-4 text-right">Inspect</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {radar.map((item) => (
+                  <tr 
+                    key={item.symbol} 
+                    className="hover:bg-slate-800/50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      onSelectSymbol(item.symbol);
+                      setActiveTab('WORKSPACE');
+                    }}
+                  >
+                    <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                      <span className="text-sm">{item.symbol}</span>
+                      {item.execution_permitted && (
+                        <Zap size={13} className="text-emerald-400 fill-emerald-400 animate-pulse" />
+                      )}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-300">${item.spot_price.toFixed(2)}</td>
+                    <td className="py-3.5 px-4">
+                      <span className={`px-2.5 py-1 rounded font-bold ${
+                        item.confluence_score >= 75 
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                          : item.confluence_score >= 60
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {item.confluence_score} / 100
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <span className={`font-bold ${item.execution_permitted ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        {item.trade_verdict}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 text-rose-400">${item.call_wall.toFixed(2)}</td>
+                    <td className="py-3.5 px-4 text-emerald-400">${item.put_wall.toFixed(2)}</td>
+                    <td className="py-3.5 px-4 text-slate-300">{item.iv_rank.toFixed(0)}%</td>
+                    <td className="py-3.5 px-4 text-slate-300">{item.credit_state.replace(/_/g, ' ')}</td>
+                    <td className="py-3.5 px-4 text-right">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectSymbol(item.symbol);
+                          setActiveTab('WORKSPACE');
+                        }}
+                        className="px-3 py-1 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-400/40 hover:bg-indigo-500/40 transition-all font-bold"
+                      >
+                        Load Workspace →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}

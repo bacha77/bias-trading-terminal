@@ -17,6 +17,7 @@ import { DeskPerformanceModal } from './DeskPerformanceModal';
 import { SolanaDexRadarModal } from './SolanaDexRadarModal';
 import { HyperliquidArbModal } from './HyperliquidArbModal';
 import { InstitutionalQuantModal } from './InstitutionalQuantModal';
+import { InstitutionalQuantWorkspace } from './InstitutionalQuantWorkspace';
 import { SmartAlgoBoard } from './SmartAlgoBoard';
 import { WallReversalRadarCard } from './WallReversalRadarCard';
 import { MultiTimeframeRibbon } from './MultiTimeframeRibbon';
@@ -105,6 +106,8 @@ function App() {
   const [isDexModalOpen, setIsDexModalOpen] = useState(false);
   const [isHyperliquidModalOpen, setIsHyperliquidModalOpen] = useState(false);
   const [isInstitutionalModalOpen, setIsInstitutionalModalOpen] = useState(false);
+  const [terminalView, setTerminalView] = useState<'OVERVIEW' | 'QUANT_ALPHA' | 'DELTA_NEUTRAL'>('OVERVIEW');
+  const [quantConfluence, setQuantConfluence] = useState<any>(null);
 
   // Authentication & Portal Access State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -314,25 +317,36 @@ function App() {
     }
   }, []);
 
+  const fetchQuantAlpha = useCallback(async (t: string) => {
+    try {
+      const data = await getJSON(`/institutional/confluence?symbol=${encodeURIComponent(t)}`);
+      setQuantConfluence(data);
+    } catch (e) {
+      console.error('Failed to fetch quant alpha:', e);
+    }
+  }, []);
+
   useEffect(() => {
     Promise.all([fetchBreakouts(), fetchOverview(), fetchRegime(), fetchAlpaca()]).then(() => setLoading(false));
     const interval = setInterval(() => { fetchBreakouts(); fetchOverview(); fetchRegime(); fetchAlpaca(); }, 25000);
     return () => clearInterval(interval);
   }, []);
 
-  // options + confluence + smart algo + dark pool blocks follow the selected ticker
+  // options + confluence + smart algo + dark pool blocks + quant alpha follow the selected ticker
   useEffect(() => {
     fetchOptions(optTicker, expiry);
     fetchConfluence(optTicker);
     fetchSmartAlgo(optTicker);
     fetchBlocks(optTicker);
+    fetchQuantAlpha(optTicker);
     const iv = setInterval(() => {
       fetchOptions(optTicker, expiry);
       fetchSmartAlgo(optTicker);
       fetchBlocks(optTicker);
+      fetchQuantAlpha(optTicker);
     }, 15000);
     return () => clearInterval(iv);
-  }, [optTicker, expiry, fetchOptions, fetchConfluence, fetchSmartAlgo, fetchBlocks]);
+  }, [optTicker, expiry, fetchOptions, fetchConfluence, fetchSmartAlgo, fetchBlocks, fetchQuantAlpha]);
 
   const selectTicker = (t: string) => {
     const s = t.toUpperCase().trim();
@@ -805,12 +819,23 @@ function App() {
 
           {/* Institutional Quant Alpha Matrix (Citadel, Jane Street, Renaissance) */}
           <button
-            onClick={() => setIsInstitutionalModalOpen(true)}
-            className="text-[10px] font-mono px-2.5 py-1 rounded border border-indigo-400/50 bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-transparent text-indigo-300 hover:text-white flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(99,102,241,0.3)] cursor-pointer"
-            title="Open Institutional Quant Alpha Matrix (Citadel GEX, Jane Street VRP, Renaissance Credit, Dark Pool Sweeps)"
+            onClick={() => setTerminalView(terminalView === 'QUANT_ALPHA' ? 'OVERVIEW' : 'QUANT_ALPHA')}
+            className={`text-[10px] font-mono px-3 py-1 rounded border transition-all flex items-center gap-1.5 cursor-pointer ${
+              terminalView === 'QUANT_ALPHA'
+                ? 'bg-gradient-to-r from-indigo-500/40 via-purple-500/40 to-indigo-600/30 text-white border-indigo-400 font-bold shadow-[0_0_15px_rgba(99,102,241,0.4)] ring-1 ring-indigo-400'
+                : 'border-indigo-400/50 bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-transparent text-indigo-300 hover:text-white shadow-[0_0_12px_rgba(99,102,241,0.3)]'
+            }`}
+            title="Toggle between Full-Terminal Multi-Chart Overview and the 4-Pillar Quantitative Alpha Workspace"
           >
             <Cpu size={12} className="text-indigo-400 animate-pulse" />
-            <span>🏛️ QUANT ALPHA (4 PILLARS)</span>
+            <span>{terminalView === 'QUANT_ALPHA' ? '📊 RETURN TO CHARTS' : '🏛️ QUANT ALPHA (4 PILLARS)'}</span>
+            {quantConfluence && (
+              <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                quantConfluence.execution_permitted ? 'bg-emerald-400 text-black' : 'bg-indigo-400/30 text-indigo-200'
+              }`}>
+                {quantConfluence.confluence_score}
+              </span>
+            )}
           </button>
         </div>
         <div className="flex gap-4 font-mono text-sm">
@@ -1056,7 +1081,15 @@ function App() {
         </section>
       )}
 
-      {/* ================= Options / Asset Command Bar ================= */}
+      {terminalView === 'QUANT_ALPHA' ? (
+        <InstitutionalQuantWorkspace 
+          selectedSymbol={optTicker} 
+          onSelectSymbol={(s) => selectTicker(s)}
+          onReturnToOverview={() => setTerminalView('OVERVIEW')}
+        />
+      ) : (
+        <>
+          {/* ================= Options / Asset Command Bar ================= */}
       <section className="glass-panel px-4 py-3 flex flex-wrap items-center gap-3">
         {/* Asset Class Switcher */}
         <div className="flex bg-black/60 p-0.5 rounded-lg border border-white/10 shrink-0 shadow-inner">
@@ -1282,6 +1315,63 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* ================= Institutional Quant Alpha Ribbon (4 Pillars Live) ================= */}
+      {quantConfluence && (
+        <div 
+          onClick={() => setTerminalView('QUANT_ALPHA')}
+          className={`glass-panel py-2 px-4 rounded-xl border flex flex-wrap items-center justify-between gap-3 text-xs font-mono cursor-pointer transition-all hover:scale-[1.002] ${
+            quantConfluence.execution_permitted
+              ? 'bg-gradient-to-r from-emerald-950/40 via-black to-emerald-950/30 border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
+              : 'bg-gradient-to-r from-slate-950 via-indigo-950/30 to-slate-950 border-indigo-500/40 shadow-[0_0_20px_rgba(99,102,241,0.15)]'
+          }`}
+          title="Click to expand the full 4-Pillar Quantitative Alpha Workspace"
+        >
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-400/40 text-indigo-300 font-bold text-[10px]">
+              <Cpu size={12} className="animate-pulse" />
+              CITADEL · JANE STREET · RENAISSANCE
+            </span>
+
+            <span className="font-bold text-white">
+              {optTicker} CONFLUENCE:
+            </span>
+
+            <span className={`px-2 py-0.5 rounded font-black text-xs ${
+              quantConfluence.execution_permitted 
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+            }`}>
+              {quantConfluence.confluence_score} / 100 PTS
+            </span>
+
+            <span className="text-slate-500 hidden md:inline">·</span>
+
+            <span className="text-slate-300 hidden md:inline text-[11px]">
+              Call Wall: <strong className="text-rose-400">${quantConfluence.pillars?.pillar_1_dealer_gex?.call_wall?.toFixed(2)}</strong> · Put Wall: <strong className="text-emerald-400">${quantConfluence.pillars?.pillar_1_dealer_gex?.put_wall?.toFixed(2)}</strong>
+            </span>
+
+            <span className="text-slate-500 hidden lg:inline">·</span>
+
+            <span className="text-slate-300 hidden lg:inline text-[11px]">
+              VRP: <strong className="text-purple-300">+{quantConfluence.pillars?.pillar_2_variance_risk_premium?.variance_risk_premium}%</strong> (IVR: {quantConfluence.pillars?.pillar_2_variance_risk_premium?.iv_rank_pct?.toFixed(0)}%)
+            </span>
+
+            <span className="text-slate-500 hidden xl:inline">·</span>
+
+            <span className="text-slate-300 hidden xl:inline text-[11px]">
+              Credit: <strong className="text-amber-300">{quantConfluence.pillars?.pillar_3_credit_lead_lag?.divergence_state?.replace(/_/g, ' ')}</strong>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 text-indigo-300 text-xs font-bold hover:text-white transition-colors">
+            <span>{quantConfluence.execution_permitted ? 'APPROVED SETUP' : 'RETAIL NOISE: STAND DOWN'}</span>
+            <span className="px-2 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-mono">
+              EXPAND DESK →
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ================= Key metrics strip ================= */}
       <section className={`grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 transition-opacity ${optLoading && !opt ? 'opacity-40' : ''}`}>
@@ -1745,6 +1835,8 @@ function App() {
       <div id="narrative-radar">
         <EarlyGemRadar />
       </div>
+        </>
+      )}
 
       {/* ================= Alpaca Live Positions & Portfolio Drawer ================= */}
       <PositionsDrawer alpacaAccount={alpaca} onSelectTicker={selectTicker} />

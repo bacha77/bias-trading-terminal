@@ -144,8 +144,8 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
   const isApproved = confluence?.execution_permitted ?? false;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md">
-      <div className="relative w-full max-w-6xl max-h-[92vh] flex flex-col bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden font-sans text-slate-100">
+    <div className="fixed inset-0 z-50 flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden">
+      <div className="relative w-full h-full flex flex-col bg-slate-950 overflow-hidden">
         
         {/* Top Header */}
         <div className="px-6 py-4 border-b border-slate-800/80 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 flex items-center justify-between">
