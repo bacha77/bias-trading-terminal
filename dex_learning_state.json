@@ -1,0 +1,83 @@
+{
+  "total_samples": 0,
+  "successful_trades": 0,
+  "loss_trades": 0,
+  "runners_3x_plus": 0,
+  "win_rate": 66.7,
+  "avg_win_pct": 28.5,
+  "avg_loss_pct": -7.5,
+  "expectancy_usd": 12.4,
+  "profit_factor": 2.45,
+  "feature_weights": {
+    "safety_score": {
+      "mean": 1.2,
+      "var": 0.25,
+      "optimal_range": [
+        75,
+        100
+      ],
+      "name": "Forensic Safety Score"
+    },
+    "dev_holding_pct": {
+      "mean": -1.5,
+      "var": 0.3,
+      "optimal_range": [
+        0.0,
+        3.5
+      ],
+      "name": "Dev Allocation %"
+    },
+    "top10_holding_pct": {
+      "mean": -1.1,
+      "var": 0.25,
+      "optimal_range": [
+        10.0,
+        35.0
+      ],
+      "name": "Top 10 Holder %"
+    },
+    "liquidity_usd": {
+      "mean": 0.8,
+      "var": 0.2,
+      "optimal_range": [
+        25000,
+        200000
+      ],
+      "name": "Pool Liquidity Depth"
+    },
+    "buy_ratio_1h": {
+      "mean": 1.4,
+      "var": 0.3,
+      "optimal_range": [
+        55.0,
+        85.0
+      ],
+      "name": "1H Buy Volume Ratio"
+    },
+    "price_change_5m": {
+      "mean": 0.9,
+      "var": 0.25,
+      "optimal_range": [
+        5.0,
+        45.0
+      ],
+      "name": "5M Velocity Momentum"
+    },
+    "bonding_curve_pct": {
+      "mean": 1.1,
+      "var": 0.25,
+      "optimal_range": [
+        70.0,
+        95.0
+      ],
+      "name": "Pump Bonding Progress"
+    }
+  },
+  "feature_correlations": {
+    "dev_holding_under_3pct": 0.82,
+    "high_liquidity_over_30k": 0.74,
+    "buy_ratio_over_65pct": 0.88,
+    "pre_graduation_80pct": 0.79
+  },
+  "recent_training_logs": []
+}

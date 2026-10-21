@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Activity, Target, BrainCircuit, AlertTriangle, Crosshair, Gauge, 
   Layers, Zap, Waves, ShieldAlert, RefreshCw, Search, 
-  Volume2, VolumeX, Landmark, BellRing, BarChart3, Flame, Compass, Radio, LogOut, Coins, Sparkles
+  Volume2, VolumeX, Landmark, BellRing, BarChart3, Flame, Compass, Radio, LogOut, Coins, Sparkles, Percent
 } from 'lucide-react';
 import { PanelTitle, Metric, GexLadder, Playbook, RegimeCard, OptionsChain, UnusualFlow, VolPanel } from './OptionsPanels';
 import { MultiChartGrid } from './MultiChartGrid';
@@ -15,6 +15,7 @@ import { TelegramConfigModal } from './TelegramConfigModal';
 import { OptionsRiskSimulatorModal } from './OptionsRiskSimulatorModal';
 import { DeskPerformanceModal } from './DeskPerformanceModal';
 import { SolanaDexRadarModal } from './SolanaDexRadarModal';
+import { HyperliquidArbModal } from './HyperliquidArbModal';
 import { SmartAlgoBoard } from './SmartAlgoBoard';
 import { WallReversalRadarCard } from './WallReversalRadarCard';
 import { MultiTimeframeRibbon } from './MultiTimeframeRibbon';
@@ -101,6 +102,7 @@ function App() {
   const [isRiskSimulatorOpen, setIsRiskSimulatorOpen] = useState(false);
   const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState(false);
   const [isDexModalOpen, setIsDexModalOpen] = useState(false);
+  const [isHyperliquidModalOpen, setIsHyperliquidModalOpen] = useState(false);
 
   // Authentication & Portal Access State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -787,6 +789,16 @@ function App() {
           >
             <Zap size={12} className="text-cyan-400 fill-cyan-400 animate-pulse" />
             <span>🪐 SOLANA DEX SNIPER</span>
+          </button>
+
+          {/* Hyperliquid Delta-Neutral Basis & Funding Arb */}
+          <button
+            onClick={() => setIsHyperliquidModalOpen(true)}
+            className="text-[10px] font-mono px-2.5 py-1 rounded border border-emerald-400/50 bg-gradient-to-r from-emerald-500/20 via-cyan-500/20 to-transparent text-emerald-300 hover:text-white flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(16,185,129,0.3)] cursor-pointer"
+            title="Open Hyperliquid Delta-Neutral Basis & 24/7 Funding Arbitrage Desk (20%-50%+ APR)"
+          >
+            <Percent size={12} className="text-emerald-400 animate-pulse" />
+            <span>⚡ DELTA-NEUTRAL ARB (20-50% APR)</span>
           </button>
         </div>
         <div className="flex gap-4 font-mono text-sm">
@@ -1748,6 +1760,11 @@ function App() {
       <SolanaDexRadarModal
         isOpen={isDexModalOpen}
         onClose={() => setIsDexModalOpen(false)}
+      />
+
+      <HyperliquidArbModal
+        isOpen={isHyperliquidModalOpen}
+        onClose={() => setIsHyperliquidModalOpen(false)}
       />
 
       <footer className="text-center text-[10px] text-slate-600 font-mono pb-2">

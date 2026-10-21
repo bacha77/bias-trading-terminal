@@ -35,7 +35,7 @@ async def normalize_api_paths(request: Request, call_next):
             "/forex/", "/backtest", "/market-data/", "/scanner/",
             "/options/", "/algo/", "/market/", "/alpaca/",
             "/paper/", "/crypto/", "/news/", "/alerts/", "/copilot/", "/macro/",
-            "/dex/", "/telegram/", "/desk/"
+            "/dex/", "/telegram/", "/desk/", "/hyperliquid/"
         )
         if any(path.startswith(kp) or path == kp for kp in known_prefixes):
             request.scope["path"] = f"/api{path}"
@@ -4405,6 +4405,50 @@ async def _crypto_autonomous_worker():
             print(f"Autonomous Crypto Daemon loop error: {c_err}")
             await asyncio.sleep(15)
 
+# -------------------------------------------------------------
+# Hyperliquid Delta-Neutral Basis & Funding Arbitrage Endpoints
+# -------------------------------------------------------------
+class DeployVaultRequest(BaseModel):
+    asset: str
+    capital_usd: float = 1000.0
+    mode: Optional[str] = "SIMULATION"
+
+class CloseVaultRequest(BaseModel):
+    vault_id: str
+
+@app.get("/api/hyperliquid/funding-radar")
+async def get_hyperliquid_funding_radar(min_oi: float = 250000.0):
+    import hyperliquid_arb_engine
+    res = await asyncio.to_thread(hyperliquid_arb_engine.fetch_live_funding_radar, min_oi)
+    return {"status": "SUCCESS", "count": len(res), "opportunities": res}
+
+@app.get("/api/hyperliquid/state")
+async def get_hyperliquid_state():
+    import hyperliquid_arb_engine
+    state = hyperliquid_arb_engine.load_arb_state()
+    return {"status": "SUCCESS", "state": state}
+
+@app.post("/api/hyperliquid/deploy-vault")
+async def deploy_hyperliquid_vault(req: DeployVaultRequest):
+    import hyperliquid_arb_engine
+    res = await asyncio.to_thread(hyperliquid_arb_engine.deploy_basis_vault, req.asset, req.capital_usd, req.mode)
+    return res
+
+@app.post("/api/hyperliquid/close-vault")
+async def close_hyperliquid_vault(req: CloseVaultRequest):
+    import hyperliquid_arb_engine
+    res = await asyncio.to_thread(hyperliquid_arb_engine.close_basis_vault, req.vault_id)
+    return res
+
+async def _hyperliquid_arb_worker():
+    while True:
+        try:
+            await asyncio.sleep(45)
+            import hyperliquid_arb_engine
+            await asyncio.to_thread(hyperliquid_arb_engine.update_arb_vaults_cycle)
+        except Exception as e:
+            print(f"[HYPERLIQUID ARB WORKER ERROR] {e}")
+
 async def _solana_dex_risk_worker():
     while True:
         try:
@@ -4421,6 +4465,7 @@ async def start_background_workers():
     asyncio.create_task(_copilot_autonomous_worker())
     asyncio.create_task(_crypto_autonomous_worker())
     asyncio.create_task(_solana_dex_risk_worker())
+    asyncio.create_task(_hyperliquid_arb_worker())
     try:
         import desk_notifier
         desk_notifier.start_telegram_callback_listener()
