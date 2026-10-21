@@ -794,14 +794,27 @@ def get_solana_wallet_status() -> Dict[str, Any]:
         "message": f"Wallet active ({balance_sol} SOL). Ready for live execution." if balance_sol >= 0.02 else f"Low SOL balance ({balance_sol} SOL). Deposit at least 0.05 SOL to execute."
     }
 
-def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
+_LIVE_ONCHAIN_CACHE: Dict[str, Any] = {
+    "timestamp": 0.0,
+    "positions": []
+}
+
+def sync_live_positions_from_chain(force: bool = False) -> List[Dict[str, Any]]:
     """
     Scans the actual on-chain Solana wallet for Tokenkeg and Token2022 accounts.
-    Discovers all tokens with positive balances and generates live tracking records.
+    Uses an in-memory 15-second TTL cache and batched DexScreener queries to prevent
+    Solana RPC 429 rate-limiting, and guarantees positions never flash or disappear on network hiccups.
     """
+    global _LIVE_ONCHAIN_CACHE
+    now_ts = time.time()
+    
+    # 1. Return cached positions if within 15s TTL and not forced
+    if not force and (now_ts - _LIVE_ONCHAIN_CACHE["timestamp"] < 15.0) and _LIVE_ONCHAIN_CACHE["positions"]:
+        return _LIVE_ONCHAIN_CACHE["positions"]
+
     kp = get_solana_keypair()
     if not kp:
-        return []
+        return _LIVE_ONCHAIN_CACHE["positions"]
     pubkey = str(kp.pubkey())
     rpc_url = get_solana_rpc_url()
     
@@ -811,6 +824,7 @@ def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
     ]
     
     live_tokens = []
+    rpc_success = False
     for pid in program_ids:
         try:
             payload = {
@@ -823,15 +837,17 @@ def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
                 headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
+                rpc_success = True
                 for item in data.get("result", {}).get("value", []):
                     info = item.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
                     token_amt = float(info.get("tokenAmount", {}).get("uiAmount") or 0.0)
                     raw_amount = int(info.get("tokenAmount", {}).get("amount") or 0)
                     decimals = int(info.get("tokenAmount", {}).get("decimals") or 6)
                     mint = info.get("mint")
-                    if token_amt > 0.00001 and mint not in [SOL_MINT, USDC_MINT, "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh"]:
+                    # Ignore SOL/USDC and sub-dust tokens (< 0.0001 amount)
+                    if token_amt > 0.0001 and mint not in [SOL_MINT, USDC_MINT, "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh"]:
                         live_tokens.append({
                             "mint": mint,
                             "tokens_held": token_amt,
@@ -841,29 +857,42 @@ def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Error fetching token accounts for pid {pid}: {e}")
 
+    # If the RPC completely failed (e.g. 429 rate limit or timeout), PRESERVE cached positions!
+    if not rpc_success and _LIVE_ONCHAIN_CACHE["positions"]:
+        logger.warning("[RPC RATE LIMIT] Preserving existing live positions from cache during transient failure.")
+        return _LIVE_ONCHAIN_CACHE["positions"]
+
+    # 2. Batch DexScreener price query (1 call instead of N serial calls)
+    pairs_by_mint: Dict[str, Dict[str, Any]] = {}
+    if live_tokens:
+        mints = [tok["mint"] for tok in live_tokens]
+        try:
+            batch_url = f"https://api.dexscreener.com/latest/dex/tokens/{','.join(mints[:30])}"
+            b_req = urllib.request.Request(batch_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(b_req, timeout=4) as br:
+                bd = json.loads(br.read().decode())
+                for pair in bd.get("pairs", []):
+                    addr = pair.get("baseToken", {}).get("address")
+                    if addr and addr not in pairs_by_mint:
+                        pairs_by_mint[addr] = pair
+        except Exception as dex_err:
+            logger.debug(f"Batch DexScreener error: {dex_err}")
+
     live_positions = []
+    curr_state = load_dex_state()
     for tok in live_tokens:
         mint = tok["mint"]
-        symbol = mint[:6]
-        price_usd = 0.001
-        pair_url = f"https://dexscreener.com/solana/{mint}"
-        try:
-            req = urllib.request.Request(f"https://api.dexscreener.com/latest/dex/tokens/{mint}", headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=5) as r:
-                d = json.loads(r.read().decode())
-                pairs = d.get("pairs", [])
-                if pairs:
-                    p = pairs[0]
-                    symbol = p.get("baseToken", {}).get("symbol") or symbol
-                    price_usd = float(p.get("priceUsd") or 0.001)
-                    pair_url = p.get("url") or pair_url
-        except Exception:
-            pass
+        pair_info = pairs_by_mint.get(mint, {})
+        symbol = pair_info.get("baseToken", {}).get("symbol") or mint[:6]
+        price_usd = float(pair_info.get("priceUsd") or 0.001)
+        pair_url = pair_info.get("url") or f"https://dexscreener.com/solana/{mint}"
 
         current_val_usd = round(tok["tokens_held"] * price_usd, 2)
         
-        # Match against internal active positions or closed tickets to retrieve true purchase size
-        curr_state = load_dex_state()
+        # Filter out negligible leftover sub-cent dust (e.g. 0.0006 CARDS worth $0.00)
+        if current_val_usd < 0.10 and tok["tokens_held"] < 0.01:
+            continue
+
         state_match = next((p for p in curr_state.get("active_positions", []) if p.get("address") == mint), None)
         if not state_match:
             state_match = next((p for p in curr_state.get("closed_trades", []) if p.get("address") == mint), None)
@@ -910,7 +939,12 @@ def sync_live_positions_from_chain() -> List[Dict[str, Any]]:
             "solscan_url": f"https://solscan.io/token/{mint}"
         })
 
-    return live_positions
+    # Update cache if we found tokens, or if it was a clean valid check
+    if live_positions or rpc_success:
+        _LIVE_ONCHAIN_CACHE["timestamp"] = now_ts
+        _LIVE_ONCHAIN_CACHE["positions"] = live_positions
+
+    return live_positions if live_positions else _LIVE_ONCHAIN_CACHE["positions"]
 
 def execute_jupiter_onchain_swap(
     output_mint: str,
@@ -1711,10 +1745,12 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
             existing_addrs.add(addr)
 
     # Prune LIVE_ONCHAIN positions that are no longer physically in the wallet (e.g. liquidated)
-    if state.get("dex_mode") == "LIVE":
+    # SAFETY GUARD: Only prune if the on-chain sync returned a verified non-empty list of tokens!
+    # If onchain_by_addr is empty due to a network glitch or RPC rate-limit, NEVER wipe out active positions!
+    if state.get("dex_mode") == "LIVE" and len(onchain_by_addr) > 0:
         active_pos = [p for p in active_pos if p.get("mode") not in ["LIVE", "LIVE_ONCHAIN"] or p.get("address") in onchain_by_addr]
 
-    if not active_pos:
+    if not active_pos and len(onchain_by_addr) > 0:
         state["active_positions"] = []
         save_dex_state(state)
         return {"status": "NO_POSITIONS"}
