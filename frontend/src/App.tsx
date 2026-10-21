@@ -1718,8 +1718,8 @@ function App() {
       </div>
 
       {/* ================= Row 2: chain | GEX ladder | unusual & vol ================= */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <div className="glass-panel xl:col-span-5 p-4">
+      <div className="w-full min-w-0 max-w-full grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <div className="glass-panel xl:col-span-5 p-4 min-w-0 max-w-full overflow-hidden">
           <PanelTitle 
             icon={<Crosshair size={14} className="text-neon-green" />}
             helpKey="chain"
@@ -1729,7 +1729,7 @@ function App() {
           </PanelTitle>
           <OptionsChain data={opt} />
         </div>
-        <div className="glass-panel xl:col-span-4 p-4 flex flex-col">
+        <div className="glass-panel xl:col-span-4 p-4 flex flex-col min-w-0 max-w-full overflow-hidden">
           <PanelTitle 
             icon={<Layers size={14} className="text-neon-gold" />}
             helpKey="gex"
@@ -1739,7 +1739,7 @@ function App() {
           </PanelTitle>
           <GexLadder data={opt} />
         </div>
-        <div className="glass-panel xl:col-span-3 p-4 flex flex-col gap-4">
+        <div className="glass-panel xl:col-span-3 p-4 flex flex-col gap-4 min-w-0 max-w-full overflow-hidden">
           <div>
             <PanelTitle icon={<ShieldAlert size={14} className="text-neon-red" />} helpKey="unusual">Unusual Flow</PanelTitle>
             <UnusualFlow data={opt} />
@@ -1752,8 +1752,8 @@ function App() {
       </div>
 
       {/* ================= Row 3: sentiment | strategy lab ================= */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <div className="glass-panel xl:col-span-6 p-4 flex flex-col">
+      <div className="w-full min-w-0 max-w-full grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <div className="glass-panel xl:col-span-6 p-4 flex flex-col min-w-0 max-w-full overflow-hidden">
           <PanelTitle icon={<BrainCircuit size={14} className="text-neon-gold" />} helpKey="sentiment">Technical Sentiment · {confluence?.ticker || optTicker}</PanelTitle>
           <div className="mb-4">
             <div className="flex justify-between text-xs font-bold mb-1">
