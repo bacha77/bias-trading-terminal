@@ -90,11 +90,17 @@ interface Props {
   selectedSymbol: string;
   onSelectSymbol: (sym: string) => void;
   onReturnToOverview?: () => void;
+  tape?: Record<string, any>;
+  overview?: Record<string, any>;
 }
 
-const UNIVERSE = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MSFT', 'META', 'AMZN', 'GOOGL'];
+const UNIVERSE = [
+  'SPY', 'QQQ', 'IWM', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'MSFT', 
+  'META', 'AMZN', 'GOOGL', 'PLTR', 'COIN', 'MSTR', 'AVGO', 'SMCI', 
+  'NFLX', 'ARM', 'MU', 'INTC', 'JPM', 'XLE', 'XLK', 'XLF'
+];
 
-export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, onReturnToOverview }: Props) {
+export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, onReturnToOverview, tape, overview }: Props) {
   const [confluence, setConfluence] = useState<ConfluenceData | null>(null);
   const [radar, setRadar] = useState<RadarItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -223,20 +229,36 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
         <span className="text-slate-500 font-bold flex items-center gap-1 shrink-0">
           <Compass size={13} /> SELECT TICKER:
         </span>
-        <div className="flex items-center gap-1.5">
-          {UNIVERSE.map((sym) => (
-            <button
-              key={sym}
-              onClick={() => onSelectSymbol(sym)}
-              className={`px-3 py-1 rounded-md transition-all cursor-pointer font-bold ${
-                selectedSymbol === sym
-                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-400/60 shadow-[0_0_12px_rgba(99,102,241,0.25)]'
-                  : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-white'
-              }`}
-            >
-              {sym}
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5 pb-1">
+          {UNIVERSE.map((sym) => {
+            const item = tape?.[sym] || overview?.[sym];
+            const p = item?.price;
+            const c = item?.change;
+            const isSelected = selectedSymbol === sym;
+            return (
+              <button
+                key={sym}
+                onClick={() => onSelectSymbol(sym)}
+                className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer font-mono text-xs flex items-center gap-1.5 shrink-0 ${
+                  isSelected
+                    ? 'bg-indigo-500/30 text-white border border-indigo-400 font-bold shadow-[0_0_12px_rgba(99,102,241,0.35)] ring-1 ring-indigo-400'
+                    : 'bg-slate-900/80 text-slate-300 border border-slate-800 hover:border-slate-700 hover:text-white'
+                }`}
+              >
+                <span className="font-bold">{sym}</span>
+                {p !== undefined && p !== null && (
+                  <span className="text-[11px] text-slate-300 font-normal">
+                    ${Number(p).toFixed(Number(p) < 10 ? 4 : 2)}
+                  </span>
+                )}
+                {c !== undefined && c !== null && (
+                  <span className={`text-[10px] font-bold ${Number(c) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {Number(c) > 0 ? '+' : ''}{Number(c).toFixed(2)}%
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 

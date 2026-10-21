@@ -1086,6 +1086,8 @@ function App() {
           selectedSymbol={optTicker} 
           onSelectSymbol={(s) => selectTicker(s)}
           onReturnToOverview={() => setTerminalView('OVERVIEW')}
+          tape={tape}
+          overview={overview}
         />
       ) : (
         <>
