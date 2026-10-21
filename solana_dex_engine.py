@@ -388,16 +388,16 @@ DEFAULT_TRACKED_WALLETS = [
 DEFAULT_DEX_STATE = {
     "dex_armed": False,
     "dex_mode": "SIMULATION",
-    "sniper_amount_usd": 25.0,
+    "sniper_amount_usd": 7.0,
     "max_dex_positions": 6,
     "active_chain": "solana",            # Default to solana
-    "risk_profile": "MOONBAG",         # "SCALPER", "MOONBAG", "HUNTER_10X"
+    "risk_profile": "SCALPER",         # "SCALPER", "MOONBAG", "HUNTER_10X"
     "gas_priority": "TURBO",           # "NORMAL" (5k lamports), "TURBO" (50k lamports), "ULTRA_JITO" (150k lamports + MEV Shield)
     "slippage_bps": 100,               # 50 (0.5%), 100 (1.0%), 250 (2.5%), 500 (5.0%)
     "anti_mev_shield": True,           # Route private bundle / Anti-Sandwich Protection
-    "stop_loss_pct": -0.08,
-    "take_profit_tp1_pct": 0.50,
-    "moonbag_trail_pct": 0.15,
+    "stop_loss_pct": -0.14,
+    "take_profit_tp1_pct": 0.25,
+    "moonbag_trail_pct": 0.08,
     "active_positions": [],
     "closed_trades": [],
     "tracked_wallets": DEFAULT_TRACKED_WALLETS.copy(),
@@ -1566,9 +1566,29 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
 
     target_mode = "LIVE" if (mode == "LIVE" or state.get("dex_mode") == "LIVE") else "SIMULATION"
     if target_mode == "LIVE":
-        # Enforce strict user trade cap ($25 max)
-        user_cap = float(state.get("sniper_amount_usd", 25.0))
-        amount_usd = min(float(amount_usd), min(25.0, user_cap))
+        wallet_status = get_solana_wallet_status()
+        bal_sol = float(wallet_status.get("balance_sol") or 0.0)
+        sol_px = float(wallet_status.get("sol_price") or 100.0)
+        
+        # Strictly preserve 0.05 SOL for transaction gas, rent, and Jito priority tips
+        GAS_RESERVE_SOL = 0.05
+        spendable_sol = max(0.0, bal_sol - GAS_RESERVE_SOL)
+        spendable_usd = spendable_sol * sol_px
+        
+        if spendable_sol < 0.02:
+            return {
+                "status": "ERROR",
+                "message": f"Insufficient liquid SOL for snipe ({bal_sol:.4f} SOL). 0.05 SOL is strictly preserved as gas/rent reserve."
+            }
+            
+        # Dynamically size: max $7.00 when balance < 1 SOL, or 25% of spendable balance
+        user_cap = float(state.get("sniper_amount_usd", 7.0))
+        max_allowed_usd = min(user_cap, 7.0 if bal_sol < 1.0 else 25.0)
+        calculated_size_usd = min(max_allowed_usd, spendable_usd * 0.25)
+        if calculated_size_usd < 3.0:
+            calculated_size_usd = min(max_allowed_usd, spendable_usd)
+            
+        amount_usd = min(float(amount_usd), calculated_size_usd)
         if chain.lower() != "solana":
             return {
                 "status": "ERROR",
@@ -2219,19 +2239,19 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     candidates.sort(key=lambda t: t.get("institutional_score", 0), reverse=True)
     top_pick = candidates[0]
     top_chain = top_pick.get("chain", "solana")
-    base_amount = float(state.get("sniper_amount_usd", 20.0))
+    base_amount = float(state.get("sniper_amount_usd", 7.0))
     current_dex_mode = state.get("dex_mode", "SIMULATION")
     if current_dex_mode == "LIVE":
-        base_amount = min(20.0, base_amount)
+        base_amount = min(7.0, base_amount)
     kelly_amount = compute_kelly_dynamic_sizing(
         base_amount, 
         token_liquidity_usd=float(top_pick.get("liquidity_usd") or 75000.0),
         ai_conviction_score=float(top_pick.get("ai_conviction_score", 75.0))
     )
-    # STRICT CEILING: Trade amount is hard-capped to never exceed base_amount (and max $20 in live)
+    # STRICT CEILING: Trade amount is hard-capped to never exceed base_amount (and max $7.00 in live)
     final_trade_amount = min(base_amount, kelly_amount)
     if current_dex_mode == "LIVE":
-        final_trade_amount = min(20.0, final_trade_amount)
+        final_trade_amount = min(7.0, final_trade_amount)
     snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=final_trade_amount, mode=current_dex_mode, chain=top_chain)
     return {
         "status": "AUTO_SNIPED", 
