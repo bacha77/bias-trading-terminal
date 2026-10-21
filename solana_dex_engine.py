@@ -350,31 +350,31 @@ RISK_PROFILES: Dict[str, Dict[str, Any]] = {
     "SCALPER": {
         "key": "SCALPER",
         "name": "Quick Scalper (100% Cashout)",
-        "stop_loss_pct": -0.06,        # -6% Stop Loss (cut losers fast)
-        "take_profit_tp1_pct": 0.15,   # +15% Take Profit (100% Full Cashout into SOL)
-        "moonbag_trail_pct": 0.05,     # Tighter trail
+        "stop_loss_pct": -0.14,        # -14% Stop Loss (gives room for spread + normal wicks)
+        "take_profit_tp1_pct": 0.25,   # +25% Take Profit (100% Full Cashout into SOL)
+        "moonbag_trail_pct": 0.08,     # Trailing stop
         "full_cashout_at_tp": True,    # 100% full liquidation on TP (NO crumbs, NO runner bleed)
-        "badge": "⚡ SCALPER (-6% SL / +15% Full TP)",
-        "description": "Full 100% cashout at +15%. No crumbs, no runners, strict -6% stop."
+        "badge": "⚡ SCALPER (-14% SL / +25% Full TP)",
+        "description": "Full 100% cashout at +25%. No crumbs, no runners, realistic -14% stop."
     },
     "MOONBAG": {
         "key": "MOONBAG",
-        "name": "Standard Moonbag",
-        "stop_loss_pct": -0.08,        # -8% Stop Loss
-        "take_profit_tp1_pct": 0.35,   # +35% Take Profit (Scale out principal)
+        "name": "Standard Moonbag (Institutional)",
+        "stop_loss_pct": -0.18,        # -18% Structural Invalidation Stop
+        "take_profit_tp1_pct": 0.45,   # +45% Take Profit (Recovers initial risk capital, leaving runner)
         "moonbag_trail_pct": 0.15,     # -15% Trailing from High-Water Mark Peak
         "full_cashout_at_tp": False,
-        "badge": "🛡️ MOONBAG (-8% SL / +35% TP)",
-        "description": "Balanced asymmetry. Recovers principal at +35%, lets remainder ride."
+        "badge": "🛡️ MOONBAG (-18% SL / +45% TP)",
+        "description": "Institutional asymmetry. Recovers principal at +45%, lets runner ride risk-free."
     },
     "HUNTER_10X": {
         "key": "HUNTER_10X",
         "name": "10x Moon Hunter",
-        "stop_loss_pct": -0.10,        # -10% Stop Loss
+        "stop_loss_pct": -0.22,        # -22% Stop Loss
         "take_profit_tp1_pct": 0.75,   # +75% Take Profit
         "moonbag_trail_pct": 0.20,     # -20% Trailing from Peak
         "full_cashout_at_tp": False,
-        "badge": "🚀 10X HUNTER (-10% SL / +75% TP)",
+        "badge": "🚀 10X HUNTER (-22% SL / +75% TP)",
         "description": "Multi-bagger runner. Wider breathing room for parabolic surges."
     }
 }
@@ -1757,16 +1757,17 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
         pos["unrealized_pnl_pct"] = round(pnl_pct * 100, 2)
         pos["unrealized_pnl_usd"] = round((cur_px - entry_px) * pos.get("tokens_held", 0), 2)
         
-        # 1. Photon Flash Dump / Dev Dump Panic Bailout
+        # 1. Catastrophic Dev Dump / Flash Rug Panic Bailout
         last_px = pos.get("last_check_price", entry_px)
         if last_px > 0 and cur_px < entry_px:
             interval_drop = (cur_px - last_px) / last_px
-            if interval_drop <= -0.040:
+            # Genuine rug/dump threshold: -25% single-candle drop (NOT 4% normal wick noise)
+            if interval_drop <= -0.250:
                 exit_ticket = {
                     **pos,
                     "exit_price": cur_px,
                     "exit_time": datetime.now().strftime("%H:%M:%S"),
-                    "reason": f"🚨 Photon Panic Bailout: Dev Dump / Flash Drop ({interval_drop*100:.1f}%) · Saved from full stop loss",
+                    "reason": f"🚨 Catastrophic Flash Dump ({interval_drop*100:.1f}%) · Emergency liquidation executed",
                     "realized_pnl_pct": f"{pnl_pct*100:+.1f}%",
                     "realized_pnl_usd": pos["unrealized_pnl_usd"],
                     "status": "PANIC_BAILOUT_CLOSED"
@@ -1778,7 +1779,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     from desk_notifier import dispatch_desk_alert
                     dispatch_desk_alert(
                         f"🚨 DEX PANIC BAILOUT: {pos['symbol']}",
-                        f"Detected sudden flash dump ({interval_drop*100:.1f}% in 15s). Emergency bailout executed at {pnl_pct*100:+.1f}% (${pos['unrealized_pnl_usd']:+.2f}). Capital saved from deeper rug!",
+                        f"Detected catastrophic flash drop ({interval_drop*100:.1f}% in 15s). Emergency bailout executed at {pnl_pct*100:+.1f}% (${pos['unrealized_pnl_usd']:+.2f}). Capital saved from deeper rug!",
                         "RISK_ALERT",
                         metadata={"token": pos["symbol"], "action": "PANIC_DUMP_BAILOUT"}
                     )
@@ -2064,9 +2065,22 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
         if tok.get("safety_score", 0) < min_safety:
             continue
             
-        # Institutional Rule 1: Minimum Liquidity Depth ($40k for live)
+        # Institutional Rule 0: Raydium / Meteora Graduation Gate
+        # Strictly reject pre-bonding curve pump.fun tokens in Live mode
+        bonding_pct = float(tok.get("bonding_curve_pct") or 100.0)
+        grad_status = str(tok.get("graduation_status") or "")
+        if dex_mode == "LIVE":
+            if addr.lower().endswith("pump") and bonding_pct < 100.0:
+                logger.info(f"⏳ [LIVE SAFETY] Skipping {tok.get('symbol')}: Pump.fun token still on bonding curve ({bonding_pct:.1f}%)")
+                continue
+            if grad_status in ["BONDING", "PRE_GRADUATION"]:
+                logger.info(f"⏳ [LIVE SAFETY] Skipping {tok.get('symbol')}: ungraduated bonding token ({grad_status})")
+                continue
+
+        # Institutional Rule 1: Minimum Liquidity Depth ($75k for live)
         liq_val = float(tok.get("liquidity_usd") or 0.0)
-        if dex_mode == "LIVE" and liq_val < 40000.0:
+        min_liq_req = 75000.0 if dex_mode == "LIVE" else 40000.0
+        if liq_val < min_liq_req:
             continue
 
         # Institutional Rule 2: Minimum Token Age Gate (Must be >= 15 min old to avoid launch dump traps)
@@ -2138,8 +2152,12 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
         except Exception:
             pass
 
-        # Institutional composite score (30% Safety, 25% Whale Flow, 25% AI Conviction, 20% Buy Flow)
+        # Institutional Rule 8: Smart Money & Whale Inflow Velocity
         whale_score = int(tok.get("whale_score") or 0)
+        if dex_mode == "LIVE" and whale_score < 60:
+            logger.info(f"🐋 [LIVE SAFETY] Skipping {tok.get('symbol')}: whale score {whale_score} < 60 minimum institutional threshold")
+            continue
+
         ai_score = int(tok.get("ai_conviction_score") or 70)
         composite_score = (
             (tok.get("safety_score", 0) * 0.30) +
@@ -2165,19 +2183,19 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     candidates.sort(key=lambda t: t.get("institutional_score", 0), reverse=True)
     top_pick = candidates[0]
     top_chain = top_pick.get("chain", "solana")
-    base_amount = float(state.get("sniper_amount_usd", 25.0))
+    base_amount = float(state.get("sniper_amount_usd", 20.0))
     current_dex_mode = state.get("dex_mode", "SIMULATION")
     if current_dex_mode == "LIVE":
-        base_amount = min(25.0, base_amount)
+        base_amount = min(20.0, base_amount)
     kelly_amount = compute_kelly_dynamic_sizing(
         base_amount, 
-        token_liquidity_usd=float(top_pick.get("liquidity_usd") or 35000.0),
+        token_liquidity_usd=float(top_pick.get("liquidity_usd") or 75000.0),
         ai_conviction_score=float(top_pick.get("ai_conviction_score", 75.0))
     )
-    # STRICT CEILING: Trade amount is hard-capped to never exceed base_amount (and max $25 in live)
+    # STRICT CEILING: Trade amount is hard-capped to never exceed base_amount (and max $20 in live)
     final_trade_amount = min(base_amount, kelly_amount)
     if current_dex_mode == "LIVE":
-        final_trade_amount = min(25.0, final_trade_amount)
+        final_trade_amount = min(20.0, final_trade_amount)
     snipe_res = execute_dex_snipe(top_pick["address"], top_pick["symbol"], amount_usd=final_trade_amount, mode=current_dex_mode, chain=top_chain)
     return {
         "status": "AUTO_SNIPED", 
