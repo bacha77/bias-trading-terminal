@@ -1043,7 +1043,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     ? 'bg-amber-400 text-black font-black shadow-sm'
                     : 'bg-white/5 text-slate-400 hover:text-white'
                 }`}
-                title="-5% Stop Loss / +20% Take Profit"
+                title="-6% Stop Loss / +15% 100% Cashout to SOL"
               >
                 SCALPER
               </button>
@@ -1054,7 +1054,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     ? 'bg-cyan-400 text-black font-black shadow-sm'
                     : 'bg-white/5 text-slate-400 hover:text-white'
                 }`}
-                title="-8% Stop Loss / +50% Take Profit"
+                title="-8% Stop Loss / +35% Take Profit"
               >
                 MOONBAG
               </button>
@@ -1065,15 +1065,15 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                     ? 'bg-purple-400 text-black font-black shadow-sm'
                     : 'bg-white/5 text-slate-400 hover:text-white'
                 }`}
-                title="-12% Stop Loss / +100% (2x) Take Profit"
+                title="-10% Stop Loss / +75% Take Profit"
               >
                 10X HUNT
               </button>
             </div>
             <div className="text-[8.5px] text-slate-400 truncate mt-0.5">
-              {selectedRiskProfile === 'SCALPER' ? '-5% SL · +20% TP · -10% Trail' : 
-               selectedRiskProfile === 'MOONBAG' ? '-8% SL · +50% TP · -15% Trail' : 
-               '-12% SL · +100% TP · -25% Trail'}
+              {selectedRiskProfile === 'SCALPER' ? '-6% SL · +15% 100% Cashout (No Runner)' : 
+               selectedRiskProfile === 'MOONBAG' ? '-8% SL · +35% TP · -15% Trail' : 
+               '-10% SL · +75% TP · -20% Trail'}
             </div>
           </div>
         </div>

@@ -349,29 +349,32 @@ def compute_whale_flow(vol_1h: float, buys_1h: int, sells_1h: int, buys_5m: int,
 RISK_PROFILES: Dict[str, Dict[str, Any]] = {
     "SCALPER": {
         "key": "SCALPER",
-        "name": "Quick Scalper",
-        "stop_loss_pct": -0.05,        # -5% Stop Loss
-        "take_profit_tp1_pct": 0.20,   # +20% Take Profit (Scale out 66% principal)
-        "moonbag_trail_pct": 0.10,     # -10% Trailing from Peak
-        "badge": "⚡ SCALPER (-5% SL / +20% TP)",
-        "description": "High turnover & fast wins. Tighter stop with rapid cashout."
+        "name": "Quick Scalper (100% Cashout)",
+        "stop_loss_pct": -0.06,        # -6% Stop Loss (cut losers fast)
+        "take_profit_tp1_pct": 0.15,   # +15% Take Profit (100% Full Cashout into SOL)
+        "moonbag_trail_pct": 0.05,     # Tighter trail
+        "full_cashout_at_tp": True,    # 100% full liquidation on TP (NO crumbs, NO runner bleed)
+        "badge": "⚡ SCALPER (-6% SL / +15% Full TP)",
+        "description": "Full 100% cashout at +15%. No crumbs, no runners, strict -6% stop."
     },
     "MOONBAG": {
         "key": "MOONBAG",
         "name": "Standard Moonbag",
         "stop_loss_pct": -0.08,        # -8% Stop Loss
-        "take_profit_tp1_pct": 0.50,   # +50% Take Profit (Scale out 66% principal)
+        "take_profit_tp1_pct": 0.35,   # +35% Take Profit (Scale out principal)
         "moonbag_trail_pct": 0.15,     # -15% Trailing from High-Water Mark Peak
-        "badge": "🛡️ MOONBAG (-8% SL / +50% TP)",
-        "description": "Balanced asymmetry. Recovers 100% principal at +50%, lets 34% ride."
+        "full_cashout_at_tp": False,
+        "badge": "🛡️ MOONBAG (-8% SL / +35% TP)",
+        "description": "Balanced asymmetry. Recovers principal at +35%, lets remainder ride."
     },
     "HUNTER_10X": {
         "key": "HUNTER_10X",
         "name": "10x Moon Hunter",
-        "stop_loss_pct": -0.12,        # -12% Stop Loss
-        "take_profit_tp1_pct": 1.00,   # +100% (2x) Take Profit
-        "moonbag_trail_pct": 0.25,     # -25% Trailing from Peak
-        "badge": "🚀 10X HUNTER (-12% SL / +100% TP)",
+        "stop_loss_pct": -0.10,        # -10% Stop Loss
+        "take_profit_tp1_pct": 0.75,   # +75% Take Profit
+        "moonbag_trail_pct": 0.20,     # -20% Trailing from Peak
+        "full_cashout_at_tp": False,
+        "badge": "🚀 10X HUNTER (-10% SL / +75% TP)",
         "description": "Multi-bagger runner. Wider breathing room for parabolic surges."
     }
 }
@@ -1850,12 +1853,12 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 **pos,
                 "exit_price": cur_px,
                 "exit_time": datetime.now().strftime("%H:%M:%S"),
-                "reason": f"Stop Loss Triggered ({pnl_pct*100:.1f}%)",
+                "reason": f"🛑 Stop Loss Cut ({pnl_pct*100:.1f}%) · Strict Risk Limit",
                 "realized_pnl_pct": f"{pnl_pct*100:+.1f}%",
                 "realized_pnl_usd": pos["unrealized_pnl_usd"],
                 "status": "STOP_LOSS_CLOSED"
             }
-            _execute_live_exit_if_needed(pos, exit_ticket, state)
+            _execute_live_exit_if_needed(pos, exit_ticket, state, portion_pct=1.0)
             closed_pos.insert(0, exit_ticket)
             _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
             try:
@@ -1870,39 +1873,67 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                 pass
             continue
             
-        # 5. Multi-Target Take Profit Scaling
-        # TP1 (+20%): Bank 35% of position into cash profits, move stop to +10%
-        if pnl_pct >= 0.20 and not pos.get("tp1_taken"):
-            pos["tp1_taken"] = True
-            pos["breakeven_locked"] = True
-            pos["breakeven_price"] = entry_px * 1.10  # Move stop up to +10% guaranteed profit
-            banked_gain = round(float(pos.get("amount_usd", 100.0)) * 0.35 * pnl_pct, 2)
-            pos["tokens_held"] = pos["tokens_held"] * 0.65
-            pos["amount_usd"] = round(float(pos.get("amount_usd", 100.0)) * 0.65, 2)
-            tp_ticket = {
-                **pos,
-                "exit_price": cur_px,
-                "exit_time": datetime.now().strftime("%H:%M:%S"),
-                "reason": f"TP1 Banked (+{pnl_pct*100:.1f}%) · 35% Cashed Out",
-                "realized_pnl_pct": f"+{pnl_pct*100:.1f}%",
-                "realized_pnl_usd": banked_gain,
-                "status": "TAKE_PROFIT_CLOSED"
-            }
-            _execute_live_exit_if_needed(pos, tp_ticket, state, portion_pct=0.35)
-            closed_pos.insert(0, tp_ticket)
-            try:
-                from desk_notifier import dispatch_desk_alert
-                dispatch_desk_alert(
-                    f"💰 DEX TP1 HIT (+20%): {pos['symbol']}",
-                    f"Surged +{pnl_pct*100:.1f}%. Cashed out 35% position (+${banked_gain:.2f} banked cash). Stop moved to +10%!",
-                    "TAKE_PROFIT",
-                    metadata={"token": pos["symbol"], "gain": f"+{pnl_pct*100:.1f}%", "banked": f"+${banked_gain:.2f}"}
-                )
-            except Exception:
-                pass
+        # 5. Take Profit Execution
+        # SCALPER / full_cashout_at_tp: 100% FULL CASHOUT INTO SOL (Bank the whole win, zero runner risk)
+        is_full_cashout = prof.get("full_cashout_at_tp", False) or prof_key == "SCALPER"
+        if pnl_pct >= tp1_thresh:
+            if is_full_cashout:
+                full_gain = round((cur_px - entry_px) * float(pos.get("tokens_held", 0)), 2)
+                exit_ticket = {
+                    **pos,
+                    "exit_price": cur_px,
+                    "exit_time": datetime.now().strftime("%H:%M:%S"),
+                    "reason": f"🎯 SCALPER 100% Banked (+{pnl_pct*100:.1f}%) · Full Cashout into SOL",
+                    "realized_pnl_pct": f"+{pnl_pct*100:.1f}%",
+                    "realized_pnl_usd": full_gain,
+                    "status": "TAKE_PROFIT_FULL_CLOSED"
+                }
+                _execute_live_exit_if_needed(pos, exit_ticket, state, portion_pct=1.0)
+                closed_pos.insert(0, exit_ticket)
+                _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
+                try:
+                    from desk_notifier import dispatch_desk_alert
+                    dispatch_desk_alert(
+                        f"💰 DEX FULL CASHOUT (+{pnl_pct*100:.1f}%): {pos['symbol']}",
+                        f"Target hit! Cashed out 100% position (+${full_gain:.2f} banked into SOL). Zero runner bleed!",
+                        "TAKE_PROFIT",
+                        metadata={"token": pos["symbol"], "gain": f"+{pnl_pct*100:.1f}%", "banked": f"+${full_gain:.2f}"}
+                    )
+                except Exception:
+                    pass
+                continue
+            elif not pos.get("tp1_taken"):
+                # Partial scaling for MOONBAG / HUNTER profiles
+                pos["tp1_taken"] = True
+                pos["breakeven_locked"] = True
+                pos["breakeven_price"] = entry_px * 1.10
+                banked_gain = round(float(pos.get("amount_usd", 100.0)) * 0.35 * pnl_pct, 2)
+                pos["tokens_held"] = pos["tokens_held"] * 0.65
+                pos["amount_usd"] = round(float(pos.get("amount_usd", 100.0)) * 0.65, 2)
+                tp_ticket = {
+                    **pos,
+                    "exit_price": cur_px,
+                    "exit_time": datetime.now().strftime("%H:%M:%S"),
+                    "reason": f"TP1 Banked (+{pnl_pct*100:.1f}%) · 35% Cashed Out",
+                    "realized_pnl_pct": f"+{pnl_pct*100:.1f}%",
+                    "realized_pnl_usd": banked_gain,
+                    "status": "TAKE_PROFIT_CLOSED"
+                }
+                _execute_live_exit_if_needed(pos, tp_ticket, state, portion_pct=0.35)
+                closed_pos.insert(0, tp_ticket)
+                try:
+                    from desk_notifier import dispatch_desk_alert
+                    dispatch_desk_alert(
+                        f"💰 DEX TP1 HIT (+{pnl_pct*100:.1f}%): {pos['symbol']}",
+                        f"Surged +{pnl_pct*100:.1f}%. Cashed out 35% position (+${banked_gain:.2f} banked cash). Stop moved to +10%!",
+                        "TAKE_PROFIT",
+                        metadata={"token": pos["symbol"], "gain": f"+{pnl_pct*100:.1f}%", "banked": f"+${banked_gain:.2f}"}
+                    )
+                except Exception:
+                    pass
 
-        # TP2 (+40%): Bank another 35% of position, release 30% Moonbag Runner
-        if pnl_pct >= 0.40 and not pos.get("tp2_taken"):
+        # TP2 (+40%): Only for partial scaling profiles
+        if not is_full_cashout and pnl_pct >= 0.40 and not pos.get("tp2_taken"):
             pos["tp2_taken"] = True
             pos["stage"] = "MOONBAG_RUNNER"
             banked_gain = round(float(pos.get("amount_usd", 65.0)) * 0.54 * pnl_pct, 2)
@@ -1943,6 +1974,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     "realized_pnl_usd": pos["unrealized_pnl_usd"],
                     "status": "MOONBAG_PROFIT_CLOSED"
                 }
+                _execute_live_exit_if_needed(pos, exit_ticket, state, portion_pct=1.0)
                 closed_pos.insert(0, exit_ticket)
                 _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
                 try:
