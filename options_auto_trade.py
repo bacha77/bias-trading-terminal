@@ -44,19 +44,22 @@ def get_next_expiry_date(ticker: str) -> date:
     today = now_et.date()
     weekday = now_et.weekday() # 0 = Monday, 4 = Friday
     
-    # If SPY, QQQ, or IWM and market is open before 15:30 ET, allow 0DTE (today)
+    # If SPY, QQQ, or IWM: Only allow 0DTE during morning momentum (before 11:30 AM ET)
+    # After 11:30 AM ET, 0DTE extrinsic value decays too rapidly (theta burn), so roll to next expiry.
     if ticker.upper() in ["SPY", "QQQ", "IWM"] and weekday < 5:
-        if now_et.hour < 15 or (now_et.hour == 15 and now_et.minute < 30):
+        if now_et.hour < 11 or (now_et.hour == 11 and now_et.minute < 30):
             return today
     
-    # Otherwise find nearest Friday
+    # Otherwise find nearest Friday (at least 1-2 days out for safe theta management)
     days_until_friday = (4 - weekday) % 7
-    if days_until_friday == 0 and (now_et.hour > 15 or (now_et.hour == 15 and now_et.minute >= 30)):
-        # If it's already Friday afternoon, roll to next Friday
+    if days_until_friday == 0 and (now_et.hour > 11 or (now_et.hour == 11 and now_et.minute >= 30)):
+        # If it's already Friday midday/afternoon, roll to next Friday
         days_until_friday = 7
     elif days_until_friday == 0 and weekday == 4:
-        # Friday during trading day
+        # Friday morning momentum only
         days_until_friday = 0
+    elif days_until_friday == 0:
+        days_until_friday = 7
 
     target = today + timedelta(days=days_until_friday)
     return target

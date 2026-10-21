@@ -80,8 +80,8 @@ export function PositionsDrawer({ alpacaAccount, onSelectTicker }: PositionsDraw
   const [flattenCryptoConfirm, setFlattenCryptoConfirm] = useState(false);
   const [flattenOptionsConfirm, setFlattenOptionsConfirm] = useState(false);
 
-  // Asset class filter tab: 'ALL' | 'STOCKS_OPTIONS' | 'CRYPTO'
-  const [assetFilter, setAssetFilter] = useState<'ALL' | 'STOCKS_OPTIONS' | 'CRYPTO'>('ALL');
+  // Asset class filter tab: 'STOCKS_OPTIONS' (Default) | 'CRYPTO' | 'ALL'
+  const [assetFilter, setAssetFilter] = useState<'ALL' | 'STOCKS_OPTIONS' | 'CRYPTO'>('STOCKS_OPTIONS');
 
   // Autonomous bot state
   const [copilotArmed, setCopilotArmed] = useState<boolean>(true);

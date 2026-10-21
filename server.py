@@ -3547,20 +3547,22 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
 
     options_only = state.get("options_only", True)
     
+    INDEX_ETFS = {"SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV"}
+    
     if forced_symbol:
         candidates = [forced_symbol.upper().strip()]
     elif options_only:
-        # Full 55 liquid US equity/ETF underlyings for options
+        # Prioritize High-Beta, High-Momentum Individual Equities First (avoid ETF-only bias)
         candidates = state.get("active_monitors", [
+            "NVDA", "TSLA", "AAPL", "AMD", "MSFT", "META", "AMZN", "GOOGL", "NFLX", "PLTR",
+            "COIN", "MSTR", "UBER", "AVGO", "SMCI", "ARM", "MU", "ORCL", "CRM", "HOOD",
             "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "TLT", "IBIT", "GLD", "SLV",
-            "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "ORCL", "CRM",
-            "AMD", "AVGO", "TSM", "SMCI", "MU", "ARM", "INTC", "QCOM", "TXN",
-            "PLTR", "COIN", "MSTR", "MARA", "SOFI", "UBER", "HOOD", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG",
+            "TSM", "INTC", "QCOM", "TXN", "MARA", "SOFI", "AFRM", "APP", "RDDT", "SHOP", "SNOW", "DKNG",
             "JPM", "BAC", "GS", "V", "MA", "DIS", "BABA", "BA", "XOM", "CAT", "LLY"
         ])
     else:
         candidates = (
-            ["SPY", "QQQ", "NVDA", "AAPL", "TSLA", "BTC", "ETH"] if market_open else ["BTC", "ETH", "SOL", "SPY", "QQQ"]
+            ["NVDA", "TSLA", "AAPL", "SPY", "QQQ", "BTC", "ETH"] if market_open else ["BTC", "ETH", "SOL", "SPY", "QQQ"]
         )
     
     base_min_conf = state.get("min_confidence", 70)
@@ -3569,13 +3571,13 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     trigger_times = state.get("last_trigger_times", {})
     executed_trades = []
     
-    # 2. Daily Trade Volume Cap (Guaranteed Prevention of Overtrading)
+    # 2. Daily Trade Volume Cap (Capacity for 24 trades per day to prevent freezing)
     today_date = et.strftime("%Y-%m-%d")
     if state.get("daily_trades_date") != today_date:
         state["daily_trades_date"] = today_date
         state["daily_trades_count"] = 0
         
-    max_daily = int(state.get("max_daily_trades", 8))
+    max_daily = int(state.get("max_daily_trades", 24))
     if state.get("daily_trades_count", 0) >= max_daily:
         msg = f"Daily trade cap reached ({state['daily_trades_count']}/{max_daily} trades today). Preserving capital until tomorrow."
         state["last_status_message"] = msg
@@ -3595,10 +3597,15 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     
     # Active open underlyings across both Alpaca and Paper to prevent duplicate or correlated exposure
     open_underlyings = set(active_pos_info["open_underlyings"])
+    current_etf_count = sum(1 for u in open_underlyings if u in INDEX_ETFS)
     
     for sym in candidates:
         # HARD RULE 1: STRICT 1 POSITION PER UNDERLYING (Never stack multiple contracts on SPY, DIA, etc.)
         if sym in open_underlyings:
+            continue
+
+        # HARD RULE 1B: ETF DIVERSIFICATION CAP (Max 2 ETF positions at a time so individual stocks get traded!)
+        if sym in INDEX_ETFS and current_etf_count >= 2:
             continue
 
         # HARD RULE 2: Minimum 600s Cooldown per symbol
