@@ -46,6 +46,8 @@ CACHE = {}
 CACHE_TTL = 30 # 30 second cache
 LAST_KNOWN_TAPE_PRICES = {}
 live_price_cache = {}
+OPTIONS_POS_FIRST_SEEN = {}
+OPTIONS_SL_CONFIRM_COUNT = {}
 
 import urllib.parse
 import urllib.request
@@ -3529,10 +3531,10 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     market_open = (et.weekday() < 5) and (et.hour > 9 or (et.hour == 9 and et.minute >= 30)) and (et.hour < 16)
     
     # 1. Market Timing Gates:
-    # A) Strict 15:30 ET Hard Cutoff: Absolutely NO new positions opened past 15:30 ET
-    past_cutoff = (et.weekday() < 5) and ((et.hour == 15 and et.minute >= 30) or (et.hour >= 16))
+    # A) Strict 15:00 ET Hard Cutoff: Absolutely NO new positions opened past 15:00 ET (stops entering 0DTE contracts in last hour when spreads and gamma are extreme)
+    past_cutoff = (et.weekday() < 5) and ((et.hour == 15 and et.minute >= 0) or (et.hour >= 16))
     if past_cutoff:
-        msg = "Late Session Cutoff Active: No new trades allowed past 15:30 ET."
+        msg = "Late Session Cutoff Active: No new trades allowed past 15:00 ET (Prevents late-day spread decay)."
         state["last_status_message"] = msg
         save_copilot_state(state)
         return {"status": "SKIPPED", "reason": msg}
@@ -4103,12 +4105,31 @@ async def _copilot_autonomous_worker():
                         pl_dollars = float(p.get("unrealized_pl") or 0.0)
                         is_opt = len(psym) >= 10 and any(c in psym for c in ["C", "P"])
                         
-                        # A) STOP LOSS TRIGGER: -28% for options, -3% for equities
-                        sl_thresh = -0.28 if is_opt else -0.03
+                        # A) STOP LOSS TRIGGER: -45% for options with 120s grace period and 2-tick confirmation, -3% for equities
+                        now_mon_ts = time.time()
+                        if psym not in OPTIONS_POS_FIRST_SEEN:
+                            OPTIONS_POS_FIRST_SEEN[psym] = now_mon_ts
+                        
+                        age_sec = now_mon_ts - OPTIONS_POS_FIRST_SEEN[psym]
+                        sl_thresh = -0.45 if is_opt else -0.03
+                        
+                        # Institutional Grace Period: Option fills are marked at Bid, creating an immediate artificial -15% to -25% paper loss.
+                        # Never stop out an option within the first 120 seconds of execution to absorb dealer spread.
+                        if is_opt and age_sec < 120:
+                            print(f"[OPTION GRACE PERIOD] Holding {psym}: Trade age {age_sec:.0f}s < 120s min. PnL {plpc*100:.1f}%. Absorbing initial dealer spread.")
+                            continue
+
                         if plpc <= sl_thresh:
+                            OPTIONS_SL_CONFIRM_COUNT[psym] = OPTIONS_SL_CONFIRM_COUNT.get(psym, 0) + 1
+                            if is_opt and OPTIONS_SL_CONFIRM_COUNT[psym] < 2:
+                                print(f"[OPTION SL BUFFER] Confirming stop loss on {psym}: Tick 1/2 at {plpc*100:.1f}%. Awaiting confirmation.")
+                                continue
+
                             print(f"[ALGO STOP-LOSS] Closing {psym} on Alpaca: PnL {plpc*100:.1f}% <= {sl_thresh*100:.1f}% (${pl_dollars:.2f})")
                             closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
                             if closed_ok:
+                                OPTIONS_POS_FIRST_SEEN.pop(psym, None)
+                                OPTIONS_SL_CONFIRM_COUNT.pop(psym, None)
                                 exit_ticket = {
                                     "id": f"sl_{psym}_{int(time.time())}",
                                     "timestamp": time.time(),
@@ -4133,6 +4154,8 @@ async def _copilot_autonomous_worker():
                                 except Exception:
                                     pass
                             continue
+                        else:
+                            OPTIONS_SL_CONFIRM_COUNT[psym] = 0
 
                         # -------------------------------------------------------------
                         # PROFIT MAXIMIZATION ENGINE: Multi-Stage Scaling & Trailing Runner
@@ -4161,6 +4184,8 @@ async def _copilot_autonomous_worker():
                                 closed_ok = close_alpaca_position(psym, qty=qty, creds=alp_creds)
                                 if closed_ok:
                                     cop_state.pop(hwm_key, None)
+                                    OPTIONS_POS_FIRST_SEEN.pop(psym, None)
+                                    OPTIONS_SL_CONFIRM_COUNT.pop(psym, None)
                                     exit_ticket = {
                                         "id": f"be_{psym}_{int(time.time())}",
                                         "timestamp": time.time(),
@@ -4230,6 +4255,8 @@ async def _copilot_autonomous_worker():
                                 if closed_ok:
                                     cop_state.pop(hwm_key, None)
                                     cop_state.pop(trimmed_key, None)
+                                    OPTIONS_POS_FIRST_SEEN.pop(psym, None)
+                                    OPTIONS_SL_CONFIRM_COUNT.pop(psym, None)
                                     exit_ticket = {
                                         "id": f"runner_{psym}_{int(time.time())}",
                                         "timestamp": time.time(),
