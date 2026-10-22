@@ -604,16 +604,16 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   const isNetProfit = (activeSummary.net_pnl_usd ?? 0) >= 0;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-1 sm:p-3 md:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
+    <div className="fixed inset-0 z-[9999] flex items-start justify-center p-1 sm:p-2 md:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
       <div 
         className={`relative bg-[#070b12] border border-cyan-500/40 shadow-[0_0_80px_rgba(6,182,212,0.25)] flex flex-col transition-all duration-300 my-auto ${
           isFullScreen 
             ? 'w-full min-h-screen rounded-none' 
-            : 'w-[98vw] max-w-[1740px] h-[95vh] min-h-[500px] rounded-2xl overflow-hidden'
+            : 'w-[98vw] max-w-[1740px] h-[95vh] max-h-[96vh] min-h-[380px] rounded-2xl overflow-hidden'
         }`}
       >
         {/* ================= 1. Top Institutional Navigation Header ================= */}
-        <div className="flex flex-wrap items-center justify-between px-4 sm:px-6 py-2.5 sm:py-3 border-b border-white/10 bg-gradient-to-r from-white/[0.04] via-transparent to-white/[0.02] gap-2.5 sm:gap-3 shrink-0">
+        <div className="flex flex-wrap items-center justify-between px-3 sm:px-6 py-1.5 sm:py-2.5 border-b border-white/10 bg-gradient-to-r from-white/[0.04] via-transparent to-white/[0.02] gap-2 sm:gap-3 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl overflow-hidden border border-cyan-400/50 shadow-[0_0_20px_rgba(6,182,212,0.45)] bg-black/60 shrink-0">
               <img src="/dumay-logo.jpg" alt="DUMAY" className="w-full h-full object-cover" />
@@ -1222,9 +1222,9 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         </div>
 
         {/* ================= 3. Main Command Center Body ================= */}
-        <div className="flex-1 overflow-y-auto lg:overflow-hidden p-3 sm:p-5 font-mono">
+        <div className="flex-1 min-h-0 overflow-y-auto p-2 sm:p-4 font-mono">
           {activeTab === 'SPLIT' && (
-            <div className="flex flex-col lg:grid lg:grid-cols-12 gap-5 min-h-[750px] lg:h-full">
+            <div className="flex flex-col lg:grid lg:grid-cols-12 gap-3 sm:gap-5 min-h-[550px] lg:h-full min-h-0">
               {/* Left Column: Clean Breakout Radar & Forensics (7 Cols) */}
               <div className="lg:col-span-7 flex flex-col h-[520px] lg:h-full bg-black/40 rounded-xl border border-white/10 overflow-hidden shrink-0">
                 <div className="px-4 py-2 bg-white/[0.02] border-b border-white/10 flex items-center justify-between">
@@ -1686,7 +1686,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
           {/* Radar Only View */}
           {activeTab === 'RADAR' && (
-            <div className="h-full overflow-y-auto space-y-2.5 pr-2">
+            <div className="h-full min-h-0 overflow-y-auto space-y-2.5 pr-1 sm:pr-2">
               {filteredListings.map((tok) => (
                 <div
                   key={tok.address}
@@ -1776,7 +1776,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
           {/* Positions Only View */}
           {activeTab === 'POSITIONS' && (
-            <div className="h-full flex flex-col space-y-3 pr-2">
+            <div className="h-full min-h-0 flex flex-col space-y-2.5 pr-1 sm:pr-2">
               <div className="px-3 py-2 rounded-xl bg-[#0c121e]/90 border border-white/10 flex items-center justify-between">
                 <span className="text-xs font-bold text-white uppercase tracking-wider">
                   Open Positions Desk ({activePositionsList.length}/{maxPositions})
@@ -1794,7 +1794,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                 )}
               </div>
 
-              <div className="flex-1 overflow-y-auto space-y-3">
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-1">
                 {activePositionsList.length === 0 ? (
                   <div className="p-16 text-center text-slate-500 font-sans">
                     <p className="text-sm font-bold text-slate-300">
@@ -1880,7 +1880,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
           {/* History Only View */}
           {activeTab === 'HISTORY' && (
-            <div className="h-full overflow-y-auto space-y-2 pr-2">
+            <div className="h-full min-h-0 overflow-y-auto space-y-2 pr-1 sm:pr-2">
               {activeClosedList.length === 0 ? (
                 <div className="p-16 text-center text-slate-500 font-sans">
                   <p className="text-sm font-bold text-slate-300">
@@ -1911,9 +1911,9 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
           {/* Smart Whale Watchlist Tab View */}
           {activeTab === 'WALLETS' && (
-            <div className="h-full flex flex-col space-y-4 pr-2 font-mono">
+            <div className="h-full min-h-0 flex flex-col space-y-3 pr-1 sm:pr-2 font-mono">
               {/* Form to Add Tracked Wallet */}
-              <form onSubmit={handleAddTrackedWallet} className="p-4 rounded-xl bg-[#0c121e]/90 border border-white/10 flex flex-wrap items-center gap-3">
+              <form onSubmit={handleAddTrackedWallet} className="p-4 rounded-xl bg-[#0c121e]/90 border border-white/10 flex flex-wrap items-center gap-3 shrink-0">
                 <div className="flex items-center gap-2 text-cyan-400 font-bold text-xs uppercase tracking-wider">
                   <Users size={16} />
                   <span>Add Smart Money / Whale Wallet</span>
@@ -1951,7 +1951,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
               </form>
 
               {/* Watchlist Table */}
-              <div className="flex-1 overflow-y-auto space-y-2">
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
                 {trackedWallets.length === 0 ? (
                   <div className="p-16 text-center text-slate-500 font-sans">
                     No smart money wallets tracked yet. Add high-conviction insider or sniper wallets above.
@@ -2014,7 +2014,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
 
           {/* Phase 1-5: Quant AI & Cabal Radar Tab */}
           {activeTab === 'LEARNING' && (
-            <div className="space-y-6">
+            <div className="h-full min-h-0 overflow-y-auto space-y-4 pr-1 sm:pr-2">
               {/* Header Banner */}
               <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 via-cyan-950/30 to-black/80 border border-purple-500/30 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
