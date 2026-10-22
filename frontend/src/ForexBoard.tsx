@@ -194,24 +194,24 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
             {/* London 4:00 PM Fix Countdown */}
             {londonFix && (
               <div className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border ${
-                londonFix.flow_warning 
+                (londonFix.is_fix_window || londonFix.flow_warning)
                   ? 'bg-neon-red/20 text-neon-red border-neon-red/40 animate-pulse' 
                   : 'bg-cyan-500/10 text-cyan-300 border-cyan-400/30'
               }`}>
                 <Timer size={11} />
-                <span>{londonFix.status}</span>
+                <span>{londonFix.fix_guidance || londonFix.status || `Fix: ${londonFix.countdown_str || '--'}`}</span>
               </div>
             )}
 
             {/* Spread / News Shield Status */}
             {spreadAudit && (
               <div className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border ${
-                spreadAudit.freeze_shield_active 
+                (spreadAudit.news_freeze_active ?? spreadAudit.freeze_shield_active)
                   ? 'bg-neon-red/20 text-neon-red border-neon-red/40 animate-pulse' 
                   : 'bg-neon-green/10 text-neon-green border-neon-green/30'
               }`}>
-                {spreadAudit.freeze_shield_active ? <ShieldAlert size={11} /> : <ShieldCheck size={11} />}
-                <span>{spreadAudit.freeze_shield_active ? 'NEWS FREEZE: ACTIVE' : 'SPREAD SHIELD: OK'}</span>
+                {(spreadAudit.news_freeze_active ?? spreadAudit.freeze_shield_active) ? <ShieldAlert size={11} /> : <ShieldCheck size={11} />}
+                <span>{(spreadAudit.news_freeze_active ?? spreadAudit.freeze_shield_active) ? 'NEWS FREEZE: ACTIVE' : 'SPREAD SHIELD: OK'}</span>
               </div>
             )}
 
@@ -241,29 +241,36 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
             <div className="flex items-baseline justify-between mb-2 font-mono">
               <span className="text-[10px] text-slate-400">NET 2Y SPREAD:</span>
               <span className={`text-base font-bold ${
-                (sovereign?.yield_spread_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
+                Number(sovereign?.spread_pct ?? sovereign?.yield_spread_pct ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
               }`}>
-                {(sovereign?.yield_spread_pct || 0) > 0 ? '+' : ''}{sovereign?.yield_spread_pct ?? '--'}%
+                {Number(sovereign?.spread_pct ?? sovereign?.yield_spread_pct ?? 0) > 0 ? '+' : ''}{sovereign?.spread_pct ?? sovereign?.yield_spread_pct ?? '--'}%
+                <span className="text-[10px] text-slate-400 ml-1.5 font-normal">
+                  ({sovereign?.spread_bps ? `${sovereign.spread_bps > 0 ? '+' : ''}${sovereign.spread_bps} bps` : ''})
+                </span>
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-2 mb-2 font-mono text-[10px]">
               <div className="bg-black/50 p-1.5 rounded border border-white/5">
-                <span className="text-slate-500 block">{sovereign?.base_currency || 'BASE'} 2Y SOVEREIGN</span>
-                <span className="text-white font-bold text-xs">{sovereign?.base_2y_yield ?? '--'}%</span>
+                <span className="text-slate-500 block truncate" title={sovereign?.base_security || 'BASE'}>
+                  {sovereign?.base_currency || 'BASE'} 2Y SOVEREIGN
+                </span>
+                <span className="text-white font-bold text-xs">{sovereign?.base_yield_pct ?? sovereign?.base_2y_yield ?? '--'}%</span>
               </div>
               <div className="bg-black/50 p-1.5 rounded border border-white/5">
-                <span className="text-slate-500 block">{sovereign?.quote_currency || 'QUOTE'} 2Y SOVEREIGN</span>
-                <span className="text-white font-bold text-xs">{sovereign?.quote_2y_yield ?? '--'}%</span>
+                <span className="text-slate-500 block truncate" title={sovereign?.quote_security || 'QUOTE'}>
+                  {sovereign?.quote_currency || 'QUOTE'} 2Y SOVEREIGN
+                </span>
+                <span className="text-white font-bold text-xs">{sovereign?.quote_yield_pct ?? sovereign?.quote_2y_yield ?? '--'}%</span>
               </div>
             </div>
 
             <div className="p-2 rounded bg-black/40 border border-white/5 text-[10px] font-mono">
               <span className="text-neon-gold font-bold block mb-0.5">
-                {sovereign?.spread_bias || 'MONITORING SPREAD'}
+                {sovereign?.advantage || sovereign?.spread_bias || 'MONITORING SPREAD'}
               </span>
               <p className="text-slate-400 leading-tight">
-                {sovereign?.macro_flow || 'Tracking sovereign interest rate momentum.'}
+                {sovereign?.flow_tag || sovereign?.description || sovereign?.macro_flow || 'Tracking sovereign interest rate momentum.'}
               </p>
             </div>
           </div>
@@ -285,23 +292,23 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
             <div className="flex items-baseline justify-between mb-2 font-mono">
               <span className="text-[10px] text-slate-400">NET RATE DIFFERENTIAL:</span>
               <span className={`text-base font-bold ${
-                (carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
+                Number(carry?.differential ?? carry?.differential_pct ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
               }`}>
-                {(carry?.differential_pct || 0) > 0 ? '+' : ''}{carry?.differential_pct ?? '--'}%
+                {Number(carry?.differential ?? carry?.differential_pct ?? 0) > 0 ? '+' : ''}{carry?.differential ?? carry?.differential_pct ?? '--'}%
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-2 mb-2 font-mono text-[10px]">
               <div className="bg-black/50 p-1.5 rounded border border-white/5">
                 <span className="text-slate-500 block">DAILY / 0.10 MINI LOT</span>
-                <span className={`font-bold text-xs ${(carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                  {carry?.daily_cash_per_mini_lot || '--'}
+                <span className={`font-bold text-xs ${Number(carry?.differential ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {carry?.daily_swap_mini_lot_usd ? `${Number(carry.daily_swap_mini_lot_usd) >= 0 ? '+' : ''}$${carry.daily_swap_mini_lot_usd}/day` : (carry?.daily_cash_per_mini_lot || '--')}
                 </span>
               </div>
               <div className="bg-black/50 p-1.5 rounded border border-white/5">
                 <span className="text-slate-500 block">DAILY / 1.0 STD LOT</span>
-                <span className={`font-bold text-xs ${(carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                  {carry?.daily_cash_per_standard_lot || '--'}
+                <span className={`font-bold text-xs ${Number(carry?.differential ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {carry?.daily_swap_std_lot_usd ? `${Number(carry.daily_swap_std_lot_usd) >= 0 ? '+' : ''}$${carry.daily_swap_std_lot_usd}/day` : (carry?.daily_cash_per_standard_lot || '--')}
                 </span>
               </div>
             </div>
@@ -309,15 +316,18 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
             <div className="p-2 rounded bg-black/40 border border-white/5 text-[10px] font-mono">
               <div className="flex items-center justify-between text-slate-400 mb-0.5">
                 <span>ANNUALIZED / 1.0 LOT:</span>
-                <span className={`font-bold ${(carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                  {carry?.annualized_cash_per_standard_lot || '--'}
+                <span className={`font-bold ${Number(carry?.differential ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {carry?.annualized_cash_per_standard_lot || (carry?.daily_swap_std_lot_usd ? `${Number(carry.daily_swap_std_lot_usd) * 365 >= 0 ? '+' : ''}$${(Number(carry.daily_swap_std_lot_usd) * 365).toFixed(0)}/yr` : '--')}
                 </span>
               </div>
               <span className={`font-bold block mt-1 ${
-                carry?.carry_verdict?.includes('POSITIVE') ? 'text-neon-green' : 'text-amber-300'
+                (carry?.carry_type === 'POSITIVE_CARRY' || carry?.carry_badge?.includes('POSITIVE')) ? 'text-neon-green' : 'text-amber-300'
               }`}>
-                {carry?.carry_verdict || 'SWAP CALCULATOR ACTIVE'}
+                {carry?.carry_badge || carry?.carry_verdict || 'SWAP CALCULATOR ACTIVE'}
               </span>
+              <p className="text-slate-400 text-[9px] mt-0.5 leading-tight">
+                {carry?.action_advice || '5:00 PM ET interbank settlement rollover'}
+              </p>
             </div>
           </div>
         </div>
@@ -337,28 +347,32 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
 
             <div className="flex items-baseline justify-between mb-2 font-mono">
               <span className="text-[10px] text-slate-400">BENCHMARK ANCHOR:</span>
-              <span className="text-xs font-bold text-cyan-300">
-                {macroDriver?.intermarket_anchor || 'Intermarket Driver'}
+              <span className="text-xs font-bold text-cyan-300 truncate max-w-[170px]" title={macroDriver?.driver_name || macroDriver?.intermarket_anchor}>
+                {macroDriver?.driver_name || macroDriver?.intermarket_anchor || 'Intermarket Driver'}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-2 mb-2 font-mono text-[10px]">
               <div className="bg-black/50 p-1.5 rounded border border-white/5">
-                <span className="text-slate-500 block">CORRELATION FACTOR</span>
-                <span className="text-neon-gold font-bold text-xs">{macroDriver?.correlation_pct || '0%'}</span>
+                <span className="text-slate-500 block">VALUE / SPREAD</span>
+                <span className="text-neon-gold font-bold text-xs truncate block">
+                  {macroDriver?.benchmark_value || macroDriver?.correlation_pct || '0%'}
+                </span>
               </div>
               <div className="bg-black/50 p-1.5 rounded border border-white/5">
                 <span className="text-slate-500 block">REGIME DRIVER</span>
-                <span className="text-white font-bold text-[10px] truncate block">{macroDriver?.regime_driver || '--'}</span>
+                <span className="text-white font-bold text-[10px] truncate block">
+                  {macroDriver?.correlation_type || macroDriver?.regime_driver || '--'}
+                </span>
               </div>
             </div>
 
             <div className="p-2 rounded bg-black/40 border border-white/5 text-[10px] font-mono">
               <span className="text-cyan-400 font-bold block mb-0.5">
-                {macroDriver?.safe_haven_status || 'MONITORING RISK APPETITE'}
+                {macroDriver?.impact || macroDriver?.safe_haven_status || 'MONITORING RISK APPETITE'}
               </span>
               <p className="text-slate-400 leading-tight">
-                {macroDriver?.actionable_macro_flow || 'Tracking cross-market capital rotation.'}
+                {macroDriver?.description || macroDriver?.actionable_macro_flow || 'Tracking cross-market capital rotation.'}
               </p>
             </div>
           </div>
@@ -624,29 +638,29 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
                   <ShieldCheck size={14} className="text-cyan-400 shrink-0" />
                   <div>
                     <span className="text-slate-300">
-                      Raw ECN Spread: <strong className="text-cyan-300">{spreadAudit.interbank_raw_spread_pips} pips</strong> vs Retail B-Book: <span className="text-slate-400 line-through">{spreadAudit.retail_bbook_markup_pips} pips</span>
+                      Raw ECN Spread: <strong className="text-cyan-300">{spreadAudit.spread_pips ?? spreadAudit.interbank_raw_spread_pips ?? '0.3'} pips</strong> vs Retail B-Book: <span className="text-slate-400 line-through">{(Number(spreadAudit.spread_pips ?? spreadAudit.interbank_raw_spread_pips ?? 0.3) + 1.4).toFixed(1)} pips</span>
                     </span>
                     <span className="text-[10px] text-neon-green block">
-                      ✓ Saves ~$14.00 per standard lot in avoided retail spread markups
+                      ✓ Saves ~$14.00 per standard lot in avoided retail spread markups ({spreadAudit.advice || 'Prime zero-markup ECN depth'})
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
-                    {spreadAudit.spread_quality}
+                    {spreadAudit.grade || spreadAudit.spread_quality || 'INSTITUTIONAL ECN'}
                   </span>
                 </div>
               </div>
             )}
 
             {/* Red-Folder News Alert Banner (Circuit Breaker) */}
-            {spreadAudit?.freeze_shield_active && (
+            {(spreadAudit?.news_freeze_active ?? spreadAudit?.freeze_shield_active) && (
               <div className="mb-3 p-2.5 rounded-lg bg-neon-red/20 border border-neon-red/40 text-neon-red text-xs font-mono flex items-center gap-2 animate-pulse">
                 <ShieldAlert size={16} className="shrink-0" />
                 <div>
                   <strong className="block text-[11px] uppercase">CIRCUIT BREAKER ACTIVE: HIGH IMPACT NEWS SPIKE RISK</strong>
                   <span className="text-[10px] text-red-200">
-                    {spreadAudit.red_folder_reason}. Execution halted to prevent 20-40 pip slippage.
+                    {spreadAudit.news_status || spreadAudit.red_folder_reason || 'High impact event impending'}. Execution halted to prevent 20-40 pip slippage.
                   </span>
                 </div>
               </div>
