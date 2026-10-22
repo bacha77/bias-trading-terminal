@@ -9,11 +9,16 @@ import {
   Crosshair,
   CheckCircle2,
   AlertTriangle,
-  Scale
+  Scale,
+  Coins,
+  Timer,
+  Activity,
+  ShieldCheck,
+  ShieldAlert,
+  Flame
 } from 'lucide-react';
 import { HelpButton } from './CardExplainerModal';
-import { API_BASE as SERVER_URL } from './config';
-const API_BASE = `${SERVER_URL}/api`;
+import { API_BASE } from './config';
 
 interface ForexBoardProps {
   currentSymbol: string;
@@ -97,6 +102,11 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
   const ar = analytics?.asian_range;
   const bs = analytics?.bracket_setup;
   const sess = sessions || analytics?.sessions;
+  const sovereign = analytics?.sovereign_spread;
+  const carry = analytics?.carry_metrics;
+  const spreadAudit = analytics?.spread_auditor;
+  const macroDriver = analytics?.macro_driver;
+  const londonFix = analytics?.london_fix || sess?.london_fix;
 
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
@@ -157,21 +167,54 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
         </div>
       </div>
 
-      {/* ================= Active Killzone Banner ================= */}
+      {/* ================= Active Killzone & London Fix Header Banner ================= */}
       {sess && (
-        <div className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between flex-wrap gap-2 transition-all ${
+        <div className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between flex-wrap gap-3 transition-all ${
           sess.is_peak_overlap 
             ? 'bg-gradient-to-r from-amber-500/20 via-cyan-500/10 to-black border-amber-500/40 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
             : 'bg-cyan-950/20 border-cyan-500/30 text-cyan-200'
         }`}>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <Zap size={16} className={sess.is_peak_overlap ? 'text-amber-400 animate-bounce' : 'text-cyan-400'} />
             <div>
-              <span className="font-bold text-white tracking-wide">{sess.active_killzone}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-white tracking-wide">{sess.active_killzone}</span>
+                {sess.is_peak_overlap && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/40 flex items-center gap-1 shadow-[0_0_8px_rgba(245,158,11,0.3)]">
+                    <Flame size={10} className="text-amber-400" />
+                    PEAK OVERLAP (68% VOL)
+                  </span>
+                )}
+              </div>
               <span className="text-slate-400 block text-[11px] font-sans">{sess.killzone_sub}</span>
             </div>
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+
+          <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
+            {/* London 4:00 PM Fix Countdown */}
+            {londonFix && (
+              <div className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border ${
+                londonFix.flow_warning 
+                  ? 'bg-neon-red/20 text-neon-red border-neon-red/40 animate-pulse' 
+                  : 'bg-cyan-500/10 text-cyan-300 border-cyan-400/30'
+              }`}>
+                <Timer size={11} />
+                <span>{londonFix.status}</span>
+              </div>
+            )}
+
+            {/* Spread / News Shield Status */}
+            {spreadAudit && (
+              <div className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border ${
+                spreadAudit.freeze_shield_active 
+                  ? 'bg-neon-red/20 text-neon-red border-neon-red/40 animate-pulse' 
+                  : 'bg-neon-green/10 text-neon-green border-neon-green/30'
+              }`}>
+                {spreadAudit.freeze_shield_active ? <ShieldAlert size={11} /> : <ShieldCheck size={11} />}
+                <span>{spreadAudit.freeze_shield_active ? 'NEWS FREEZE: ACTIVE' : 'SPREAD SHIELD: OK'}</span>
+              </div>
+            )}
+
             <span>{sess.current_time_et}</span>
             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sess.is_market_open ? 'bg-neon-green/20 text-neon-green border border-neon-green/30' : 'bg-neon-red/20 text-neon-red border border-neon-red/30'}`}>
               {sess.is_market_open ? '● INTERBANK MARKET OPEN' : '○ WEEKEND SESSION CLOSE'}
@@ -179,6 +222,148 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
           </div>
         </div>
       )}
+
+      {/* ================= 3-Pillar Institutional Macro Ribbon ================= */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Pillar 1: Sovereign 2-Year Bond Yield Differential */}
+        <div className="glass-panel p-3.5 border border-cyan-500/20 bg-gradient-to-b from-blue-950/20 to-black flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-2 border-b border-white/10 pb-1.5">
+              <div className="flex items-center gap-1.5">
+                <Scale size={14} className="text-cyan-400" />
+                <h4 className="text-[11px] uppercase font-bold text-white font-mono tracking-wider">
+                  Sovereign 2Y Yield Matrix
+                </h4>
+              </div>
+              <HelpButton cardId="forex_sovereign" title="Explain Sovereign 2Y Yield Matrix" />
+            </div>
+
+            <div className="flex items-baseline justify-between mb-2 font-mono">
+              <span className="text-[10px] text-slate-400">NET 2Y SPREAD:</span>
+              <span className={`text-base font-bold ${
+                (sovereign?.yield_spread_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
+              }`}>
+                {(sovereign?.yield_spread_pct || 0) > 0 ? '+' : ''}{sovereign?.yield_spread_pct ?? '--'}%
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-2 font-mono text-[10px]">
+              <div className="bg-black/50 p-1.5 rounded border border-white/5">
+                <span className="text-slate-500 block">{sovereign?.base_currency || 'BASE'} 2Y SOVEREIGN</span>
+                <span className="text-white font-bold text-xs">{sovereign?.base_2y_yield ?? '--'}%</span>
+              </div>
+              <div className="bg-black/50 p-1.5 rounded border border-white/5">
+                <span className="text-slate-500 block">{sovereign?.quote_currency || 'QUOTE'} 2Y SOVEREIGN</span>
+                <span className="text-white font-bold text-xs">{sovereign?.quote_2y_yield ?? '--'}%</span>
+              </div>
+            </div>
+
+            <div className="p-2 rounded bg-black/40 border border-white/5 text-[10px] font-mono">
+              <span className="text-neon-gold font-bold block mb-0.5">
+                {sovereign?.spread_bias || 'MONITORING SPREAD'}
+              </span>
+              <p className="text-slate-400 leading-tight">
+                {sovereign?.macro_flow || 'Tracking sovereign interest rate momentum.'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Pillar 2: Carry Trade Overnight Cash Return Calculator */}
+        <div className="glass-panel p-3.5 border border-cyan-500/20 bg-gradient-to-b from-blue-950/20 to-black flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-2 border-b border-white/10 pb-1.5">
+              <div className="flex items-center gap-1.5">
+                <Coins size={14} className="text-neon-gold" />
+                <h4 className="text-[11px] uppercase font-bold text-white font-mono tracking-wider">
+                  Carry Trade Overnight Swap
+                </h4>
+              </div>
+              <HelpButton cardId="forex_carry" title="Explain Carry Trade Swap Calculator" />
+            </div>
+
+            <div className="flex items-baseline justify-between mb-2 font-mono">
+              <span className="text-[10px] text-slate-400">NET RATE DIFFERENTIAL:</span>
+              <span className={`text-base font-bold ${
+                (carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
+              }`}>
+                {(carry?.differential_pct || 0) > 0 ? '+' : ''}{carry?.differential_pct ?? '--'}%
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-2 font-mono text-[10px]">
+              <div className="bg-black/50 p-1.5 rounded border border-white/5">
+                <span className="text-slate-500 block">DAILY / 0.10 MINI LOT</span>
+                <span className={`font-bold text-xs ${(carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {carry?.daily_cash_per_mini_lot || '--'}
+                </span>
+              </div>
+              <div className="bg-black/50 p-1.5 rounded border border-white/5">
+                <span className="text-slate-500 block">DAILY / 1.0 STD LOT</span>
+                <span className={`font-bold text-xs ${(carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {carry?.daily_cash_per_standard_lot || '--'}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-2 rounded bg-black/40 border border-white/5 text-[10px] font-mono">
+              <div className="flex items-center justify-between text-slate-400 mb-0.5">
+                <span>ANNUALIZED / 1.0 LOT:</span>
+                <span className={`font-bold ${(carry?.differential_pct || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {carry?.annualized_cash_per_standard_lot || '--'}
+                </span>
+              </div>
+              <span className={`font-bold block mt-1 ${
+                carry?.carry_verdict?.includes('POSITIVE') ? 'text-neon-green' : 'text-amber-300'
+              }`}>
+                {carry?.carry_verdict || 'SWAP CALCULATOR ACTIVE'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Pillar 3: Commodity & Safe-Haven Intermarket Radar */}
+        <div className="glass-panel p-3.5 border border-cyan-500/20 bg-gradient-to-b from-blue-950/20 to-black flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-2 border-b border-white/10 pb-1.5">
+              <div className="flex items-center gap-1.5">
+                <Activity size={14} className="text-cyan-400" />
+                <h4 className="text-[11px] uppercase font-bold text-white font-mono tracking-wider">
+                  Macro Intermarket Radar
+                </h4>
+              </div>
+              <HelpButton cardId="forex_macro_radar" title="Explain Intermarket Commodity Radar" />
+            </div>
+
+            <div className="flex items-baseline justify-between mb-2 font-mono">
+              <span className="text-[10px] text-slate-400">BENCHMARK ANCHOR:</span>
+              <span className="text-xs font-bold text-cyan-300">
+                {macroDriver?.intermarket_anchor || 'Intermarket Driver'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-2 font-mono text-[10px]">
+              <div className="bg-black/50 p-1.5 rounded border border-white/5">
+                <span className="text-slate-500 block">CORRELATION FACTOR</span>
+                <span className="text-neon-gold font-bold text-xs">{macroDriver?.correlation_pct || '0%'}</span>
+              </div>
+              <div className="bg-black/50 p-1.5 rounded border border-white/5">
+                <span className="text-slate-500 block">REGIME DRIVER</span>
+                <span className="text-white font-bold text-[10px] truncate block">{macroDriver?.regime_driver || '--'}</span>
+              </div>
+            </div>
+
+            <div className="p-2 rounded bg-black/40 border border-white/5 text-[10px] font-mono">
+              <span className="text-cyan-400 font-bold block mb-0.5">
+                {macroDriver?.safe_haven_status || 'MONITORING RISK APPETITE'}
+              </span>
+              <p className="text-slate-400 leading-tight">
+                {macroDriver?.actionable_macro_flow || 'Tracking cross-market capital rotation.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* ================= Two-Column Grid: Currency Strength & ADR ================= */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -414,7 +599,7 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
           )}
         </div>
 
-        {/* Right: Institutional Pip Bracket Order Card */}
+        {/* Right: Institutional Pip Bracket Order Card & Spread Auditor */}
         <div className="glass-panel p-4 lg:col-span-2 border border-cyan-500/30 bg-gradient-to-br from-black via-cyan-950/20 to-black flex flex-col justify-between shadow-[0_0_20px_rgba(6,182,212,0.1)]">
           <div>
             <div className="flex items-center justify-between mb-3 border-b border-white/10 pb-2">
@@ -424,10 +609,48 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
                   Algorithmic Pip Bracket Execution Card
                 </h3>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-green/20 text-neon-green border border-neon-green/30 font-bold">
-                WIN PROBABILITY: {analytics?.win_probability || '76%'}
-              </span>
+              <div className="flex items-center gap-2">
+                <HelpButton cardId="forex_spread_news" title="Explain ECN Spread Auditor & Freeze Shield" />
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-green/20 text-neon-green border border-neon-green/30 font-bold">
+                  WIN PROBABILITY: {analytics?.win_probability || '76%'}
+                </span>
+              </div>
             </div>
+
+            {/* ECN Spread Auditor Banner */}
+            {spreadAudit && (
+              <div className="mb-3 p-2.5 rounded-lg bg-cyan-950/30 border border-cyan-500/30 flex items-center justify-between flex-wrap gap-2 text-[11px] font-mono">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={14} className="text-cyan-400 shrink-0" />
+                  <div>
+                    <span className="text-slate-300">
+                      Raw ECN Spread: <strong className="text-cyan-300">{spreadAudit.interbank_raw_spread_pips} pips</strong> vs Retail B-Book: <span className="text-slate-400 line-through">{spreadAudit.retail_bbook_markup_pips} pips</span>
+                    </span>
+                    <span className="text-[10px] text-neon-green block">
+                      ✓ Saves ~$14.00 per standard lot in avoided retail spread markups
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                    {spreadAudit.spread_quality}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Red-Folder News Alert Banner (Circuit Breaker) */}
+            {spreadAudit?.freeze_shield_active && (
+              <div className="mb-3 p-2.5 rounded-lg bg-neon-red/20 border border-neon-red/40 text-neon-red text-xs font-mono flex items-center gap-2 animate-pulse">
+                <ShieldAlert size={16} className="shrink-0" />
+                <div>
+                  <strong className="block text-[11px] uppercase">CIRCUIT BREAKER ACTIVE: HIGH IMPACT NEWS SPIKE RISK</strong>
+                  <span className="text-[10px] text-red-200">
+                    {spreadAudit.red_folder_reason}. Execution halted to prevent 20-40 pip slippage.
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Order Specification Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 font-mono text-xs">
@@ -475,17 +698,24 @@ export function ForexBoard({ currentSymbol, onSelectPair }: ForexBoardProps) {
             </div>
             <button
               onClick={executeBracketOrder}
-              disabled={orderSubmitting}
+              disabled={orderSubmitting || spreadAudit?.freeze_shield_active}
               className={`px-5 py-2 rounded-lg font-mono font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.3)] ${
-                analytics?.bias?.includes('BULL')
-                  ? 'bg-neon-green hover:bg-neon-green/90 text-black shadow-[0_0_15px_rgba(0,255,163,0.3)]'
-                  : 'bg-neon-red hover:bg-neon-red/90 text-white shadow-[0_0_15px_rgba(255,42,109,0.3)]'
+                spreadAudit?.freeze_shield_active
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60'
+                  : analytics?.bias?.includes('BULL')
+                    ? 'bg-neon-green hover:bg-neon-green/90 text-black shadow-[0_0_15px_rgba(0,255,163,0.3)]'
+                    : 'bg-neon-red hover:bg-neon-red/90 text-white shadow-[0_0_15px_rgba(255,42,109,0.3)]'
               }`}
             >
               {orderSubmitting ? (
                 <>
                   <RefreshCw size={14} className="animate-spin" />
                   <span>TRANSMITTING TO BROKER...</span>
+                </>
+              ) : spreadAudit?.freeze_shield_active ? (
+                <>
+                  <ShieldAlert size={14} />
+                  <span>NEWS FREEZE ACTIVE</span>
                 </>
               ) : (
                 <>

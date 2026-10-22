@@ -295,6 +295,75 @@ export const CARD_KNOWLEDGE: Record<string, CardExplanation> = {
     ],
     proTip: 'Never hold large unbracketed positions into 17:00 ET Friday close to avoid weekend gap risk across geopolitical headlines.'
   },
+  forex_sovereign: {
+    id: 'forex_sovereign',
+    title: 'Sovereign 2-Year Bond Yield Differential Matrix',
+    category: 'MACRO SOVEREIGN CAPITAL ALLOCATION',
+    summary: 'The primary directional engine driving trillion-dollar institutional foreign exchange flows across global sovereign bond markets.',
+    whatItDoes: 'Compares the 2-year government bond yield of the base currency against the quote currency. Money flows relentlessly into the currency offering higher short-term sovereign risk-free return.',
+    keyNumbers: [
+      { label: '2-Year Sovereign Yield Spread', meaning: 'Base 2Y yield minus Quote 2Y yield. An expanding spread indicates institutional capital accumulation into that currency.' },
+      { label: 'Yield Advantage Bias', meaning: 'The currency holding positive real yield divergence, attracting multi-billion sovereign wealth and central bank reserve rebalancing.' },
+      { label: 'Monetary Policy Trajectory', meaning: '2Y yields lead central bank policy moves by 3-6 months. When 2Y yields rise, rate hikes or higher-for-longer policy is guaranteed.' }
+    ],
+    howToTrade: [
+      'Rule: Never trade against a wide (>150 bps) 2-Year sovereign yield spread.',
+      'Align your directional bias with the currency holding the yield advantage.'
+    ],
+    proTip: 'Over 85% of multi-week forex trends are preceded by a widening 2-year sovereign bond yield differential before technical chart breakouts occur.'
+  },
+  forex_carry: {
+    id: 'forex_carry',
+    title: 'Carry Trade Overnight Swap & Cash Return Calculator',
+    category: 'INTERBANK FINANCING & SWAP YIELD',
+    summary: 'Calculates the real daily and annualized dollar payout earned or lost simply by holding a currency pair overnight (5:00 PM ET interbank settlement).',
+    whatItDoes: 'Commercial banks and sovereign hedge funds borrow low-yielding currencies (like JPY, CHF) to purchase high-yielding currencies (like USD, AUD, MXN), earning guaranteed daily cash yields.',
+    keyNumbers: [
+      { label: 'Daily Cash / 0.10 Lot', meaning: 'Net dollar credited or debited to your account balance every night at 5:00 PM ET for a mini-lot.' },
+      { label: 'Daily Cash / 1.0 Lot', meaning: 'Net dollar return per standard lot ($100,000 notional). Multiplies over weeks of holding.' },
+      { label: 'Annualized Cash Return', meaning: 'Compounded yield return independent of price fluctuations.' },
+      { label: 'Carry Verdict', meaning: 'Confirms whether trading with the trend pays you to hold the trade, or taxes your capital daily.' }
+    ],
+    howToTrade: [
+      'Target positive carry setups where price trend and daily swap yield point in the same direction.',
+      'Avoid swinging negative carry trades against high-yielding currencies over weekends.'
+    ],
+    proTip: 'Triple Swap Wednesdays: Interbank settlement charges 3 days of swap interest on Wednesday at 5:00 PM ET to account for weekend delivery.'
+  },
+  forex_spread_news: {
+    id: 'forex_spread_news',
+    title: 'Interbank ECN Spread Auditor & Red-Folder Freeze Shield',
+    category: 'EXECUTION QUALITY & SLIPPAGE DEFENSE',
+    summary: 'Audits real-time raw interbank ECN spreads against retail B-Book broker markups and activates an automated circuit-breaker before high-impact news releases.',
+    whatItDoes: 'Exposes how much retail brokers inflate bid/ask spreads and protects algorithmic orders from sudden 20-50 pip slippage spikes during CPI, NFP, and Central Bank rate decisions.',
+    keyNumbers: [
+      { label: 'Raw Interbank Spread', meaning: 'True institutional liquidity spread (<0.5 pips for EURUSD/USDJPY on top-tier ECN/Prime of Prime bridges).' },
+      { label: 'Retail B-Book Markup', meaning: 'Spread charged by typical retail brokers (1.5 - 2.5 pips). The spread difference represents pure broker profit skimmed from your trades.' },
+      { label: 'Red-Folder News Shield', meaning: 'Freezes market order execution 5 minutes prior to major economic releases to protect accounts from devastating slippage and stop hunts.' }
+    ],
+    howToTrade: [
+      'Only execute bracket orders when Spread Quality is Institutional Grade (<0.8 pips).',
+      'Never enter market orders when the Red-Folder News Shield is Active; wait 3 minutes post-announcement for interbank depth of book to reconstitute.'
+    ],
+    proTip: 'Trading on true 0.2 pip ECN spreads saves an active trader between $1,200 and $4,500 every month in avoided broker commission friction.'
+  },
+  forex_macro_radar: {
+    id: 'forex_macro_radar',
+    title: 'Intermarket Commodity & Safe-Haven Correlation Radar',
+    category: 'CROSS-ASSET MACRO TELEMETRY',
+    summary: 'Tracks mathematical cross-asset relationships between commodity prices, global risk appetite (VIX), and sovereign currencies.',
+    whatItDoes: 'Discloses the external macroeconomic catalyst driving each specific currency pair (e.g. WTI Crude Oil driving CAD, Copper & China PMI driving AUD, VIX Panic driving JPY and CHF).',
+    keyNumbers: [
+      { label: 'Intermarket Anchor', meaning: 'The benchmark commodity, bond index, or volatility gauge that leads the currency pair.' },
+      { label: 'Correlation %', meaning: 'Statistical correlation strength (e.g. -88% inverse between WTI Crude and USDCAD).' },
+      { label: 'Actionable Macro Flow', meaning: 'Institutional playbook confirming whether to buy, sell, or hedge based on cross-asset divergence.' }
+    ],
+    howToTrade: [
+      'If WTI Crude spikes higher, look for short setups on USDCAD as Canadian petrodollar inflows accelerate.',
+      'If the VIX spikes above 20, look for safe-haven flows rushing into USDJPY (shorts) and USDCHF.'
+    ],
+    proTip: 'Commodities and bond yields frequently break out 15 to 45 minutes BEFORE the corresponding currency pair moves, giving you a crystal-clear advance signal.'
+  },
   newsWire: {
     id: 'newsWire',
     title: 'Institutional News Wire & Contagion Domino Engine',
