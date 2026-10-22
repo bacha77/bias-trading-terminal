@@ -1,16 +1,16 @@
 {
   "dex_armed": true,
   "dex_mode": "SIMULATION",
-  "sniper_amount_usd": 20.0,
+  "sniper_amount_usd": 7.0,
   "max_dex_positions": 6,
   "active_chain": "solana",
-  "risk_profile": "MOONBAG",
+  "risk_profile": "SCALPER",
   "gas_priority": "ULTRA_JITO",
   "slippage_bps": 150,
   "anti_mev_shield": true,
-  "stop_loss_pct": -0.18,
-  "take_profit_tp1_pct": 0.45,
-  "moonbag_trail_pct": 0.15,
+  "stop_loss_pct": -0.14,
+  "take_profit_tp1_pct": 0.25,
+  "moonbag_trail_pct": 0.08,
   "active_positions": [
     {
       "id": "dex_EDEL_1792369899",

@@ -1312,7 +1312,7 @@
     }
   ],
   "last_scan_time": 1791940665.3656232,
-  "last_status_message": "Armed \u00b7 Strict Options Only Execution (15:50 ET Exit)",
+  "last_status_message": "Late Session Cutoff Active: No new trades allowed past 15:00 ET (Prevents late-day spread decay).",
   "crypto_armed": true,
   "crypto_notional_usd": 500.0,
   "crypto_max_positions": 3,

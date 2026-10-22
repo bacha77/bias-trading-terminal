@@ -1,19 +1,42 @@
 {
   "version": "6.0-rsi-recursive-pro",
-  "total_predictions": 330,
-  "target_hits": 201,
+  "total_predictions": 331,
+  "target_hits": 202,
   "stopped_out": 129,
-  "accuracy_pct": 60.9,
-  "learning_rate": 0.065,
+  "accuracy_pct": 61.0,
+  "learning_rate": 0.0645,
   "feature_weights": {
-    "gamma": 0.099,
-    "flow": 0.39,
+    "gamma": 0.098,
+    "flow": 0.391,
     "momentum": 0.04,
-    "vanna": 0.122,
-    "skew": 0.181,
-    "cvd": 0.168
+    "vanna": 0.121,
+    "skew": 0.182,
+    "cvd": 0.167
   },
   "active_predictions": [
+    {
+      "id": "pred_SPY_1792544023",
+      "ticker": "SPY",
+      "timestamp": 1792544023.080819,
+      "spot": 770.63,
+      "target_high": 786.32,
+      "target_low": 754.94,
+      "stop_loss": 772.91,
+      "side": "sell",
+      "confidence": 78,
+      "horizon_sec": 7200,
+      "regime": "LOW_COMPRESSION",
+      "features": {
+        "gamma": -1.2,
+        "flow": -0.8,
+        "momentum": 0.0,
+        "vanna": -1.6,
+        "skew": -1.8,
+        "cvd": -1.8
+      }
+    }
+  ],
+  "completed_predictions": [
     {
       "id": "pred_SPY_1792108091",
       "ticker": "SPY",
@@ -33,94 +56,11 @@
         "vanna": 1.4,
         "skew": 0.6,
         "cvd": 0.0
-      }
+      },
+      "resolution": "HIT",
+      "resolved_at": 1792544022.6543198,
+      "resolved_price": 770.63
     },
-    {
-      "id": "pred_NVDA_1792114164",
-      "ticker": "NVDA",
-      "timestamp": 1792114164.8285887,
-      "spot": 217.0,
-      "target_high": 225.0,
-      "target_low": 205.0,
-      "stop_loss": 219.79,
-      "side": "sell",
-      "confidence": 79,
-      "horizon_sec": 7200,
-      "regime": "HIGH_EXPANSION",
-      "features": {
-        "gamma": -1.2,
-        "flow": -1.0,
-        "momentum": -1.5,
-        "vanna": -1.6,
-        "skew": -0.6,
-        "cvd": 0.0
-      }
-    },
-    {
-      "id": "pred_BTC_1792189516",
-      "ticker": "BTC",
-      "timestamp": 1792189516.9865096,
-      "spot": 81662.13,
-      "target_high": 87402.98,
-      "target_low": 75921.28,
-      "stop_loss": 79950.94,
-      "side": "buy",
-      "confidence": 86,
-      "horizon_sec": 7200,
-      "regime": "HIGH_EXPANSION",
-      "features": {
-        "gamma": 1.5,
-        "flow": 0.8,
-        "momentum": -1.5,
-        "vanna": 1.4,
-        "skew": 0.6,
-        "cvd": 1.8
-      }
-    },
-    {
-      "id": "pred_ETH_1792189704",
-      "ticker": "ETH",
-      "timestamp": 1792189704.7184613,
-      "spot": 2419.49,
-      "target_high": 2589.58,
-      "target_low": 2249.4,
-      "stop_loss": 2283.48,
-      "side": "buy",
-      "confidence": 80,
-      "horizon_sec": 7200,
-      "regime": "HIGH_EXPANSION",
-      "features": {
-        "gamma": 1.5,
-        "flow": 0.8,
-        "momentum": -1.5,
-        "vanna": 1.4,
-        "skew": 0.6,
-        "cvd": -1.6
-      }
-    },
-    {
-      "id": "pred_SOL_1792189707",
-      "ticker": "SOL",
-      "timestamp": 1792189707.2385798,
-      "spot": 104.33,
-      "target_high": 111.66,
-      "target_low": 97.0,
-      "stop_loss": 97.62,
-      "side": "buy",
-      "confidence": 80,
-      "horizon_sec": 7200,
-      "regime": "HIGH_EXPANSION",
-      "features": {
-        "gamma": 1.5,
-        "flow": 0.8,
-        "momentum": -1.5,
-        "vanna": 1.4,
-        "skew": 0.6,
-        "cvd": -1.6
-      }
-    }
-  ],
-  "completed_predictions": [
     {
       "id": "pred_SPY_1792027939",
       "ticker": "SPY",
@@ -1513,32 +1453,10 @@
       "resolution": "STOP",
       "resolved_at": 1791826320.732228,
       "resolved_price": 777.8699951171875
-    },
-    {
-      "id": "sim_SPY_333",
-      "ticker": "SPY",
-      "timestamp": 1791817920.7320464,
-      "spot": 778.3499755859375,
-      "target_high": 783.0200754394531,
-      "target_low": 773.6798757324219,
-      "stop_loss": 776.0149256591797,
-      "side": "buy",
-      "confidence": 80,
-      "regime": "LOW_COMPRESSION",
-      "features": {
-        "gamma": 1.2,
-        "flow": 1.4,
-        "momentum": 1.5,
-        "vanna": 1.1,
-        "skew": 0.8,
-        "cvd": 1.3
-      },
-      "resolution": "HIT",
-      "resolved_at": 1791826320.7320535,
-      "resolved_price": 778.419921875
     }
   ],
   "learning_insights": [
+    "RSI Walk-Forward Target HIT ($770.63) on SPY (NORMAL EQUILIBRIUM). Regime weights -> Gamma 4% \u00b7 Flow 20% \u00b7 Trend 12% \u00b7 CVD 25% \u00b7 Skew 32%.",
     "RSI Walk-Forward Stopped/Exceeded ($580.00) on SPY (NORMAL EQUILIBRIUM). Regime weights -> Gamma 4% \u00b7 Flow 20% \u00b7 Trend 13% \u00b7 CVD 25% \u00b7 Skew 32%.",
     "RSI Walk-Forward Stopped/Exceeded ($585.50) on SPY (LOW COMPRESSION). Regime weights -> Gamma 7% \u00b7 Flow 28% \u00b7 Trend 7% \u00b7 CVD 33% \u00b7 Skew 16%.",
     "RSI Walk-Forward Target HIT ($585.50) on SPY (LOW COMPRESSION). Regime weights -> Gamma 7% \u00b7 Flow 28% \u00b7 Trend 7% \u00b7 CVD 34% \u00b7 Skew 15%.",
@@ -1547,12 +1465,11 @@
     "RSI Walk-Forward Target HIT ($585.50) on SPY (LOW COMPRESSION). Regime weights -> Gamma 5% \u00b7 Flow 27% \u00b7 Trend 7% \u00b7 CVD 35% \u00b7 Skew 17%.",
     "RSI Walk-Forward Target HIT ($585.50) on SPY (LOW COMPRESSION). Regime weights -> Gamma 5% \u00b7 Flow 27% \u00b7 Trend 7% \u00b7 CVD 36% \u00b7 Skew 18%.",
     "RSI Walk-Forward Target HIT ($585.50) on SPY (LOW COMPRESSION). Regime weights -> Gamma 4% \u00b7 Flow 27% \u00b7 Trend 7% \u00b7 CVD 36% \u00b7 Skew 18%.",
-    "RSI Walk-Forward Target HIT ($585.50) on SPY (LOW COMPRESSION). Regime weights -> Gamma 4% \u00b7 Flow 27% \u00b7 Trend 7% \u00b7 CVD 37% \u00b7 Skew 19%.",
     "RSI Walk-Forward Target HIT ($585.50) on SPY (LOW COMPRESSION). Regime weights -> Gamma 4% \u00b7 Flow 27% \u00b7 Trend 7% \u00b7 CVD 37% \u00b7 Skew 19%."
   ],
   "last_calibration": 1791587852.537936,
   "generation": 22,
-  "samples_since_evolution": 2,
+  "samples_since_evolution": 3,
   "generation_history": [
     {
       "generation": 22,
@@ -1616,24 +1533,24 @@
     }
   ],
   "rsi_meta": {
-    "learning_rate": 0.065,
+    "learning_rate": 0.0645,
     "momentum_beta": 0.82,
-    "rolling_brier": 0.2258,
+    "rolling_brier": 0.2109,
     "momentum_accumulators": {
-      "gamma": -0.08183,
-      "flow": -0.08872,
-      "momentum": -0.1138,
-      "vanna": -0.10987,
-      "skew": -0.02784,
-      "cvd": -0.0714
+      "gamma": -0.0401,
+      "flow": -0.05475,
+      "momentum": -0.12032,
+      "vanna": -0.06489,
+      "skew": -0.01203,
+      "cvd": -0.05855
     },
     "information_coefficients": {
-      "gamma": 0.158,
-      "flow": 0.114,
-      "momentum": 0.06,
-      "vanna": 0.142,
-      "skew": -0.206,
-      "cvd": -0.106
+      "gamma": 0.173,
+      "flow": 0.124,
+      "momentum": 0.03,
+      "vanna": 0.157,
+      "skew": -0.181,
+      "cvd": -0.099
     },
     "regime_weights": {
       "LOW_COMPRESSION": {
@@ -1647,10 +1564,10 @@
       "NORMAL_EQUILIBRIUM": {
         "gamma": 0.041,
         "flow": 0.204,
-        "momentum": 0.132,
+        "momentum": 0.127,
         "vanna": 0.041,
-        "skew": 0.324,
-        "cvd": 0.257
+        "skew": 0.329,
+        "cvd": 0.258
       },
       "HIGH_EXPANSION": {
         "gamma": 0.153,

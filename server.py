@@ -3843,7 +3843,9 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
         "executed_trades": executed_trades
     }
 
+@app.get("/api/institutional/trigger-options")
 @app.post("/api/institutional/trigger-options")
+@app.get("/api/copilot/trigger-now")
 @app.post("/api/copilot/trigger-now")
 async def trigger_copilot_now(symbol: Optional[str] = None):
     res = await _execute_copilot_eval_cycle(forced_symbol=symbol)
