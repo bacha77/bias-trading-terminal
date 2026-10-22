@@ -64,6 +64,13 @@ interface ConfluenceData {
   trade_verdict: string;
   verdict_color: string;
   execution_permitted: boolean;
+  trend_metrics?: {
+    spot: number;
+    vwap: number;
+    ema20: number;
+    trend: string;
+    dist_vwap_pct: number;
+  };
   pillars: {
     pillar_1_dealer_gex: Pillar1GEX;
     pillar_2_variance_risk_premium: Pillar2VRP;
@@ -327,8 +334,13 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
                     </span>
                   </div>
                   
-                  <div className="text-sm font-bold text-slate-200">
-                    Active Symbol: <span className="text-white font-mono font-black text-base">{selectedSymbol}</span> · Spot: <span className="text-cyan-300 font-mono">${confluence.pillars.pillar_1_dealer_gex.spot_price.toFixed(2)}</span> · Bias: <span className="text-indigo-400 font-mono">{confluence.bias}</span>
+                  <div className="text-sm font-bold text-slate-200 flex flex-wrap items-center gap-2">
+                    <span>Active Symbol: <span className="text-white font-mono font-black text-base">{selectedSymbol}</span></span>
+                    <span>· Spot: <span className="text-cyan-300 font-mono">${confluence.pillars.pillar_1_dealer_gex.spot_price.toFixed(2)}</span></span>
+                    {confluence.trend_metrics?.vwap ? (
+                      <span>· 15m VWAP: <span className="text-amber-300 font-mono">${confluence.trend_metrics.vwap.toFixed(2)}</span> (<span className={confluence.trend_metrics.trend.includes('BULL') ? 'text-emerald-400 font-bold' : confluence.trend_metrics.trend.includes('BEAR') ? 'text-rose-400 font-bold' : 'text-slate-400 font-bold'}>{confluence.trend_metrics.trend.replace(/_/g, ' ')}</span>)</span>
+                    ) : null}
+                    <span>· Bias: <span className="text-indigo-400 font-mono">{confluence.bias}</span></span>
                   </div>
 
                   <p className="text-xs text-slate-300 font-mono max-w-4xl leading-relaxed">

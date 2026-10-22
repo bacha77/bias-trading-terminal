@@ -129,23 +129,39 @@ def calculate_dealer_gex(symbol: str = "SPY") -> Dict[str, Any]:
         edge_rationale = ""
 
         if is_positive_gamma:
-            if dist_to_call_wall_pct <= 0.4:
+            # 1. Price broke BELOW Put Wall: Support collapsed! Dealers forced to sell underlying to delta-hedge!
+            if spot_price < put_wall:
                 pillar_score = 24.0
-                edge_verdict = "BEARISH_WALL_RESISTANCE"
-                edge_rationale = f"Price is within {dist_to_call_wall_pct}% of Call Wall (${call_wall:.2f}). Dealers forced to sell rips to stay delta-neutral. High probability mean-reversion."
-            elif dist_to_put_wall_pct <= 0.4:
+                edge_verdict = "PUT_WALL_BREAKDOWN"
+                edge_rationale = f"Price (${spot_price:.2f}) broke BELOW Put Wall (${put_wall:.2f}). Dealers forced to short underlying to delta hedge. High probability continuation lower."
+            # 2. Price is holding ABOVE Put Wall within 0.5%: Genuine support bounce
+            elif 0.0 <= dist_to_put_wall_pct <= 0.6:
                 pillar_score = 24.0
                 edge_verdict = "BULLISH_WALL_SUPPORT"
-                edge_rationale = f"Price is within {dist_to_put_wall_pct}% of Put Wall (${put_wall:.2f}). Dealers forced to buy dips. High probability bounce."
+                edge_rationale = f"Price is holding above Put Wall (${put_wall:.2f}, +{dist_to_put_wall_pct}%). Dealers forced to buy dips. High probability bounce."
+            # 3. Price broke ABOVE Call Wall: Resistance shattered! Dealers short gamma squeezed into buying!
+            elif spot_price > call_wall:
+                pillar_score = 24.0
+                edge_verdict = "CALL_WALL_BREAKOUT"
+                edge_rationale = f"Price (${spot_price:.2f}) broke ABOVE Call Wall (${call_wall:.2f}). Gamma short squeeze active. Dealers forced to chase upside."
+            # 4. Price is testing Call Wall from BELOW within 0.5%: Genuine resistance
+            elif 0.0 <= dist_to_call_wall_pct <= 0.6:
+                pillar_score = 24.0
+                edge_verdict = "BEARISH_WALL_RESISTANCE"
+                edge_rationale = f"Price is testing Call Wall (${call_wall:.2f}, +{dist_to_call_wall_pct}%). Dealers forced to sell rips to stay delta-neutral. High probability rejection."
             else:
-                pillar_score = 18.0
+                pillar_score = 16.0
                 edge_verdict = "VOL_SUPPRESSED_RANGE"
                 edge_rationale = f"Positive Gamma (+GEX: ${net_gex/1e6:.1f}M). Volatility suppressed between ${put_wall:.2f} and ${call_wall:.2f}."
         else:
             if spot_price < zero_gamma_level:
                 pillar_score = 23.0
                 edge_verdict = "NEGATIVE_GAMMA_ACCELERATION"
-                edge_rationale = f"Below Zero Gamma (${zero_gamma_level:.2f}). Dealers short gamma; volatility expansion active. Trend continuation favored."
+                edge_rationale = f"Below Zero Gamma (${zero_gamma_level:.2f}). Dealers short gamma; volatility expansion active. Downside trend continuation favored."
+            elif spot_price > call_wall:
+                pillar_score = 23.0
+                edge_verdict = "NEGATIVE_GAMMA_SQUEEZE"
+                edge_rationale = f"Short gamma squeeze above Call Wall (${call_wall:.2f}). Rapid upward expansion active."
             else:
                 pillar_score = 12.0
                 edge_verdict = "GAMMA_FLIP_CHOP"
@@ -169,9 +185,18 @@ def calculate_dealer_gex(symbol: str = "SPY") -> Dict[str, Any]:
 
     except Exception as e:
         logger.warning(f"Error computing GEX for {symbol}: {e}")
-        return _mock_gex_fallback(symbol, 585.0)
+        return _mock_gex_fallback(symbol, 0.0)
 
-def _mock_gex_fallback(symbol: str, spot: float) -> Dict[str, Any]:
+def _mock_gex_fallback(symbol: str, spot: float = 0.0) -> Dict[str, Any]:
+    if spot <= 0:
+        try:
+            h = yf.Ticker(symbol).history(period="1d")
+            if not h.empty:
+                spot = float(h["Close"].iloc[-1])
+        except Exception:
+            pass
+    if spot <= 0:
+        spot = 500.0
     call_wall = round(spot * 1.015, 2)
     put_wall = round(spot * 0.985, 2)
     zero_g = round((call_wall + put_wall) / 2.0, 2)
@@ -465,14 +490,54 @@ def _mock_sweep_fallback(symbol: str) -> Dict[str, Any]:
         "rationale": "Order flow orderly. No sweep pattern active."
     }
 
+def calculate_intraday_trend_and_vwap(symbol: str) -> Dict[str, Any]:
+    """
+    Computes intraday 15m VWAP and Exponential Moving Averages to ensure 100%
+    alignment with the terminal's Multi-Timeframe Ribbon and charts.
+    Strictly prevents buying Calls into downtrends or Puts into uptrends.
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="2d", interval="15m")
+        if df.empty or len(df) < 8:
+            return {"spot": 0.0, "vwap": 0.0, "ema20": 0.0, "trend": "NEUTRAL", "dist_vwap_pct": 0.0}
+        
+        # Session VWAP
+        df["Typical"] = (df["High"] + df["Low"] + df["Close"]) / 3.0
+        df["Cum_Vol"] = df["Volume"].cumsum()
+        df["Cum_VP"] = (df["Typical"] * df["Volume"]).cumsum()
+        vwap = float(df["Cum_VP"].iloc[-1] / (df["Cum_Vol"].iloc[-1] + 1e-6))
+        
+        # 15m EMA-20
+        ema20 = float(df["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
+        spot = float(df["Close"].iloc[-1])
+        
+        if spot > vwap and spot > ema20:
+            trend = "BULLISH_EXPANSION"
+        elif spot < vwap and spot < ema20:
+            trend = "BEARISH_EXPANSION"
+        else:
+            trend = "CHOPPY_EQUILIBRIUM"
+            
+        return {
+            "spot": round(spot, 2),
+            "vwap": round(vwap, 2),
+            "ema20": round(ema20, 2),
+            "trend": trend,
+            "dist_vwap_pct": round(((spot - vwap) / (vwap + 1e-6)) * 100, 2)
+        }
+    except Exception as e:
+        logger.warning(f"Error computing VWAP/trend for {symbol}: {e}")
+        return {"spot": 0.0, "vwap": 0.0, "ema20": 0.0, "trend": "NEUTRAL", "dist_vwap_pct": 0.0}
+
 # ==============================================================================
 # MASTER INSTITUTIONAL CONFLUENCE MATRIX (0 - 100 POINTS)
 # ==============================================================================
 def get_institutional_confluence(symbol: str = "SPY") -> Dict[str, Any]:
     """
     Combines all 4 Pillars into the Master Confluence Score (0 - 100).
-    Rule: Only execute if Confluence >= 75/100.
-    Otherwise STAND DOWN: Do not trade retail noise.
+    Rule: Only execute if Confluence >= 75/100 AND trend confirmation aligns.
+    Otherwise STAND DOWN: Do not trade retail noise or counter-trend knives.
     """
     cache_key = f"institutional_confluence_{symbol.upper()}"
     
@@ -482,6 +547,7 @@ def get_institutional_confluence(symbol: str = "SPY") -> Dict[str, Any]:
         p2 = calculate_variance_risk_premium(sym)
         p3 = calculate_credit_lead_lag()
         p4 = detect_liquidity_sweep(sym)
+        trend_metrics = calculate_intraday_trend_and_vwap(sym)
 
         total_score = round(p1["score"] + p2["score"] + p3["score"] + p4["score"], 1)
 
@@ -493,32 +559,46 @@ def get_institutional_confluence(symbol: str = "SPY") -> Dict[str, Any]:
         bullish_signals = 0
         bearish_signals = 0
 
-        # Pillar 1 signals
-        if "BULLISH" in p1.get("edge_verdict", ""):
+        # Pillar 1 signals (GEX Wall Rejection / Breakdown / Breakout)
+        if "BULLISH" in p1.get("edge_verdict", "") or "BREAKOUT" in p1.get("edge_verdict", ""):
             bullish_signals += 1
-        elif "BEARISH" in p1.get("edge_verdict", ""):
+        elif "BEARISH" in p1.get("edge_verdict", "") or "BREAKDOWN" in p1.get("edge_verdict", "") or "ACCELERATION" in p1.get("edge_verdict", ""):
             bearish_signals += 1
 
-        # Pillar 3 signals
+        # Pillar 3 signals (Credit Divergence)
         if "BULLISH" in p3.get("divergence_state", ""):
             bullish_signals += 1
         elif "BEARISH" in p3.get("divergence_state", ""):
             bearish_signals += 1
 
-        # Pillar 4 signals
+        # Pillar 4 signals (Liquidity Sweep)
         if "BULLISH" in p4.get("sweep_pattern", ""):
             bullish_signals += 1
         elif "BEARISH" in p4.get("sweep_pattern", ""):
             bearish_signals += 1
 
-        if bullish_signals >= 2 and bearish_signals == 0:
-            bias = "INSTITUTIONAL_BULLISH"
-        elif bearish_signals >= 2 and bullish_signals == 0:
-            bias = "INSTITUTIONAL_BEARISH"
-        elif total_score >= 70:
-            bias = "INSTITUTIONAL_HIGH_PROBABILITY"
+        trend_state = trend_metrics.get("trend", "NEUTRAL")
+        spot_vs_vwap = trend_metrics.get("dist_vwap_pct", 0.0)
 
-        if total_score >= 75.0:
+        # Multi-Timeframe Trend Veto Rules:
+        if bullish_signals >= 2 and bearish_signals == 0:
+            if trend_state == "BEARISH_EXPANSION" or spot_vs_vwap < -0.35:
+                bias = "NEUTRAL"
+                trade_verdict = f"STAND_DOWN_COUNTER_TREND (PRICE TRADING {spot_vs_vwap:.2f}% BELOW 15M VWAP)"
+                verdict_color = "amber"
+            else:
+                bias = "INSTITUTIONAL_BULLISH"
+        elif bearish_signals >= 2 and bullish_signals == 0:
+            if trend_state == "BULLISH_EXPANSION" or spot_vs_vwap > 0.35:
+                bias = "NEUTRAL"
+                trade_verdict = f"STAND_DOWN_COUNTER_TREND (PRICE TRADING +{spot_vs_vwap:.2f}% ABOVE 15M VWAP)"
+                verdict_color = "amber"
+            else:
+                bias = "INSTITUTIONAL_BEARISH"
+        else:
+            bias = "NEUTRAL"
+
+        if total_score >= 75.0 and "STAND_DOWN" not in trade_verdict:
             if bias == "INSTITUTIONAL_BULLISH":
                 trade_verdict = "EXECUTE_INSTITUTIONAL_LONG"
                 verdict_color = "emerald"
@@ -526,11 +606,13 @@ def get_institutional_confluence(symbol: str = "SPY") -> Dict[str, Any]:
                 trade_verdict = "EXECUTE_INSTITUTIONAL_SHORT"
                 verdict_color = "rose"
             else:
-                trade_verdict = "EXECUTE_DEFINED_SPREAD"
-                verdict_color = "cyan"
-        else:
-            trade_verdict = "STAND_DOWN_RETAIL_NOISE (CONFLUENCE < 75)"
+                trade_verdict = "STAND_DOWN_RETAIL_NOISE (NO CONVERGENT DIRECTION)"
+                verdict_color = "amber"
+        elif "STAND_DOWN" not in trade_verdict:
+            trade_verdict = f"STAND_DOWN_RETAIL_NOISE (CONFLUENCE {total_score} < 75)"
             verdict_color = "amber"
+
+        execution_permitted = (total_score >= 75.0) and ("EXECUTE" in trade_verdict)
 
         return {
             "symbol": sym,
@@ -540,7 +622,8 @@ def get_institutional_confluence(symbol: str = "SPY") -> Dict[str, Any]:
             "bias": bias,
             "trade_verdict": trade_verdict,
             "verdict_color": verdict_color,
-            "execution_permitted": total_score >= 75.0,
+            "execution_permitted": execution_permitted,
+            "trend_metrics": trend_metrics,
             "pillars": {
                 "pillar_1_dealer_gex": p1,
                 "pillar_2_variance_risk_premium": p2,
@@ -550,6 +633,7 @@ def get_institutional_confluence(symbol: str = "SPY") -> Dict[str, Any]:
             "summary_memo": (
                 f"Institutional Confluence: {total_score}/100. "
                 f"Verdict: {trade_verdict}. "
+                f"Trend: {trend_state} (VWAP: ${trend_metrics.get('vwap', 0):.2f}). "
                 f"Pillar 1 (GEX): {p1['score']}/25 ({p1['edge_verdict']}). "
                 f"Pillar 2 (VRP): {p2['score']}/25 ({p2['strategy_recommendation']}). "
                 f"Pillar 3 (Credit): {p3['score']}/25 ({p3['divergence_state']}). "

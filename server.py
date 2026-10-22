@@ -3645,8 +3645,13 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             trade_verdict = iq_eval.get("trade_verdict", "")
             bias = iq_eval.get("bias", "NEUTRAL")
 
-            # Must satisfy institutional confidence threshold
+            # 1. Must satisfy institutional confidence threshold
             if c_score < min_conf and not forced_symbol:
+                continue
+
+            # 2. Strict Stand Down check: If engine says STAND DOWN or execution not permitted, abort!
+            if ("STAND_DOWN" in trade_verdict or not iq_eval.get("execution_permitted", False)) and not forced_symbol:
+                print(f"[QUANT ALPHA BOT] Stand down on {sym}: Confluence {c_score}/100. Verdict: {trade_verdict}.")
                 continue
 
             # Directional Determination: strictly from 4-Pillar Quant Alpha Matrix
@@ -3666,6 +3671,29 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
 
             cw = p1.get("call_wall")
             pw = p1.get("put_wall")
+
+            # 3. 15m VWAP & Multi-Timeframe Trend Gate (Terminal Alignment)
+            # Strictly forbids buying Calls below session VWAP or Puts above session VWAP
+            trend_info = iq_eval.get("trend_metrics", {})
+            vwap_val = float(trend_info.get("vwap", 0.0))
+            trend_state = trend_info.get("trend", "NEUTRAL")
+            if vwap_val > 0 and spot_val > 0:
+                if is_call and (spot_val < vwap_val or trend_state == "BEARISH_EXPANSION"):
+                    print(f"[TREND VETO] Blocked CALL on {sym}: Spot (${spot_val:.2f}) is below 15m VWAP (${vwap_val:.2f}) in {trend_state}. No counter-trend buying.")
+                    continue
+                if is_put and (spot_val > vwap_val or trend_state == "BULLISH_EXPANSION"):
+                    print(f"[TREND VETO] Blocked PUT on {sym}: Spot (${spot_val:.2f}) is above 15m VWAP (${vwap_val:.2f}) in {trend_state}. No counter-trend shorting.")
+                    continue
+
+            # 4. GEX Structural Breakout & Breakdown Protection
+            # If spot broke BELOW Put Wall, market makers are dumping: NEVER buy Calls!
+            if is_call and pw and spot_val < pw:
+                print(f"[GEX BREAKDOWN] Blocked CALL on {sym}: Spot (${spot_val:.2f}) broke below Put Wall (${pw:.2f}). Negative dealer gamma active.")
+                continue
+            # If spot broke ABOVE Call Wall, market makers are short squeezed: NEVER buy Puts!
+            if is_put and cw and spot_val > cw:
+                print(f"[GEX BREAKOUT] Blocked PUT on {sym}: Spot (${spot_val:.2f}) broke above Call Wall (${cw:.2f}). Gamma short squeeze active.")
+                continue
 
             # GEX Wall Proximity Gate: Never buy Calls directly into Call Wall or Puts into Put Floor
             if is_call and cw and cw > spot_val:

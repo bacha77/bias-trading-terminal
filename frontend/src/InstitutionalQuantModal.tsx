@@ -63,6 +63,13 @@ interface ConfluenceData {
   trade_verdict: string;
   verdict_color: string;
   execution_permitted: boolean;
+  trend_metrics?: {
+    spot: number;
+    vwap: number;
+    ema20: number;
+    trend: string;
+    dist_vwap_pct: number;
+  };
   pillars: {
     pillar_1_dealer_gex: Pillar1GEX;
     pillar_2_variance_risk_premium: Pillar2VRP;
@@ -301,8 +308,12 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
                           {confluence.trade_verdict}
                         </span>
                       </div>
-                      <div className="text-sm font-bold text-slate-200 mt-1">
-                        Bias: <span className="text-indigo-400 font-mono">{confluence.bias}</span> · Spot Price: <span className="text-white font-mono">${confluence.pillars.pillar_1_dealer_gex.spot_price.toFixed(2)}</span>
+                      <div className="text-sm font-bold text-slate-200 mt-1 flex flex-wrap items-center gap-2">
+                        <span>Bias: <span className="text-indigo-400 font-mono">{confluence.bias}</span></span>
+                        <span>· Spot: <span className="text-white font-mono">${confluence.pillars.pillar_1_dealer_gex.spot_price.toFixed(2)}</span></span>
+                        {confluence.trend_metrics?.vwap ? (
+                          <span>· 15m VWAP: <span className="text-amber-300 font-mono">${confluence.trend_metrics.vwap.toFixed(2)}</span> (<span className={confluence.trend_metrics.trend.includes('BULL') ? 'text-emerald-400 font-bold' : confluence.trend_metrics.trend.includes('BEAR') ? 'text-rose-400 font-bold' : 'text-slate-400 font-bold'}>{confluence.trend_metrics.trend.replace(/_/g, ' ')}</span>)</span>
+                        ) : null}
                       </div>
                       <p className="text-xs text-slate-400 mt-1 max-w-2xl font-mono leading-relaxed">
                         {confluence.summary_memo}

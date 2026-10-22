@@ -36,31 +36,37 @@ def get_current_et_time() -> datetime:
 
 def get_next_expiry_date(ticker: str) -> date:
     """
-    Returns the nearest viable expiration date.
-    SPY, QQQ, and IWM have daily expirations (0DTE allowed if before 15:30 ET).
-    Other tickers expire on Fridays.
+    Returns an institutional-grade expiration date.
+    - Single stocks (NVDA, GOOGL, AAPL, TSLA, etc.): MANDATORY minimum 6 to 13 days out (7-14 DTE).
+      Permanently eliminates 0DTE/1DTE catastrophic theta decay and extreme bid-ask spread slippage.
+    - Index ETFs (SPY, QQQ, IWM): Minimum 2 to 5 DTE to absorb midday chop.
     """
     now_et = get_current_et_time()
     today = now_et.date()
     weekday = now_et.weekday() # 0 = Monday, 4 = Friday
+    sym = ticker.upper().strip()
     
-    # If SPY, QQQ, or IWM: Only allow 0DTE during morning momentum (before 11:30 AM ET)
-    # After 11:30 AM ET, 0DTE extrinsic value decays too rapidly (theta burn), so roll to next expiry.
-    if ticker.upper() in ["SPY", "QQQ", "IWM"] and weekday < 5:
-        if now_et.hour < 11 or (now_et.hour == 11 and now_et.minute < 30):
-            return today
-    
-    # Otherwise find nearest Friday (at least 1-2 days out for safe theta management)
+    # Days until this coming Friday
     days_until_friday = (4 - weekday) % 7
-    if days_until_friday == 0 and (now_et.hour > 11 or (now_et.hour == 11 and now_et.minute >= 30)):
-        # If it's already Friday midday/afternoon, roll to next Friday
-        days_until_friday = 7
-    elif days_until_friday == 0 and weekday == 4:
-        # Friday morning momentum only
-        days_until_friday = 0
-    elif days_until_friday == 0:
+    if days_until_friday == 0:
         days_until_friday = 7
 
+    # Single stocks: Never buy less than 6 days to expiration (roll to next Friday)
+    if sym not in ["SPY", "QQQ", "IWM"]:
+        if days_until_friday < 5:
+            days_until_friday += 7
+        target = today + timedelta(days=days_until_friday)
+        return target
+    
+    # For Index ETFs (SPY, QQQ, IWM):
+    # Only allow 1-2 DTE on Monday/Tuesday morning (before 11:00 AM ET)
+    if weekday <= 1 and now_et.hour < 11:
+        target = today + timedelta(days=max(1, (2 - weekday)))
+        return target
+        
+    # Otherwise use Friday (at least 3-5 days out)
+    if days_until_friday < 3:
+        days_until_friday += 7
     target = today + timedelta(days=days_until_friday)
     return target
 
