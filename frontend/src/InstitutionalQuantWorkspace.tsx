@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
   RefreshCw, ShieldCheck, Zap, Activity, Target, 
-  Layers, Lock, BarChart2, Compass, Cpu, ArrowLeft
+  Layers, Lock, BarChart2, Compass, Cpu, ArrowLeft,
+  CheckCircle2, AlertTriangle, Sparkles, X
 } from 'lucide-react';
 import { API_BASE } from './config';
 
@@ -106,6 +107,26 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
   const [loading, setLoading] = useState<boolean>(true);
   const [radarLoading, setRadarLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'WORKSPACE' | 'RADAR'>('WORKSPACE');
+  const [triggerExecuting, setTriggerExecuting] = useState<boolean>(false);
+  const [executionResult, setExecutionResult] = useState<any | null>(null);
+
+  const executeQuantOptionTrade = async (sym: string) => {
+    try {
+      setTriggerExecuting(true);
+      setExecutionResult(null);
+      const res = await fetch(`${API_BASE}/api/institutional/trigger-options?symbol=${sym}`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      setExecutionResult(data);
+      fetchConfluence(sym);
+    } catch (err) {
+      console.error('Trigger options error:', err);
+      setExecutionResult({ status: 'ERROR', message: String(err) });
+    } finally {
+      setTriggerExecuting(false);
+    }
+  };
 
   const fetchConfluence = useCallback(async (sym: string) => {
     try {
@@ -317,7 +338,7 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
               </div>
 
               {/* Execution Gate Status */}
-              <div className="flex flex-col items-center xl:items-end gap-2 shrink-0">
+              <div className="flex flex-col items-center xl:items-end gap-2.5 shrink-0">
                 <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border font-mono text-xs font-bold ${
                   isApproved 
                     ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
@@ -326,11 +347,90 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
                   {isApproved ? <ShieldCheck size={16} className="text-emerald-400" /> : <Lock size={16} className="text-amber-400" />}
                   <span>{isApproved ? 'AUTONOMOUS EXECUTION PERMITTED' : 'EXECUTION LOCKED (< 70 PTS)'}</span>
                 </div>
-                <span className="text-[11px] text-slate-400 font-mono text-center xl:text-right">
-                  System strictly blocks retail impulse orders into dealer resistance walls
-                </span>
+                
+                {/* 1-Click Trigger Button for Institutional Quant Alpha Matrix */}
+                <button
+                  onClick={() => executeQuantOptionTrade(selectedSymbol)}
+                  disabled={triggerExecuting || !isApproved}
+                  className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg ${
+                    isApproved && !triggerExecuting
+                      ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.4)] cursor-pointer active:scale-95'
+                      : 'bg-slate-800/80 text-slate-500 border border-slate-700/50 cursor-not-allowed'
+                  }`}
+                >
+                  {triggerExecuting ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin text-slate-950" />
+                      <span>ROUTING OCC BRACKET ORDER...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={14} className={isApproved ? "fill-slate-950 text-slate-950" : ""} />
+                      <span>EXECUTE QUANT ALPHA OPTION BRACKET</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-400/80">
+                  <Sparkles size={11} />
+                  <span>100% OCC Options Only · +40% TP / -25% SL · EOD 15:50 ET Auto-Close</span>
+                </div>
               </div>
             </div>
+
+            {/* Execution Result Banner */}
+            {executionResult && (
+              <div className={`p-4 rounded-xl border font-mono text-xs animate-in fade-in duration-200 flex items-start justify-between gap-4 ${
+                executionResult.executed_count > 0 || (executionResult.executed_trades && executionResult.executed_trades.length > 0)
+                  ? 'bg-emerald-950/40 border-emerald-500/60 text-emerald-200'
+                  : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200'
+              }`}>
+                <div className="flex items-start gap-3">
+                  {executionResult.executed_count > 0 ? (
+                    <CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle size={18} className="text-indigo-400 shrink-0 mt-0.5" />
+                  )}
+                  <div className="space-y-1">
+                    <div className="font-bold flex items-center gap-2">
+                      <span>
+                        {executionResult.executed_count > 0 
+                          ? `QUANT ALPHA OPTION ORDER SUBMITTED (${executionResult.executed_count} EXECUTED)` 
+                          : `CYCLE EVALUATION COMPLETE (${executionResult.scanned || 0} ASSETS SCANNED)`}
+                      </span>
+                    </div>
+                    {executionResult.executed_trades && executionResult.executed_trades.length > 0 ? (
+                      <div className="space-y-1 pt-1">
+                        {executionResult.executed_trades.map((t: any, idx: number) => (
+                          <div key={idx} className="bg-slate-950/60 p-2.5 rounded-lg border border-emerald-500/30 text-[11px] space-y-1">
+                            <div className="font-bold text-white flex items-center gap-2">
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                                {t.side} {t.strike}
+                              </span>
+                              <span>{t.symbol}</span>
+                              <span className="text-slate-400">Exp {t.expiry}</span>
+                            </div>
+                            <div className="text-slate-300 text-[10px]">
+                              Entry: ${Number(t.price).toFixed(2)} | TP: ${Number(t.tp).toFixed(2)} (+40%) | SL: ${Number(t.sl).toFixed(2)} (-25%) | Rule: {t.eod_rule}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-slate-300">
+                        {executionResult.reason || executionResult.message || `No qualifying confluence setup met strict 4-pillar threshold for immediate execution.`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setExecutionResult(null)}
+                  className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
 
             {/* 4 Quantitative Alpha Pillars - Full Responsive Multi-Column Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-3.5 min-w-0 max-w-full">

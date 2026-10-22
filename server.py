@@ -3635,231 +3635,197 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             continue
 
         try:
-            algo_res = await get_smart_intelligence(sym)
-            if not algo_res or "bracket_setup" not in algo_res:
+            # -----------------------------------------------------------------
+            # 1. INSTITUTIONAL QUANT ALPHA MATRIX CONFLUENCE (4 PILLARS)
+            # Evaluates Citadel GEX + Jane Street VRP + Renaissance Credit + Dark Pool Sweeps
+            # -----------------------------------------------------------------
+            import institutional_quant_engine
+            iq_eval = await asyncio.to_thread(institutional_quant_engine.get_institutional_confluence, sym)
+            c_score = float(iq_eval.get("confluence_score", 0))
+            trade_verdict = iq_eval.get("trade_verdict", "")
+            bias = iq_eval.get("bias", "NEUTRAL")
+
+            # Must satisfy institutional confidence threshold
+            if c_score < min_conf and not forced_symbol:
                 continue
-                
-            conf = algo_res.get("confidence", 0)
-            setup = algo_res["bracket_setup"]
-            
-            if conf >= min_conf:
-                # -------------------------------------------------------------
-                # Automated News & Earnings Safety Filter
-                # -------------------------------------------------------------
-                if state.get("news_safety_filter_enabled", True) and not forced_symbol:
-                    try:
-                        import news_catalyst_engine
-                        recent_articles = await asyncio.to_thread(news_catalyst_engine.fetch_live_catalyst_news, sym, 5)
-                        breaking_high_impact = [
-                            a for a in recent_articles 
-                            if a.get("impact") in ["CRITICAL", "HIGH"] 
-                            and a.get("category") in ["REGULATORY", "EARNINGS", "MACRO"]
-                        ]
-                        if breaking_high_impact:
-                            lead = breaking_high_impact[0]
-                            sent = lead.get("sentiment", {}).get("bias", "NEUTRAL")
-                            # If trying to buy CALL but news is strong BEARISH (or DOJ/regulatory probe)
-                            if setup.get("side", "").upper() == "BUY" and sent == "BEARISH":
-                                print(f"[SAFETY FILTER] Blocked CALL on {sym}: Severe Bearish News Catalyst ({lead.get('headline')[:50]})")
-                                continue
-                            # If trying to buy PUT but news is strong BULLISH
-                            if setup.get("side", "").upper() == "SELL" and sent == "BULLISH":
-                                print(f"[SAFETY FILTER] Blocked PUT on {sym}: Strong Bullish News Catalyst ({lead.get('headline')[:50]})")
-                    except Exception as news_err:
-                        pass
-                # GEX Wall Proximity Filter: Avoid Buying Calls directly into Call Wall
-                # or Buying Puts directly into Put Support Wall
-                # -------------------------------------------------------------
-                if not forced_symbol:
-                    gex_info = algo_res.get("gex") or {}
-                    cw = gex_info.get("call_wall")
-                    pw = gex_info.get("put_wall")
-                    spot_val = float(setup.get("entry_price", 0))
 
-                    if spot_val > 0:
-                        # If Call Wall is within 0.35% above spot, upside is severely capped by dealer long gamma pin
-                        if setup.get("side", "").upper() == "BUY" and cw and cw > spot_val:
-                            dist_to_cw_pct = ((cw - spot_val) / spot_val) * 100
-                            if dist_to_cw_pct < 0.35:
-                                print(f"[GEX GATE] Skipped CALL on {sym}: Spot (${spot_val:.2f}) pinned within {dist_to_cw_pct:.2f}% of Dealer Call Resistance Wall (${cw:.2f}).")
-                                continue
-                        # If Put Wall is within 0.35% below spot, downside is protected by dealer put floor
-                        if setup.get("side", "").upper() == "SELL" and pw and pw < spot_val:
-                            dist_to_pw_pct = ((spot_val - pw) / spot_val) * 100
-                            if dist_to_pw_pct < 0.35:
-                                print(f"[GEX GATE] Skipped PUT on {sym}: Spot (${spot_val:.2f}) pinned within {dist_to_pw_pct:.2f}% of Dealer Put Support Floor (${pw:.2f}).")
-                                continue
+            # Directional Determination: strictly from 4-Pillar Quant Alpha Matrix
+            is_call = ("BULLISH" in trade_verdict or "LONG" in trade_verdict or bias == "INSTITUTIONAL_BULLISH")
+            is_put = ("BEARISH" in trade_verdict or "SHORT" in trade_verdict or bias == "INSTITUTIONAL_BEARISH")
 
-                # -------------------------------------------------------------
-                # Macro Index Regime Alignment Gate (SPY/QQQ Beta Alignment)
-                # Avoid buying Long Calls during market-wide breakdown or Puts during broad market rally
-                # -------------------------------------------------------------
-                if not forced_symbol and sym not in ["SPY", "QQQ"]:
-                    spy_tape = CACHE.get("alpaca_tape", {}).get("data", {}).get("tape", {}).get("SPY", {})
-                    spy_chg = spy_tape.get("change")
-                    if spy_chg is not None:
-                        # Severe market trend contra-trade filter
-                        if setup.get("side", "").upper() == "BUY" and float(spy_chg) <= -1.25:
-                            print(f"[MACRO GATE] Skipped CALL on {sym}: SPY experiencing severe intraday liquidation ({spy_chg:+.2f}%).")
-                            continue
-                        elif setup.get("side", "").upper() == "SELL" and float(spy_chg) >= 1.25:
-                            print(f"[MACRO GATE] Skipped PUT on {sym}: SPY in strong broad-market short squeeze ({spy_chg:+.2f}%).")
-                            continue
+            if not is_call and not is_put:
+                print(f"[QUANT ALPHA BOT] Stand down on {sym}: Confluence {c_score}/100. Verdict: {trade_verdict}. No clean directional edge.")
+                continue
 
-                res_sym = resolve_symbol(sym)
-                should_sim = state.get("is_simulated", False) or (not market_open and not res_sym["is_crypto"])
+            p1 = iq_eval["pillars"]["pillar_1_dealer_gex"]
+            spot_val = float(p1.get("spot_price", 0))
+            if spot_val <= 0:
+                spot_val = float(live_price_cache.get(sym, 0))
+            if spot_val <= 0:
+                continue
 
-                # -------------------------------------------------------------
-                # Institutional Quant Confluence Gatekeeper (Citadel GEX + Jane Street VRP + Renaissance Credit + Dark Pool Sweep)
-                # Trade MUST score >= 70 Confluence to execute, stopping retail gambling.
-                # -------------------------------------------------------------
-                if not res_sym["is_crypto"] and not forced_symbol:
-                    try:
-                        import institutional_quant_engine
-                        iq_eval = institutional_quant_engine.get_institutional_confluence(sym)
-                        c_score = iq_eval.get("confluence_score", 0)
-                        c_verdict = iq_eval.get("trade_verdict", "")
-                        if c_score < 70.0:
-                            print(f"[INSTITUTIONAL GATE] Vetoed trade on {sym}: Confluence Score {c_score}/100 < 70 min threshold. Verdict: {c_verdict}. Standing down from retail noise.")
-                            continue
-                        print(f"[INSTITUTIONAL GATE] APPROVED trade on {sym}: Confluence Score {c_score}/100. Bias: {iq_eval.get('bias')}")
-                    except Exception as iq_err:
-                        print(f"[INSTITUTIONAL GATE WARNING] {iq_err}")
-                
-                # Strict Options Only guard: Exclude crypto and non-optionable assets
-                if options_only and res_sym["is_crypto"]:
-                    print(f"[COPILOT] Skipping {sym}: Crypto assets are excluded in Options-Only mode.")
+            cw = p1.get("call_wall")
+            pw = p1.get("put_wall")
+
+            # GEX Wall Proximity Gate: Never buy Calls directly into Call Wall or Puts into Put Floor
+            if is_call and cw and cw > spot_val:
+                dist_to_cw_pct = ((cw - spot_val) / spot_val) * 100
+                if dist_to_cw_pct < 0.35:
+                    print(f"[GEX GATE] Skipped CALL on {sym}: Spot (${spot_val:.2f}) pinned within {dist_to_cw_pct:.2f}% of Dealer Call Resistance Wall (${cw:.2f}).")
+                    continue
+            if is_put and pw and pw < spot_val:
+                dist_to_pw_pct = ((spot_val - pw) / spot_val) * 100
+                if dist_to_pw_pct < 0.35:
+                    print(f"[GEX GATE] Skipped PUT on {sym}: Spot (${spot_val:.2f}) pinned within {dist_to_pw_pct:.2f}% of Dealer Put Support Floor (${pw:.2f}).")
                     continue
 
-                # Check Options Only routing
-                from options_auto_trade import generate_options_bracket_setup
-                opt_bracket = setup.get("option_bracket")
-                if not opt_bracket and not res_sym["is_crypto"]:
-                    opt_bracket = generate_options_bracket_setup(sym, setup["entry_price"], setup["side"])
-                
-                if options_only:
-                    # -------------------------------------------------------------
-                    # Bid-Ask Spread Width & Liquidity Guard
-                    # Avoid illiquid strikes with wide dealer spread gouging (> 12% spread width)
-                    # -------------------------------------------------------------
-                    limit_entry_price = opt_bracket["estimated_premium"]
-                    if creds.get("key") and creds.get("secret") and not should_sim:
-                        try:
-                            opt_q_req = urllib.request.Request(
-                                f"https://data.alpaca.markets/v1beta1/options/snapshots?symbols={opt_bracket['contract_symbol']}",
-                                headers={"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
-                            )
-                            with urllib.request.urlopen(opt_q_req, timeout=3) as oq_resp:
-                                snap_data = json.loads(oq_resp.read().decode())
-                                snap = snap_data.get("snapshots", {}).get(opt_bracket["contract_symbol"], {})
-                                lq = snap.get("latestQuote") or {}
-                                bp = float(lq.get("bp") or 0)
-                                ap = float(lq.get("ap") or 0)
-                                if bp > 0 and ap > 0:
-                                    mid = (bp + ap) / 2.0
-                                    spread_width_pct = (ap - bp) / mid
-                                    if spread_width_pct > 0.12:
-                                        print(f"[LIQUIDITY GUARD] Skipped {opt_bracket['contract_symbol']}: Excessive Bid/Ask Spread ({spread_width_pct*100:.1f}% > 12% max).")
-                                        continue
-                                    # Route with Price Improvement (Bid + 40% of spread instead of paying full Ask)
-                                    limit_entry_price = round(bp + 0.40 * (ap - bp), 2)
-                        except Exception as oq_err:
-                            pass
+            # Macro Index Regime Alignment Gate (SPY/QQQ Beta Alignment)
+            if not forced_symbol and sym not in ["SPY", "QQQ"]:
+                spy_tape = CACHE.get("alpaca_tape", {}).get("data", {}).get("tape", {}).get("SPY", {})
+                spy_chg = spy_tape.get("change")
+                if spy_chg is not None:
+                    if is_call and float(spy_chg) <= -1.25:
+                        print(f"[MACRO GATE] Skipped CALL on {sym}: SPY experiencing severe intraday liquidation ({spy_chg:+.2f}%).")
+                        continue
+                    elif is_put and float(spy_chg) >= 1.25:
+                        print(f"[MACRO GATE] Skipped PUT on {sym}: SPY in strong broad-market short squeeze ({spy_chg:+.2f}%).")
+                        continue
 
-                    # ROUTE TO OPTIONS CONTRACT BRACKET (OCC ATM Call/Put)
-                    order_req = BracketOrderRequest(
-                        symbol=opt_bracket["contract_symbol"],
-                        qty=state.get("order_qty", 1),
-                        side="buy", # Always buy Call or Put contract to open
-                        limit_price=limit_entry_price,
-                        take_profit_price=opt_bracket["take_profit_price"],
-                        stop_loss_price=opt_bracket["stop_loss_price"],
-                        simulated=should_sim,
-                        is_option=True,
-                        option_details=opt_bracket
-                    )
-                    
-                    order_res = await place_bracket_order(order_req)
-                    
-                    ticket = {
-                        "id": f"copt_{sym}_{int(now_ts)}",
-                        "timestamp": now_ts,
-                        "time": datetime.now().strftime("%H:%M:%S"),
-                        "symbol": opt_bracket["contract_symbol"],
-                        "underlying": sym,
-                        "side": opt_bracket["option_type"].upper(), # CALL or PUT
-                        "action": "BUY_TO_OPEN",
-                        "strike": opt_bracket["strike"],
-                        "expiry": opt_bracket["expiry"],
-                        "multiplier": 100,
-                        "is_option": True,
-                        "auto_flatten_eod": True,
-                        "eod_rule": "Mandatory auto-close at 15:50 ET",
-                        "price": opt_bracket["estimated_premium"],
-                        "tp": opt_bracket["take_profit_price"],
-                        "sl": opt_bracket["stop_loss_price"],
-                        "mode": "PAPER_SIMULATION" if should_sim else "ALPACA_PAPER",
-                        "status": "FILLED" if order_res.get("status") in ["SUBMITTED", "SIMULATED_FILLED"] else "REJECTED",
-                        "confidence": conf,
-                        "win_probability": algo_res.get("win_probability", "70%"),
-                        "order_details": order_res
-                    }
-                else:
-                    # SHARES ROUTE (Only active if user manually turns off Options-Only mode)
-                    order_req = BracketOrderRequest(
-                        symbol=setup["symbol"],
-                        qty=state.get("order_qty", 1),
-                        side=setup["side"],
-                        limit_price=setup["entry_price"],
-                        take_profit_price=setup["take_profit"],
-                        stop_loss_price=setup["stop_loss"],
-                        simulated=should_sim
-                    )
-                    
-                    order_res = await place_bracket_order(order_req)
-                    
-                    ticket = {
-                        "id": f"copt_{sym}_{int(now_ts)}",
-                        "timestamp": now_ts,
-                        "time": datetime.now().strftime("%H:%M:%S"),
-                        "symbol": sym,
-                        "side": setup["side"].upper(),
-                        "price": setup["entry_price"],
-                        "tp": setup["take_profit"],
-                        "sl": setup["stop_loss"],
-                        "mode": "PAPER_SIMULATION" if should_sim else "ALPACA_PAPER",
-                        "status": "FILLED" if order_res.get("status") in ["SUBMITTED", "SIMULATED_FILLED"] else "REJECTED",
-                        "confidence": conf,
-                        "win_probability": algo_res.get("win_probability", "70%"),
-                        "order_details": order_res
-                    }
-                
-                state["last_trades"].insert(0, ticket)
-                state["last_trades"] = state["last_trades"][:50]
-                trigger_times[sym] = now_ts
-                executed_trades.append(ticket)
-                state["daily_trades_count"] = state.get("daily_trades_count", 0) + 1
-                state["last_global_trade_time"] = now_ts
-                total_active_pos += 1
-                open_underlyings.add(sym)
-                
-                # Send email notification
+            # News & Earnings Safety Filter
+            if state.get("news_safety_filter_enabled", True) and not forced_symbol:
                 try:
-                    from email_notifier import send_email, render_copilot_trade_alert_html
-                    opt_str = f" [{ticket.get('side')} ${ticket.get('strike')} Exp {ticket.get('expiry')}]" if ticket.get("is_option") else ""
-                    subj = f"⚡ CO-PILOT {ticket['symbol']}{opt_str} @ ${ticket['price']}"
-                    html = render_copilot_trade_alert_html(ticket)
-                    await asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com")
-                    
-                    from desk_notifier import dispatch_desk_alert
-                    dispatch_desk_alert(
-                        f"🤖 0DTE OPTIONS FILLED: {ticket['symbol']}",
-                        f"{ticket['side']} {ticket.get('strike', '')} @ ${ticket['price']} | Conf: {ticket.get('confidence', 0)}%",
-                        "OPTIONS_TRADE",
-                        metadata={"symbol": ticket["symbol"], "side": ticket["side"], "price": str(ticket["price"])}
+                    import news_catalyst_engine
+                    recent_articles = await asyncio.to_thread(news_catalyst_engine.fetch_live_catalyst_news, sym, 5)
+                    breaking_high_impact = [
+                        a for a in recent_articles 
+                        if a.get("impact") in ["CRITICAL", "HIGH"] 
+                        and a.get("category") in ["REGULATORY", "EARNINGS", "MACRO"]
+                    ]
+                    if breaking_high_impact:
+                        lead = breaking_high_impact[0]
+                        sent = lead.get("sentiment", {}).get("bias", "NEUTRAL")
+                        if is_call and sent == "BEARISH":
+                            print(f"[SAFETY FILTER] Blocked CALL on {sym}: Severe Bearish News Catalyst ({lead.get('headline')[:50]})")
+                            continue
+                        if is_put and sent == "BULLISH":
+                            print(f"[SAFETY FILTER] Blocked PUT on {sym}: Strong Bullish News Catalyst ({lead.get('headline')[:50]})")
+                            continue
+                except Exception:
+                    pass
+
+            # =================================================================
+            # 2. STRICT STOCK OPTIONS ONLY ROUTE (OCC ATM CALL/PUT BRACKET)
+            # Equity common stock shares are permanently disabled.
+            # =================================================================
+            from options_auto_trade import generate_options_bracket_setup
+            option_bias = "BULLISH" if is_call else "BEARISH"
+            opt_bracket = generate_options_bracket_setup(
+                ticker=sym,
+                spot=spot_val,
+                bias=option_bias,
+                confidence=c_score,
+                contract_qty=state.get("order_qty", 1)
+            )
+
+            should_sim = state.get("is_simulated", False) or (not market_open)
+            limit_entry_price = opt_bracket["estimated_premium"]
+
+            # Bid-Ask Spread Width & Liquidity Guard on live Alpaca snapshot
+            if creds.get("key") and creds.get("secret") and not should_sim:
+                try:
+                    opt_q_req = urllib.request.Request(
+                        f"https://data.alpaca.markets/v1beta1/options/snapshots?symbols={opt_bracket['contract_symbol']}",
+                        headers={"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
                     )
-                except Exception as mail_err:
-                    print(f"Co-Pilot alert dispatch error: {mail_err}")
+                    with urllib.request.urlopen(opt_q_req, timeout=3) as oq_resp:
+                        snap_data = json.loads(oq_resp.read().decode())
+                        snap = snap_data.get("snapshots", {}).get(opt_bracket["contract_symbol"], {})
+                        lq = snap.get("latestQuote") or {}
+                        bp = float(lq.get("bp") or 0)
+                        ap = float(lq.get("ap") or 0)
+                        if bp > 0 and ap > 0:
+                            mid = (bp + ap) / 2.0
+                            spread_width_pct = (ap - bp) / mid
+                            if spread_width_pct > 0.12:
+                                print(f"[LIQUIDITY GUARD] Skipped {opt_bracket['contract_symbol']}: Excessive Bid/Ask Spread ({spread_width_pct*100:.1f}% > 12% max).")
+                                continue
+                            # Route with Price Improvement (Bid + 40% of spread instead of paying full Ask)
+                            limit_entry_price = round(bp + 0.40 * (ap - bp), 2)
+                except Exception:
+                    pass
+
+            order_req = BracketOrderRequest(
+                symbol=opt_bracket["contract_symbol"],
+                qty=state.get("order_qty", 1),
+                side="buy", # Always buy Call or Put contract to open
+                limit_price=limit_entry_price,
+                take_profit_price=opt_bracket["take_profit_price"],
+                stop_loss_price=opt_bracket["stop_loss_price"],
+                simulated=should_sim,
+                is_option=True,
+                option_details=opt_bracket
+            )
+            
+            order_res = await place_bracket_order(order_req)
+            
+            ticket = {
+                "id": f"quant_opt_{sym}_{int(now_ts)}",
+                "timestamp": now_ts,
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "symbol": opt_bracket["contract_symbol"],
+                "underlying": sym,
+                "bot_source": "INSTITUTIONAL_QUANT_ALPHA",
+                "side": opt_bracket["option_type"].upper(), # CALL or PUT
+                "action": "BUY_TO_OPEN",
+                "strike": opt_bracket["strike"],
+                "expiry": opt_bracket["expiry"],
+                "multiplier": 100,
+                "is_option": True,
+                "auto_flatten_eod": True,
+                "eod_rule": "Mandatory auto-close at 15:50 ET",
+                "price": limit_entry_price,
+                "tp": opt_bracket["take_profit_price"],
+                "sl": opt_bracket["stop_loss_price"],
+                "mode": "PAPER_SIMULATION" if should_sim else "ALPACA_PAPER",
+                "status": "FILLED" if order_res.get("status") in ["SUBMITTED", "SIMULATED_FILLED"] else "REJECTED",
+                "confidence": c_score,
+                "win_probability": f"{int(min(92, max(65, c_score)))}%",
+                "quant_memo": iq_eval.get("summary_memo"),
+                "pillars": {
+                    "gex": p1.get("edge_verdict"),
+                    "vrp": iq_eval["pillars"]["pillar_2_variance_risk_premium"].get("strategy_recommendation"),
+                    "credit": iq_eval["pillars"]["pillar_3_credit_lead_lag"].get("divergence_state"),
+                    "sweep": iq_eval["pillars"]["pillar_4_liquidity_sweep"].get("sweep_pattern")
+                },
+                "order_details": order_res
+            }
+        
+            state["last_trades"].insert(0, ticket)
+            state["last_trades"] = state["last_trades"][:50]
+            trigger_times[sym] = now_ts
+            executed_trades.append(ticket)
+            state["daily_trades_count"] = state.get("daily_trades_count", 0) + 1
+            state["last_global_trade_time"] = now_ts
+            total_active_pos += 1
+            open_underlyings.add(sym)
+                
+            # Send email notification
+            try:
+                from email_notifier import send_email, render_copilot_trade_alert_html
+                opt_str = f" [{ticket.get('side')} ${ticket.get('strike')} Exp {ticket.get('expiry')}]" if ticket.get("is_option") else ""
+                subj = f"⚡ QUANT ALPHA OPTION {ticket['symbol']}{opt_str} @ ${ticket['price']}"
+                html = render_copilot_trade_alert_html(ticket)
+                await asyncio.to_thread(send_email, subj, html, "bacha7@gmail.com")
+                
+                from desk_notifier import dispatch_desk_alert
+                dispatch_desk_alert(
+                    f"🤖 0DTE OPTIONS FILLED: {ticket['symbol']}",
+                    f"{ticket['side']} {ticket.get('strike', '')} @ ${ticket['price']} | Conf: {ticket.get('confidence', 0)}%",
+                    "OPTIONS_TRADE",
+                    metadata={"symbol": ticket["symbol"], "side": ticket["side"], "price": str(ticket["price"])}
+                )
+            except Exception as mail_err:
+                print(f"Co-Pilot alert dispatch error: {mail_err}")
                 
         except Exception as eval_err:
             print(f"Error evaluating candidate {sym}: {eval_err}")
@@ -3877,6 +3843,7 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
         "executed_trades": executed_trades
     }
 
+@app.post("/api/institutional/trigger-options")
 @app.post("/api/copilot/trigger-now")
 async def trigger_copilot_now(symbol: Optional[str] = None):
     res = await _execute_copilot_eval_cycle(forced_symbol=symbol)

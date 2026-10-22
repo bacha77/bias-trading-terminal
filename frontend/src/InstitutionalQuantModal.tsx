@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
   X, RefreshCw, ShieldCheck, Zap, Activity, Target, 
-  Layers, Lock, BarChart2, Compass, Cpu
+  Layers, Lock, BarChart2, Compass, Cpu, CheckCircle2, AlertTriangle, Sparkles
 } from 'lucide-react';
 import { API_BASE } from './config';
 
@@ -100,6 +100,26 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
   const [loading, setLoading] = useState<boolean>(true);
   const [radarLoading, setRadarLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'ANALYSIS' | 'RADAR'>('ANALYSIS');
+  const [triggerExecuting, setTriggerExecuting] = useState<boolean>(false);
+  const [executionResult, setExecutionResult] = useState<any | null>(null);
+
+  const executeQuantOptionTrade = async (sym: string) => {
+    try {
+      setTriggerExecuting(true);
+      setExecutionResult(null);
+      const res = await fetch(`${API_BASE}/api/institutional/trigger-options?symbol=${sym}`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      setExecutionResult(data);
+      fetchConfluence(sym);
+    } catch (err) {
+      console.error('Trigger options error:', err);
+      setExecutionResult({ status: 'ERROR', message: String(err) });
+    } finally {
+      setTriggerExecuting(false);
+    }
+  };
 
   const fetchConfluence = useCallback(async (sym: string) => {
     try {
@@ -290,8 +310,8 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
                     </div>
                   </div>
 
-                  {/* Execution Gate Badge */}
-                  <div className="flex flex-col items-end gap-1.5">
+                  {/* Execution Gate Badge & Trigger */}
+                  <div className="flex flex-col items-end gap-2">
                     <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-mono text-xs font-bold ${
                       isApproved 
                         ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
@@ -300,11 +320,78 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
                       {isApproved ? <ShieldCheck size={14} className="text-emerald-400" /> : <Lock size={14} className="text-amber-400" />}
                       <span>{isApproved ? 'EXECUTION PERMITTED (>= 75 PTS)' : 'EXECUTION LOCKED (< 75 PTS)'}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500 font-mono text-right">
-                      Prevents retail gambling during unconfirmed order flow
-                    </span>
+
+                    <button
+                      onClick={() => executeQuantOptionTrade(selectedSymbol)}
+                      disabled={triggerExecuting || !isApproved}
+                      className={`px-4 py-2 rounded-xl font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-md ${
+                        isApproved && !triggerExecuting
+                          ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)] cursor-pointer active:scale-95'
+                          : 'bg-slate-800/80 text-slate-500 border border-slate-700/50 cursor-not-allowed'
+                      }`}
+                    >
+                      {triggerExecuting ? (
+                        <>
+                          <RefreshCw size={13} className="animate-spin text-slate-950" />
+                          <span>ROUTING OCC ORDER...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={13} className={isApproved ? "fill-slate-950 text-slate-950" : ""} />
+                          <span>EXECUTE QUANT OPTION</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex items-center gap-1 text-[10px] font-mono text-emerald-400/80">
+                      <Sparkles size={10} />
+                      <span>OCC Options Only · +40% TP / -25% SL</span>
+                    </div>
                   </div>
                 </div>
+
+                {/* Execution Result Banner */}
+                {executionResult && (
+                  <div className={`p-3.5 rounded-xl border font-mono text-xs animate-in fade-in duration-200 flex items-start justify-between gap-3 ${
+                    executionResult.executed_count > 0 || (executionResult.executed_trades && executionResult.executed_trades.length > 0)
+                      ? 'bg-emerald-950/40 border-emerald-500/60 text-emerald-200'
+                      : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200'
+                  }`}>
+                    <div className="flex items-start gap-2.5">
+                      {executionResult.executed_count > 0 ? (
+                        <CheckCircle2 size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertTriangle size={16} className="text-indigo-400 shrink-0 mt-0.5" />
+                      )}
+                      <div className="space-y-1">
+                        <div className="font-bold">
+                          {executionResult.executed_count > 0 
+                            ? `QUANT ALPHA OPTION ORDER SUBMITTED (${executionResult.executed_count} EXECUTED)` 
+                            : `CYCLE COMPLETE (${executionResult.scanned || 0} ASSETS SCANNED)`}
+                        </div>
+                        {executionResult.executed_trades && executionResult.executed_trades.length > 0 ? (
+                          <div className="space-y-1 pt-1">
+                            {executionResult.executed_trades.map((t: any, idx: number) => (
+                              <div key={idx} className="bg-slate-950/60 p-2 rounded border border-emerald-500/30 text-[10px]">
+                                <span className="font-bold text-white">{t.side} {t.strike} {t.symbol}</span> · Entry: ${Number(t.price).toFixed(2)} · TP: ${Number(t.tp).toFixed(2)} · SL: ${Number(t.sl).toFixed(2)}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-slate-300">
+                            {executionResult.reason || executionResult.message || `No qualifying confluence setup met strict 4-pillar threshold for immediate execution.`}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setExecutionResult(null)}
+                      className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
 
                 {/* 4 Pillars Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
