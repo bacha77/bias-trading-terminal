@@ -54,6 +54,24 @@ interface Pillar4Sweep {
   rationale: string;
 }
 
+interface RelativeStrengthItem {
+  symbol: string;
+  spot: number;
+  daily_return_pct: number;
+  alpha_vs_spy_pct: number;
+  rank: number;
+  tier: string;
+  recommendation: string;
+}
+
+interface RelativeStrengthData {
+  benchmark: string;
+  benchmark_return_pct: number;
+  leaders: string[];
+  laggards: string[];
+  rankings: RelativeStrengthItem[];
+}
+
 interface ConfluenceData {
   symbol: string;
   timestamp: string;
@@ -69,6 +87,35 @@ interface ConfluenceData {
     ema20: number;
     trend: string;
     dist_vwap_pct: number;
+    sigma?: number;
+    z_score?: number;
+    upper_2s?: number;
+    upper_1s?: number;
+    lower_1s?: number;
+    lower_2s?: number;
+    band_zone?: string;
+  };
+  volatility_parity?: {
+    symbol: string;
+    spot: number;
+    atr_usd: number;
+    atr_pct: number;
+    sizing_scalar: number;
+    allocated_usd: number;
+    recommended_contracts: number;
+  };
+  defined_risk_spread?: {
+    symbol: string;
+    spread_type: string;
+    long_strike: number;
+    short_strike: number;
+    strike_width: number;
+    est_debit_cost: number;
+    max_risk_usd: number;
+    max_profit_usd: number;
+    max_roi_pct: string;
+    theta_decay_reduction: string;
+    rationale: string;
   };
   pillars: {
     pillar_1_dealer_gex: Pillar1GEX;
@@ -104,6 +151,7 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('SPY');
   const [confluence, setConfluence] = useState<ConfluenceData | null>(null);
   const [radar, setRadar] = useState<RadarItem[]>([]);
+  const [relativeStrength, setRelativeStrength] = useState<RelativeStrengthData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [radarLoading, setRadarLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'ANALYSIS' | 'RADAR'>('ANALYSIS');
@@ -158,12 +206,25 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
     }
   }, []);
 
+  const fetchRelativeStrength = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/institutional/relative-strength`);
+      if (res.ok) {
+        const data = await res.json();
+        setRelativeStrength(data.relative_strength || null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch relative strength:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (isOpen) {
       fetchConfluence(selectedSymbol);
       fetchRadar();
+      fetchRelativeStrength();
     }
-  }, [isOpen, selectedSymbol, fetchConfluence, fetchRadar]);
+  }, [isOpen, selectedSymbol, fetchConfluence, fetchRadar, fetchRelativeStrength]);
 
   if (!isOpen) return null;
 
@@ -403,6 +464,146 @@ export function InstitutionalQuantModal({ isOpen, onClose }: Props) {
                     </button>
                   </div>
                 )}
+
+                {/* 3 Institutional Tactical Pillars: Two Sigma Relative Strength, AQR VWAP Bands, Jane Street Defined-Risk Spreads */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 font-mono">
+                  
+                  {/* Card 1: Two Sigma / Millennium Relative Strength Alpha Leader/Laggard Stream */}
+                  <div className="p-3.5 rounded-xl bg-slate-900/60 border border-indigo-500/30 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between border-b border-indigo-500/20 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <Layers size={14} className="text-indigo-400" />
+                          <h4 className="text-xs font-bold text-white uppercase">RELATIVE STRENGTH</h4>
+                        </div>
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300">
+                          VS {relativeStrength?.benchmark || 'SPY'} ({relativeStrength?.benchmark_return_pct !== undefined ? `${relativeStrength.benchmark_return_pct >= 0 ? '+' : ''}${relativeStrength.benchmark_return_pct}%` : '0.0%'})
+                        </span>
+                      </div>
+
+                      <div className="pt-2.5 space-y-2 text-xs">
+                        <div>
+                          <div className="text-[10px] uppercase font-bold text-emerald-400 mb-1 flex items-center justify-between">
+                            <span>Alpha Leaders (Calls)</span>
+                            <span>Alpha Spread</span>
+                          </div>
+                          <div className="space-y-1">
+                            {relativeStrength?.rankings?.filter(r => r.tier === 'LEADER').map(r => (
+                              <div 
+                                key={r.symbol} 
+                                onClick={() => setSelectedSymbol(r.symbol)}
+                                className={`px-2 py-0.5 rounded flex items-center justify-between text-xs border cursor-pointer transition-all ${r.symbol === selectedSymbol ? 'bg-emerald-500/25 border-emerald-400 text-white font-bold ring-1 ring-emerald-400' : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:text-white'}`}
+                              >
+                                <span className="font-bold flex items-center gap-1">
+                                  <span className="text-emerald-400">#{r.rank}</span> {r.symbol}
+                                </span>
+                                <span className="font-bold text-emerald-400">+{r.alpha_vs_spy_pct.toFixed(2)}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="pt-0.5">
+                          <div className="text-[10px] uppercase font-bold text-rose-400 mb-1 flex items-center justify-between">
+                            <span>Alpha Laggards (Puts)</span>
+                            <span>Alpha Spread</span>
+                          </div>
+                          <div className="space-y-1">
+                            {relativeStrength?.rankings?.filter(r => r.tier === 'LAGGARD').map(r => (
+                              <div 
+                                key={r.symbol} 
+                                onClick={() => setSelectedSymbol(r.symbol)}
+                                className={`px-2 py-0.5 rounded flex items-center justify-between text-xs border cursor-pointer transition-all ${r.symbol === selectedSymbol ? 'bg-rose-500/25 border-rose-400 text-white font-bold ring-1 ring-rose-400' : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:text-white'}`}
+                              >
+                                <span className="font-bold flex items-center gap-1">
+                                  <span className="text-rose-400">#{r.rank}</span> {r.symbol}
+                                </span>
+                                <span className="font-bold text-rose-400">{r.alpha_vs_spy_pct.toFixed(2)}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 2: AQR / Market Maker VWAP Volatility Bands & Reload Zones */}
+                  <div className="p-3.5 rounded-xl bg-slate-900/60 border border-teal-500/30 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between border-b border-teal-500/20 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <Target size={14} className="text-teal-400" />
+                          <h4 className="text-xs font-bold text-white uppercase">VWAP VOLATILITY BANDS</h4>
+                        </div>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded border ${
+                          confluence?.trend_metrics?.band_zone?.includes('OPTIMAL') 
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
+                            : confluence?.trend_metrics?.band_zone?.includes('EXTENSION') 
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' 
+                            : 'bg-slate-800 text-slate-300 border-slate-700'
+                        }`}>
+                          {confluence?.trend_metrics?.band_zone?.replace(/\(.*?\)/, '').trim() || 'EQUILIBRIUM'}
+                        </span>
+                      </div>
+
+                      <div className="pt-2.5 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between bg-slate-950/60 p-1.5 rounded border border-slate-800 text-[11px]">
+                          <span className="text-slate-400">+2.0σ Upper Extension:</span>
+                          <span className="font-bold text-rose-400">${confluence?.trend_metrics?.upper_2s?.toFixed(2) || '0.00'}</span>
+                        </div>
+                        <div className="flex items-center justify-between bg-teal-500/10 p-1.5 rounded border border-teal-500/30 text-[11px]">
+                          <span className="text-teal-300 font-bold">15m VWAP (Mean):</span>
+                          <span className="font-black text-white">${confluence?.trend_metrics?.vwap?.toFixed(2) || '0.00'}</span>
+                        </div>
+                        <div className="flex items-center justify-between bg-slate-950/60 p-1.5 rounded border border-slate-800 text-[11px]">
+                          <span className="text-slate-400">-2.0σ Lower Flush:</span>
+                          <span className="font-bold text-emerald-400">${confluence?.trend_metrics?.lower_2s?.toFixed(2) || '0.00'}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 pt-1 text-center font-mono">
+                          Z-Score: <span className="font-bold text-cyan-300">{confluence?.trend_metrics?.z_score !== undefined ? `${confluence.trend_metrics.z_score >= 0 ? '+' : ''}${confluence.trend_metrics.z_score}σ` : '0.0σ'}</span> from VWAP
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Bridgewater Volatility Parity & Jane Street Defined-Risk Spreads */}
+                  <div className="p-3.5 rounded-xl bg-slate-900/60 border border-amber-500/30 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <ShieldCheck size={14} className="text-amber-400" />
+                          <h4 className="text-xs font-bold text-white uppercase">VERTICAL DEBIT SPREAD</h4>
+                        </div>
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                          -55% THETA
+                        </span>
+                      </div>
+
+                      <div className="pt-2.5 space-y-1.5 text-xs">
+                        <div className="bg-slate-950/80 p-2 rounded border border-slate-800 space-y-1 text-[11px]">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Strikes:</span>
+                            <span className="font-mono text-white font-bold">
+                              ${confluence?.defined_risk_spread?.long_strike?.toFixed(1) || '0.0'} / ${confluence?.defined_risk_spread?.short_strike?.toFixed(1) || '0.0'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Max Risk / Profit:</span>
+                            <span className="font-mono font-bold">
+                              <span className="text-rose-400">${confluence?.defined_risk_spread?.max_risk_usd?.toFixed(0) || '0'}</span> / <span className="text-emerald-400">${confluence?.defined_risk_spread?.max_profit_usd?.toFixed(0) || '0'}</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-950/60 p-1.5 rounded border border-slate-800 text-[10px] flex items-center justify-between text-slate-300">
+                          <span>Risk-Parity ATR: {confluence?.volatility_parity?.atr_pct?.toFixed(2) || '1.80'}%</span>
+                          <span className="font-bold text-white">Qty: {confluence?.volatility_parity?.recommended_contracts || 1} Contracts</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
 
                 {/* 4 Pillars Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

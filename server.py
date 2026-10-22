@@ -3601,6 +3601,16 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     open_underlyings = set(active_pos_info["open_underlyings"])
     current_etf_count = sum(1 for u in open_underlyings if u in INDEX_ETFS)
     
+    # Pre-scan Cross-Asset Relative Strength Leader/Laggard Ranking (Two Sigma / Millennium Model)
+    import institutional_quant_engine
+    try:
+        rs_data = await asyncio.to_thread(institutional_quant_engine.calculate_relative_strength_rank, candidates)
+        rs_leaders = set(rs_data.get("leaders", []))
+        rs_laggards = set(rs_data.get("laggards", []))
+    except Exception as rs_err:
+        rs_leaders = set()
+        rs_laggards = set()
+    
     for sym in candidates:
         # HARD RULE 1: STRICT 1 POSITION PER UNDERLYING (Never stack multiple contracts on SPY, DIA, etc.)
         if sym in open_underlyings:
@@ -3639,7 +3649,6 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             # 1. INSTITUTIONAL QUANT ALPHA MATRIX CONFLUENCE (4 PILLARS)
             # Evaluates Citadel GEX + Jane Street VRP + Renaissance Credit + Dark Pool Sweeps
             # -----------------------------------------------------------------
-            import institutional_quant_engine
             iq_eval = await asyncio.to_thread(institutional_quant_engine.get_institutional_confluence, sym)
             c_score = float(iq_eval.get("confluence_score", 0))
             trade_verdict = iq_eval.get("trade_verdict", "")
@@ -3662,6 +3671,30 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
                 print(f"[QUANT ALPHA BOT] Stand down on {sym}: Confluence {c_score}/100. Verdict: {trade_verdict}. No clean directional edge.")
                 continue
 
+            # 2B. Institutional Relative Strength Gate (Two Sigma / Millennium Model)
+            # Only buy Calls on confirmed Alpha Leaders; only buy Puts on confirmed Alpha Laggards
+            if not forced_symbol and sym not in INDEX_ETFS:
+                if is_call and rs_leaders and sym not in rs_leaders:
+                    print(f"[RELATIVE STRENGTH GATE] Skipped CALL on {sym}: Not in institutional alpha leaders {list(rs_leaders)}.")
+                    continue
+                if is_put and rs_laggards and sym not in rs_laggards:
+                    print(f"[RELATIVE STRENGTH GATE] Skipped PUT on {sym}: Not in institutional alpha laggards {list(rs_laggards)}.")
+                    continue
+
+            # 2C. Anti-Whipsaw Directional Shield: Prevent flipping direction on same asset within 60 minutes
+            direction_history = state.get("last_direction_history", {})
+            last_dir_info = direction_history.get(sym)
+            if last_dir_info and not forced_symbol:
+                last_dir = last_dir_info.get("direction")
+                last_dir_ts = float(last_dir_info.get("timestamp", 0))
+                if (now_ts - last_dir_ts < 3600):
+                    if is_call and last_dir == "BEARISH_PUT":
+                        print(f"[ANTI-WHIPSAW SHIELD] Skipped CALL on {sym}: Flipped from PUT within 60m ({int(now_ts - last_dir_ts)}s ago). Preserving stability.")
+                        continue
+                    if is_put and last_dir == "BULLISH_CALL":
+                        print(f"[ANTI-WHIPSAW SHIELD] Skipped PUT on {sym}: Flipped from CALL within 60m ({int(now_ts - last_dir_ts)}s ago). Preserving stability.")
+                        continue
+
             p1 = iq_eval["pillars"]["pillar_1_dealer_gex"]
             spot_val = float(p1.get("spot_price", 0))
             if spot_val <= 0:
@@ -3677,12 +3710,21 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             trend_info = iq_eval.get("trend_metrics", {})
             vwap_val = float(trend_info.get("vwap", 0.0))
             trend_state = trend_info.get("trend", "NEUTRAL")
+            band_zone = trend_info.get("band_zone", "EQUILIBRIUM")
+            z_score = float(trend_info.get("z_score", 0.0))
+
             if vwap_val > 0 and spot_val > 0:
                 if is_call and (spot_val < vwap_val or trend_state == "BEARISH_EXPANSION"):
                     print(f"[TREND VETO] Blocked CALL on {sym}: Spot (${spot_val:.2f}) is below 15m VWAP (${vwap_val:.2f}) in {trend_state}. No counter-trend buying.")
                     continue
                 if is_put and (spot_val > vwap_val or trend_state == "BULLISH_EXPANSION"):
                     print(f"[TREND VETO] Blocked PUT on {sym}: Spot (${spot_val:.2f}) is above 15m VWAP (${vwap_val:.2f}) in {trend_state}. No counter-trend shorting.")
+                    continue
+                if is_call and ("OVERBOUGHT" in band_zone or z_score > 1.8):
+                    print(f"[VWAP EXTENSION VETO] Blocked CALL on {sym}: Trading at +{z_score:.1f}σ above VWAP (overbought extension).")
+                    continue
+                if is_put and ("OVERSOLD" in band_zone or z_score < -1.8):
+                    print(f"[VWAP EXTENSION VETO] Blocked PUT on {sym}: Trading at {z_score:.1f}σ below VWAP (oversold extension).")
                     continue
 
             # 4. GEX Structural Breakout & Breakdown Protection
@@ -3744,15 +3786,21 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             # =================================================================
             # 2. STRICT STOCK OPTIONS ONLY ROUTE (OCC ATM CALL/PUT BRACKET)
             # Equity common stock shares are permanently disabled.
+            # Volatility-Parity Position Sizing (Risk Parity) applied.
             # =================================================================
             from options_auto_trade import generate_options_bracket_setup
             option_bias = "BULLISH" if is_call else "BEARISH"
+            
+            # Volatility Parity Sizing: dynamically scales contract count inversely to ATR%
+            rec_contracts = int(iq_eval.get("volatility_parity", {}).get("recommended_contracts", state.get("order_qty", 1)))
+            final_contract_qty = max(1, min(5, rec_contracts))
+            
             opt_bracket = generate_options_bracket_setup(
                 ticker=sym,
                 spot=spot_val,
                 bias=option_bias,
                 confidence=c_score,
-                contract_qty=state.get("order_qty", 1)
+                contract_qty=final_contract_qty
             )
 
             should_sim = state.get("is_simulated", False) or (not market_open)
@@ -3784,7 +3832,7 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
 
             order_req = BracketOrderRequest(
                 symbol=opt_bracket["contract_symbol"],
-                qty=state.get("order_qty", 1),
+                qty=final_contract_qty,
                 side="buy", # Always buy Call or Put contract to open
                 limit_price=limit_entry_price,
                 take_profit_price=opt_bracket["take_profit_price"],
@@ -3836,6 +3884,14 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             state["last_global_trade_time"] = now_ts
             total_active_pos += 1
             open_underlyings.add(sym)
+            
+            # Anti-Whipsaw Directional History
+            if "last_direction_history" not in state:
+                state["last_direction_history"] = {}
+            state["last_direction_history"][sym] = {
+                "direction": "BULLISH_CALL" if is_call else "BEARISH_PUT",
+                "timestamp": now_ts
+            }
                 
             # Send email notification
             try:
@@ -4496,6 +4552,12 @@ async def get_institutional_radar_api():
     symbols = ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "AMD", "MSFT", "META", "AMZN", "GOOGL"]
     res = await asyncio.to_thread(institutional_quant_engine.get_institutional_radar, symbols)
     return {"status": "SUCCESS", "count": len(res), "radar": res}
+
+@app.get("/api/institutional/relative-strength")
+async def get_institutional_relative_strength_api():
+    import institutional_quant_engine
+    res = await asyncio.to_thread(institutional_quant_engine.calculate_relative_strength_rank)
+    return {"status": "SUCCESS", "relative_strength": res}
 
 async def _hyperliquid_arb_worker():
     while True:

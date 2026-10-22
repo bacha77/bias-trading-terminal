@@ -55,6 +55,24 @@ interface Pillar4Sweep {
   rationale: string;
 }
 
+interface RelativeStrengthItem {
+  symbol: string;
+  spot: number;
+  daily_return_pct: number;
+  alpha_vs_spy_pct: number;
+  rank: number;
+  tier: string;
+  recommendation: string;
+}
+
+interface RelativeStrengthData {
+  benchmark: string;
+  benchmark_return_pct: number;
+  leaders: string[];
+  laggards: string[];
+  rankings: RelativeStrengthItem[];
+}
+
 interface ConfluenceData {
   symbol: string;
   timestamp: string;
@@ -70,6 +88,35 @@ interface ConfluenceData {
     ema20: number;
     trend: string;
     dist_vwap_pct: number;
+    sigma?: number;
+    z_score?: number;
+    upper_2s?: number;
+    upper_1s?: number;
+    lower_1s?: number;
+    lower_2s?: number;
+    band_zone?: string;
+  };
+  volatility_parity?: {
+    symbol: string;
+    spot: number;
+    atr_usd: number;
+    atr_pct: number;
+    sizing_scalar: number;
+    allocated_usd: number;
+    recommended_contracts: number;
+  };
+  defined_risk_spread?: {
+    symbol: string;
+    spread_type: string;
+    long_strike: number;
+    short_strike: number;
+    strike_width: number;
+    est_debit_cost: number;
+    max_risk_usd: number;
+    max_profit_usd: number;
+    max_roi_pct: string;
+    theta_decay_reduction: string;
+    rationale: string;
   };
   pillars: {
     pillar_1_dealer_gex: Pillar1GEX;
@@ -111,6 +158,7 @@ const UNIVERSE = [
 export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, onReturnToOverview, tape, overview }: Props) {
   const [confluence, setConfluence] = useState<ConfluenceData | null>(null);
   const [radar, setRadar] = useState<RadarItem[]>([]);
+  const [relativeStrength, setRelativeStrength] = useState<RelativeStrengthData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [radarLoading, setRadarLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'WORKSPACE' | 'RADAR'>('WORKSPACE');
@@ -165,10 +213,23 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
     }
   }, []);
 
+  const fetchRelativeStrength = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/institutional/relative-strength`);
+      if (res.ok) {
+        const data = await res.json();
+        setRelativeStrength(data.relative_strength || null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch relative strength:', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchConfluence(selectedSymbol);
     fetchRadar();
-  }, [selectedSymbol, fetchConfluence, fetchRadar]);
+    fetchRelativeStrength();
+  }, [selectedSymbol, fetchConfluence, fetchRadar, fetchRelativeStrength]);
 
   const score = confluence?.confluence_score || 0;
   const isApproved = confluence?.execution_permitted ?? false;
@@ -241,6 +302,7 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
             onClick={() => {
               fetchConfluence(selectedSymbol);
               fetchRadar();
+              fetchRelativeStrength();
             }}
             disabled={loading || radarLoading}
             className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1.5 text-xs font-mono transition-all"
@@ -443,6 +505,179 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
                 </button>
               </div>
             )}
+
+            {/* 3 Institutional Tactical Pillars: Two Sigma Relative Strength, AQR VWAP Bands, Jane Street Defined-Risk Spreads */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3.5 min-w-0 max-w-full font-mono">
+              
+              {/* Card 1: Two Sigma / Millennium Relative Strength Alpha Leader/Laggard Stream */}
+              <div className="glass-panel p-4 rounded-xl border border-indigo-500/30 bg-gradient-to-b from-indigo-950/20 via-slate-950 to-slate-950 shadow-md flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-indigo-500/20 pb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        <Layers size={15} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white">RELATIVE STRENGTH BASKET</h3>
+                        <p className="text-[10px] text-slate-400">Two Sigma / Millennium Leader-Laggard</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                      VS {relativeStrength?.benchmark || 'SPY'} ({relativeStrength?.benchmark_return_pct !== undefined ? `${relativeStrength.benchmark_return_pct >= 0 ? '+' : ''}${relativeStrength.benchmark_return_pct}%` : '0.0%'})
+                    </span>
+                  </div>
+
+                  <div className="pt-3 space-y-2 text-xs">
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-emerald-400 mb-1 flex items-center justify-between">
+                        <span>Top Alpha Leaders (Call Eligible)</span>
+                        <span>Alpha Spread</span>
+                      </div>
+                      <div className="space-y-1">
+                        {relativeStrength?.rankings?.filter(r => r.tier === 'LEADER').map(r => (
+                          <div 
+                            key={r.symbol} 
+                            onClick={() => onSelectSymbol(r.symbol)}
+                            className={`px-2 py-1 rounded flex items-center justify-between text-xs border cursor-pointer transition-all ${r.symbol === selectedSymbol ? 'bg-emerald-500/25 border-emerald-400 text-white font-bold ring-1 ring-emerald-400' : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white'}`}
+                          >
+                            <span className="font-bold flex items-center gap-1.5">
+                              <span className="text-emerald-400 font-mono">#{r.rank}</span> {r.symbol}
+                            </span>
+                            <span className="font-bold text-emerald-400">+{r.alpha_vs_spy_pct.toFixed(2)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-1">
+                      <div className="text-[10px] uppercase font-bold text-rose-400 mb-1 flex items-center justify-between">
+                        <span>Bottom Alpha Laggards (Put Eligible)</span>
+                        <span>Alpha Spread</span>
+                      </div>
+                      <div className="space-y-1">
+                        {relativeStrength?.rankings?.filter(r => r.tier === 'LAGGARD').map(r => (
+                          <div 
+                            key={r.symbol} 
+                            onClick={() => onSelectSymbol(r.symbol)}
+                            className={`px-2 py-1 rounded flex items-center justify-between text-xs border cursor-pointer transition-all ${r.symbol === selectedSymbol ? 'bg-rose-500/25 border-rose-400 text-white font-bold ring-1 ring-rose-400' : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white'}`}
+                          >
+                            <span className="font-bold flex items-center gap-1.5">
+                              <span className="text-rose-400 font-mono">#{r.rank}</span> {r.symbol}
+                            </span>
+                            <span className="font-bold text-rose-400">{r.alpha_vs_spy_pct.toFixed(2)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: AQR / Market Maker VWAP Volatility Bands & Reload Zones */}
+              <div className="glass-panel p-4 rounded-xl border border-teal-500/30 bg-gradient-to-b from-teal-950/20 via-slate-950 to-slate-950 shadow-md flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-teal-500/20 pb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                        <Target size={15} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white">INSTITUTIONAL VWAP BANDS</h3>
+                        <p className="text-[10px] text-slate-400">AQR Multi-Sigma Volatility Envelope</p>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                      confluence?.trend_metrics?.band_zone?.includes('OPTIMAL') 
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
+                        : confluence?.trend_metrics?.band_zone?.includes('EXTENSION') 
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' 
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}>
+                      {confluence?.trend_metrics?.band_zone?.replace(/\(.*?\)/, '').trim() || 'EQUILIBRIUM'}
+                    </span>
+                  </div>
+
+                  <div className="pt-3 space-y-2 text-xs">
+                    <div className="flex items-center justify-between bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[11px]">Upper Band (+2.0σ Extension):</span>
+                      <span className="font-bold text-rose-400 font-mono">${confluence?.trend_metrics?.upper_2s?.toFixed(2) || '0.00'}</span>
+                    </div>
+                    <div className="flex items-center justify-between bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[11px]">Upper Value Band (+1.0σ):</span>
+                      <span className="font-bold text-amber-300 font-mono">${confluence?.trend_metrics?.upper_1s?.toFixed(2) || '0.00'}</span>
+                    </div>
+                    <div className="flex items-center justify-between bg-teal-500/10 p-2 rounded-lg border border-teal-500/30">
+                      <span className="text-teal-300 text-[11px] font-bold">15m Session VWAP (Mean):</span>
+                      <span className="font-black text-white font-mono">${confluence?.trend_metrics?.vwap?.toFixed(2) || '0.00'}</span>
+                    </div>
+                    <div className="flex items-center justify-between bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[11px]">Lower Value Band (-1.0σ):</span>
+                      <span className="font-bold text-amber-300 font-mono">${confluence?.trend_metrics?.lower_1s?.toFixed(2) || '0.00'}</span>
+                    </div>
+                    <div className="flex items-center justify-between bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                      <span className="text-slate-400 text-[11px]">Lower Band (-2.0σ Flush):</span>
+                      <span className="font-bold text-emerald-400 font-mono">${confluence?.trend_metrics?.lower_2s?.toFixed(2) || '0.00'}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 pt-1 text-center font-mono">
+                      Current Z-Score: <span className="font-bold text-cyan-300">{confluence?.trend_metrics?.z_score !== undefined ? `${confluence.trend_metrics.z_score >= 0 ? '+' : ''}${confluence.trend_metrics.z_score}σ` : '0.0σ'}</span> distance from VWAP
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: Bridgewater Volatility Parity & Jane Street Defined-Risk Spreads */}
+              <div className="glass-panel p-4 rounded-xl border border-amber-500/30 bg-gradient-to-b from-amber-950/20 via-slate-950 to-slate-950 shadow-md flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        <ShieldCheck size={15} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white">DEFINED-RISK VERTICAL SPREAD</h3>
+                        <p className="text-[10px] text-slate-400">Jane Street Theta Shield &amp; Risk Parity</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      -55% THETA BURN
+                    </span>
+                  </div>
+
+                  <div className="pt-3 space-y-2 text-xs">
+                    <div className="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 text-[11px]">Structure:</span>
+                        <span className="font-bold text-indigo-300 font-mono">{confluence?.defined_risk_spread?.spread_type?.replace(/_/g, ' ') || 'DEBIT SPREAD'}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 text-[11px]">Strikes:</span>
+                        <span className="font-mono text-white font-bold">
+                          Long ${confluence?.defined_risk_spread?.long_strike?.toFixed(1) || '0.0'} / Short ${confluence?.defined_risk_spread?.short_strike?.toFixed(1) || '0.0'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 text-[11px]">Max Risk Per Contract:</span>
+                        <span className="font-bold text-rose-400 font-mono">${confluence?.defined_risk_spread?.max_risk_usd?.toFixed(0) || '0'}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 text-[11px]">Max Profit Potential:</span>
+                        <span className="font-bold text-emerald-400 font-mono">${confluence?.defined_risk_spread?.max_profit_usd?.toFixed(0) || '0'} ({confluence?.defined_risk_spread?.max_roi_pct || '+0%'})</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/70 p-2 rounded-lg border border-slate-800 space-y-1">
+                      <div className="text-[10px] uppercase font-bold text-amber-400">Bridgewater Risk-Parity Sizing:</div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-300">
+                        <span>14d ATR: {confluence?.volatility_parity?.atr_pct?.toFixed(2) || '1.80'}%</span>
+                        <span>Scalar: {confluence?.volatility_parity?.sizing_scalar?.toFixed(2) || '1.00'}x</span>
+                        <span className="font-bold text-white">Qty: {confluence?.volatility_parity?.recommended_contracts || 1} Contracts</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
 
             {/* 4 Quantitative Alpha Pillars - Full Responsive Multi-Column Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-3.5 min-w-0 max-w-full">
