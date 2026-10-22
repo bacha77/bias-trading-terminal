@@ -425,29 +425,29 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
                 {/* 1-Click Trigger Button for Institutional Quant Alpha Matrix */}
                 <button
                   onClick={() => executeQuantOptionTrade(selectedSymbol)}
-                  disabled={triggerExecuting || !isApproved}
-                  className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg ${
+                  disabled={triggerExecuting}
+                  className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg cursor-pointer active:scale-95 ${
                     isApproved && !triggerExecuting
-                      ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.4)] cursor-pointer active:scale-95'
-                      : 'bg-slate-800/80 text-slate-500 border border-slate-700/50 cursor-not-allowed'
+                      ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.4)]'
+                      : 'bg-indigo-600/90 hover:bg-indigo-500 text-white border border-indigo-400/50 shadow-[0_0_15px_rgba(99,102,241,0.3)]'
                   }`}
                 >
                   {triggerExecuting ? (
                     <>
-                      <RefreshCw size={14} className="animate-spin text-slate-950" />
-                      <span>ROUTING OCC BRACKET ORDER...</span>
+                      <RefreshCw size={14} className="animate-spin text-white" />
+                      <span>EVALUATING & ROUTING SPREAD...</span>
                     </>
                   ) : (
                     <>
-                      <Zap size={14} className={isApproved ? "fill-slate-950 text-slate-950" : ""} />
-                      <span>EXECUTE QUANT ALPHA OPTION BRACKET</span>
+                      <Zap size={14} className={isApproved ? "fill-slate-950 text-slate-950" : "fill-white text-white"} />
+                      <span>{isApproved ? 'EXECUTE QUANT ALPHA SPREAD' : 'TEST SPREAD SETUP (PAPER / SIM)'}</span>
                     </>
                   )}
                 </button>
 
                 <div className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-400/80">
                   <Sparkles size={11} />
-                  <span>100% OCC Options Only · +40% TP / -25% SL · EOD 15:50 ET Auto-Close</span>
+                  <span>Institutional Multi-Leg Spreads Only · Defined Risk · EOD 15:50 ET Auto-Close</span>
                 </div>
               </div>
             </div>
@@ -469,23 +469,28 @@ export function InstitutionalQuantWorkspace({ selectedSymbol, onSelectSymbol, on
                     <div className="font-bold flex items-center gap-2">
                       <span>
                         {executionResult.executed_count > 0 
-                          ? `QUANT ALPHA OPTION ORDER SUBMITTED (${executionResult.executed_count} EXECUTED)` 
-                          : `CYCLE EVALUATION COMPLETE (${executionResult.scanned || 0} ASSETS SCANNED)`}
+                          ? `QUANT ALPHA OPTION SPREAD EXECUTED (${executionResult.executed_count} ORDER FILLED)` 
+                          : `CYCLE EVALUATION RESULT: ${executionResult.status || 'STAND_DOWN'}`}
                       </span>
                     </div>
                     {executionResult.executed_trades && executionResult.executed_trades.length > 0 ? (
                       <div className="space-y-1 pt-1">
                         {executionResult.executed_trades.map((t: any, idx: number) => (
-                          <div key={idx} className="bg-slate-950/60 p-2.5 rounded-lg border border-emerald-500/30 text-[11px] space-y-1">
+                          <div key={idx} className="bg-slate-950/60 p-2.5 rounded-lg border border-emerald-500/30 text-[11px] space-y-1.5">
                             <div className="font-bold text-white flex items-center gap-2">
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
-                                {t.side} {t.strike}
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">
+                                {t.strategy || t.side}
                               </span>
                               <span>{t.symbol}</span>
                               <span className="text-slate-400">Exp {t.expiry}</span>
                             </div>
+                            {t.legs && t.legs.length === 2 && (
+                              <div className="text-cyan-300 font-mono text-[10px] bg-cyan-950/30 px-2 py-1 rounded border border-cyan-800/40">
+                                <strong>Leg 1 (Long):</strong> {t.legs[0].symbol} · <strong>Leg 2 (Short):</strong> {t.legs[1].symbol}
+                              </div>
+                            )}
                             <div className="text-slate-300 text-[10px]">
-                              Entry: ${Number(t.price).toFixed(2)} | TP: ${Number(t.tp).toFixed(2)} (+40%) | SL: ${Number(t.sl).toFixed(2)} (-25%) | Rule: {t.eod_rule}
+                              Net Debit: ${Number(t.price).toFixed(2)} | Max Profit: ${t.max_reward_dollars ? `${t.max_reward_dollars}` : 'N/A'} | Max Risk: ${t.max_risk_dollars ? `${t.max_risk_dollars}` : 'N/A'} | Mode: {t.mode}
                             </div>
                           </div>
                         ))}

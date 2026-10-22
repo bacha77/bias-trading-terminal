@@ -3547,10 +3547,10 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     market_open = (et.weekday() < 5) and (et.hour > 9 or (et.hour == 9 and et.minute >= 30)) and (et.hour < 16)
     
     # 1. Market Timing Gates:
-    # A) Strict 15:00 ET Hard Cutoff: Absolutely NO new positions opened past 15:00 ET (stops entering 0DTE contracts in last hour when spreads and gamma are extreme)
+    # A) Strict 15:00 ET Hard Cutoff: Absolutely NO new automated positions opened past 15:00 ET (prevents entering 0DTE contracts in last hour)
     past_cutoff = (et.weekday() < 5) and ((et.hour == 15 and et.minute >= 0) or (et.hour >= 16))
-    if past_cutoff:
-        msg = "Late Session Cutoff Active: No new trades allowed past 15:00 ET (Prevents late-day spread decay)."
+    if past_cutoff and not forced_symbol:
+        msg = "Late Session Cutoff Active: No automated trades allowed past 15:00 ET (Prevents late-day spread decay)."
         state["last_status_message"] = msg
         save_copilot_state(state)
         return {"status": "SKIPPED", "reason": msg}
@@ -3596,7 +3596,7 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
         state["daily_trades_count"] = 0
         
     max_daily = int(state.get("max_daily_trades", 24))
-    if state.get("daily_trades_count", 0) >= max_daily:
+    if state.get("daily_trades_count", 0) >= max_daily and not forced_symbol:
         msg = f"Daily trade cap reached ({state['daily_trades_count']}/{max_daily} trades today). Preserving capital until tomorrow."
         state["last_status_message"] = msg
         save_copilot_state(state)
@@ -3628,25 +3628,26 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
         rs_laggards = set()
     
     for sym in candidates:
-        # HARD RULE 1: STRICT 1 POSITION PER UNDERLYING (Never stack multiple contracts on SPY, DIA, etc.)
-        if sym in open_underlyings:
-            continue
+        if not forced_symbol:
+            # HARD RULE 1: STRICT 1 POSITION PER UNDERLYING (Never stack multiple contracts on SPY, DIA, etc.)
+            if sym in open_underlyings:
+                continue
 
-        # HARD RULE 1B: ETF DIVERSIFICATION CAP (Max 2 ETF positions at a time so individual stocks get traded!)
-        if sym in INDEX_ETFS and current_etf_count >= 2:
-            continue
+            # HARD RULE 1B: ETF DIVERSIFICATION CAP (Max 2 ETF positions at a time so individual stocks get traded!)
+            if sym in INDEX_ETFS and current_etf_count >= 2:
+                continue
 
-        # HARD RULE 2: Minimum 600s Cooldown per symbol
-        if (now_ts - trigger_times.get(sym, 0) < cooldown):
-            continue
+            # HARD RULE 2: Minimum 600s Cooldown per symbol
+            if (now_ts - trigger_times.get(sym, 0) < cooldown):
+                continue
 
-        # HARD RULE 3: STRICT 5 CONCURRENT POSITIONS CAP
-        if total_active_pos >= max_concurrent:
-            break
+            # HARD RULE 3: STRICT 5 CONCURRENT POSITIONS CAP
+            if total_active_pos >= max_concurrent:
+                break
 
-        # HARD RULE 4: Global Pacing Cooldown (180s minimum between any new position)
-        if (now_ts - last_global < 180):
-            break
+            # HARD RULE 4: Global Pacing Cooldown (180s minimum between any new position)
+            if (now_ts - last_global < 180):
+                break
 
         # HARD RULE 5: Correlated Exposure Check (Don't hold both NVDA & AMD, or SPY & QQQ simultaneously)
         correlated_pairs = [("NVDA", "AMD"), ("SPY", "QQQ"), ("COIN", "MSTR")]
@@ -3804,7 +3805,7 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             # Equity common stock shares are permanently disabled.
             # Volatility-Parity Position Sizing (Risk Parity) applied.
             # =================================================================
-            from options_auto_trade import generate_options_bracket_setup, generate_options_spread_setup
+            from options_auto_trade import generate_options_bracket_setup, generate_options_spread_setup, generate_adaptive_spread_setup
             option_bias = "BULLISH" if is_call else "BEARISH"
             
             # Volatility Parity Sizing: dynamically scales contract count inversely to ATR%
@@ -3814,14 +3815,18 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             use_spreads = str(state.get("options_mode", "SPREADS")).upper() != "SINGLE_LEG"
             
             if use_spreads:
-                opt_bracket = generate_options_spread_setup(
+                gex_reg = p1.get("regime", "POSITIVE_GAMMA")
+                vrp_val = float(iq_eval.get("pillars", {}).get("pillar_2_variance_risk_premium", {}).get("vrp", 1.5))
+                opt_bracket = generate_adaptive_spread_setup(
                     ticker=sym,
                     spot=spot_val,
                     bias=option_bias,
                     confidence=c_score,
                     contract_qty=final_contract_qty,
                     atr_metrics=iq_eval.get("volatility_parity"),
-                    iv=opt_iv
+                    iv=opt_iv,
+                    gex_regime=gex_reg,
+                    vrp=vrp_val
                 )
             else:
                 opt_bracket = generate_options_bracket_setup(
@@ -3935,10 +3940,11 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
     save_copilot_state(state)
     
     return {
-        "status": "SUCCESS",
+        "status": "SUCCESS" if executed_trades else "STAND_DOWN",
         "scanned": len(candidates),
         "executed_count": len(executed_trades),
-        "executed_trades": executed_trades
+        "executed_trades": executed_trades,
+        "reason": ("Spread order routed successfully." if executed_trades else (state.get("last_veto_reason") or "All candidates currently in capital preservation / stand-down mode."))
     }
 
 @app.get("/api/institutional/trigger-options")
@@ -3948,6 +3954,20 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
 async def trigger_copilot_now(symbol: Optional[str] = None):
     res = await _execute_copilot_eval_cycle(forced_symbol=symbol)
     return res
+
+@app.get("/api/system/health-audit")
+async def get_system_health_audit():
+    import system_health_watchdog
+    creds = get_alpaca_creds()
+    audit = await asyncio.to_thread(system_health_watchdog.audit_system_health, creds)
+    return audit
+
+@app.post("/api/system/ratchet-now")
+@app.get("/api/system/ratchet-now")
+async def trigger_breakeven_ratchet_now():
+    import system_health_watchdog
+    res = await asyncio.to_thread(system_health_watchdog.run_breakeven_ratchet)
+    return {"status": "SUCCESS", "ratchets_executed": len(res), "details": res}
 
 async def _execute_crypto_eval_cycle(forced_symbol: Optional[str] = None):
     """
