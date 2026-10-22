@@ -2100,6 +2100,8 @@ class BracketOrderRequest(BaseModel):
     simulated: bool = False
     is_option: Optional[bool] = False
     option_details: Optional[dict] = None
+    order_class: Optional[str] = None
+    legs: Optional[List[dict]] = None
 
 @app.post("/api/alpaca/order/bracket")
 async def place_bracket_order(req_body: BracketOrderRequest):
@@ -2126,6 +2128,8 @@ async def place_bracket_order(req_body: BracketOrderRequest):
             "take_profit": req_body.take_profit_price,
             "stop_loss": req_body.stop_loss_price,
             "is_option": bool(req_body.is_option),
+            "order_class": req_body.order_class or ("mleg" if req_body.legs else "single"),
+            "legs": req_body.legs,
             "mode": "Paper Trading Account",
             "message": f"Paper bracket order confirmed: {req_body.side.upper()} {req_body.qty} {req_body.symbol} @ ${req_body.limit_price} (TP: ${req_body.take_profit_price}, SL: ${req_body.stop_loss_price})",
             "ticket": ticket
@@ -2139,22 +2143,34 @@ async def place_bracket_order(req_body: BracketOrderRequest):
         base = creds["base"].rstrip("/")
         url = f"{base}/v2/orders"
         prec = 4 if req_body.limit_price < 5 and not req_body.is_option else 2
-        body = {
-            "symbol": order_symbol,
-            "qty": str(req_body.qty),
-            "side": req_body.side.lower(),
-            "type": "limit",
-            "time_in_force": tif,
-            "limit_price": str(round(req_body.limit_price, prec)),
-        }
-        if not req_body.is_option:
-            body["order_class"] = "bracket"
-            body["take_profit"] = {
-                "limit_price": str(round(req_body.take_profit_price, 2))
+        
+        is_mleg = (req_body.order_class == "mleg") or (req_body.legs and len(req_body.legs) > 1)
+        if is_mleg:
+            body = {
+                "order_class": "mleg",
+                "qty": str(req_body.qty),
+                "type": "limit",
+                "time_in_force": tif,
+                "limit_price": str(round(req_body.limit_price, 2)),
+                "legs": req_body.legs
             }
-            body["stop_loss"] = {
-                "stop_price": str(round(req_body.stop_loss_price, 2))
+        else:
+            body = {
+                "symbol": order_symbol,
+                "qty": str(req_body.qty),
+                "side": req_body.side.lower(),
+                "type": "limit",
+                "time_in_force": tif,
+                "limit_price": str(round(req_body.limit_price, prec)),
             }
+            if not req_body.is_option:
+                body["order_class"] = "bracket"
+                body["take_profit"] = {
+                    "limit_price": str(round(req_body.take_profit_price, 2))
+                }
+                body["stop_loss"] = {
+                    "stop_price": str(round(req_body.stop_loss_price, 2))
+                }
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -3788,58 +3804,51 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             # Equity common stock shares are permanently disabled.
             # Volatility-Parity Position Sizing (Risk Parity) applied.
             # =================================================================
-            from options_auto_trade import generate_options_bracket_setup
+            from options_auto_trade import generate_options_bracket_setup, generate_options_spread_setup
             option_bias = "BULLISH" if is_call else "BEARISH"
             
             # Volatility Parity Sizing: dynamically scales contract count inversely to ATR%
             rec_contracts = int(iq_eval.get("volatility_parity", {}).get("recommended_contracts", state.get("order_qty", 1)))
             final_contract_qty = max(1, min(5, rec_contracts))
             
-            opt_bracket = generate_options_bracket_setup(
-                ticker=sym,
-                spot=spot_val,
-                bias=option_bias,
-                confidence=c_score,
-                contract_qty=final_contract_qty
-            )
+            use_spreads = str(state.get("options_mode", "SPREADS")).upper() != "SINGLE_LEG"
+            
+            if use_spreads:
+                opt_bracket = generate_options_spread_setup(
+                    ticker=sym,
+                    spot=spot_val,
+                    bias=option_bias,
+                    confidence=c_score,
+                    contract_qty=final_contract_qty,
+                    atr_metrics=iq_eval.get("volatility_parity"),
+                    iv=opt_iv
+                )
+            else:
+                opt_bracket = generate_options_bracket_setup(
+                    ticker=sym,
+                    spot=spot_val,
+                    bias=option_bias,
+                    confidence=c_score,
+                    contract_qty=final_contract_qty,
+                    atr_metrics=iq_eval.get("volatility_parity"),
+                    iv=opt_iv
+                )
 
             should_sim = state.get("is_simulated", False) or (not market_open)
             limit_entry_price = opt_bracket["estimated_premium"]
 
-            # Bid-Ask Spread Width & Liquidity Guard on live Alpaca snapshot
-            if creds.get("key") and creds.get("secret") and not should_sim:
-                try:
-                    opt_q_req = urllib.request.Request(
-                        f"https://data.alpaca.markets/v1beta1/options/snapshots?symbols={opt_bracket['contract_symbol']}",
-                        headers={"APCA-API-KEY-ID": creds["key"], "APCA-API-SECRET-KEY": creds["secret"]}
-                    )
-                    with urllib.request.urlopen(opt_q_req, timeout=3) as oq_resp:
-                        snap_data = json.loads(oq_resp.read().decode())
-                        snap = snap_data.get("snapshots", {}).get(opt_bracket["contract_symbol"], {})
-                        lq = snap.get("latestQuote") or {}
-                        bp = float(lq.get("bp") or 0)
-                        ap = float(lq.get("ap") or 0)
-                        if bp > 0 and ap > 0:
-                            mid = (bp + ap) / 2.0
-                            spread_width_pct = (ap - bp) / mid
-                            if spread_width_pct > 0.12:
-                                print(f"[LIQUIDITY GUARD] Skipped {opt_bracket['contract_symbol']}: Excessive Bid/Ask Spread ({spread_width_pct*100:.1f}% > 12% max).")
-                                continue
-                            # Route with Price Improvement (Bid + 40% of spread instead of paying full Ask)
-                            limit_entry_price = round(bp + 0.40 * (ap - bp), 2)
-                except Exception:
-                    pass
-
             order_req = BracketOrderRequest(
                 symbol=opt_bracket["contract_symbol"],
                 qty=final_contract_qty,
-                side="buy", # Always buy Call or Put contract to open
+                side="buy", # Always buy spread (debit) or call/put to open
                 limit_price=limit_entry_price,
                 take_profit_price=opt_bracket["take_profit_price"],
                 stop_loss_price=opt_bracket["stop_loss_price"],
                 simulated=should_sim,
                 is_option=True,
-                option_details=opt_bracket
+                option_details=opt_bracket,
+                order_class=opt_bracket.get("order_class"),
+                legs=opt_bracket.get("legs")
             )
             
             order_res = await place_bracket_order(order_req)
@@ -3851,9 +3860,14 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
                 "symbol": opt_bracket["contract_symbol"],
                 "underlying": sym,
                 "bot_source": "INSTITUTIONAL_QUANT_ALPHA",
+                "strategy": opt_bracket.get("strategy", "SINGLE_LEG"),
                 "side": opt_bracket["option_type"].upper(), # CALL or PUT
-                "action": "BUY_TO_OPEN",
-                "strike": opt_bracket["strike"],
+                "action": "BUY_VERTICAL_SPREAD" if opt_bracket.get("legs") else "BUY_TO_OPEN",
+                "strike": opt_bracket.get("strike") or opt_bracket.get("long_strike"),
+                "long_leg": opt_bracket.get("long_leg"),
+                "short_leg": opt_bracket.get("short_leg"),
+                "spread_width": opt_bracket.get("spread_width"),
+                "legs": opt_bracket.get("legs"),
                 "expiry": opt_bracket["expiry"],
                 "multiplier": 100,
                 "is_option": True,

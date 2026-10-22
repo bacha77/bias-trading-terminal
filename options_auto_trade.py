@@ -221,3 +221,140 @@ def generate_options_bracket_setup(
         "action_headline": f"BUY {contract_qty}x {sym} ${strike:.2f} {option_type} Exp {expiry.strftime('%m/%d')} @ ${est_premium:.2f} ({tp_label} / {sl_label})",
         "confidence": confidence
     }
+
+def generate_options_spread_setup(
+    ticker: str,
+    spot: float,
+    bias: str,
+    confidence: float = 75.0,
+    contract_qty: int = 1,
+    atr_metrics: Optional[Dict[str, Any]] = None,
+    iv: float = 0.25,
+    spread_width: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Generates an institutional Multi-Leg Vertical Spread setup:
+    - Bullish: Bull Call Debit Spread (Buy ATM Call + Sell OTM Call)
+    - Bearish: Bear Put Debit Spread (Buy ATM Put + Sell OTM Put)
+    Eliminates naked directional risk:
+    - Theta decay on long leg is offset by theta decay on short leg.
+    - Vega/IV crush risk is mitigated.
+    - Max loss is strictly capped at Net Debit paid.
+    - Routes as Alpaca 'order_class: mleg' with both legs.
+    """
+    sym = ticker.upper().strip()
+    is_bull = "BULL" in bias.upper() or bias.upper() in ["BUY", "LONG"]
+    option_type = "CALL" if is_bull else "PUT"
+    strategy_name = "BULL_CALL_DEBIT_SPREAD" if is_bull else "BEAR_PUT_DEBIT_SPREAD"
+    
+    expiry = get_next_expiry_date(sym)
+    long_strike = get_atm_strike(spot, option_type, sym)
+    
+    # Strike width based on asset price tier
+    if spread_width is None:
+        if spot >= 500:
+            width = 5.0  # SPY, QQQ
+        elif spot >= 200:
+            width = 2.50 # NVDA, TSLA, AAPL
+        elif spot >= 100:
+            width = 2.0
+        else:
+            width = 1.0
+    else:
+        width = float(spread_width)
+        
+    if is_bull:
+        short_strike = round(long_strike + width, 2)
+    else:
+        short_strike = round(long_strike - width, 2)
+        
+    long_occ = build_occ_symbol(sym, expiry, option_type, long_strike)
+    short_occ = build_occ_symbol(sym, expiry, option_type, short_strike)
+    
+    now_et = get_current_et_time()
+    dte_days = max(0.1, (expiry - now_et.date()).days)
+    
+    # Premiums
+    long_prem = estimate_option_premium(spot, long_strike, dte_days, is_call=is_bull, iv=iv)
+    short_prem = estimate_option_premium(spot, short_strike, dte_days, is_call=is_bull, iv=iv * 0.95)
+    
+    # Net Debit
+    net_debit = max(0.30, round(long_prem - short_prem, 2))
+    if net_debit >= width:
+        net_debit = round(width * 0.55, 2)
+        
+    max_loss_per_share = net_debit
+    max_profit_per_share = round(width - net_debit, 2)
+    
+    total_cost = round(net_debit * 100 * contract_qty, 2)
+    max_risk_dollars = round(max_loss_per_share * 100 * contract_qty, 2)
+    max_reward_dollars = round(max_profit_per_share * 100 * contract_qty, 2)
+    
+    # Target and stop on net spread debit
+    tp_premium = round(min(width * 0.90, net_debit + max_profit_per_share * 0.65), 2)
+    sl_premium = round(max(0.10, net_debit * 0.60), 2)
+    
+    legs = [
+        {
+            "symbol": long_occ,
+            "ratio_qty": "1",
+            "side": "buy",
+            "position_intent": "buy_to_open"
+        },
+        {
+            "symbol": short_occ,
+            "ratio_qty": "1",
+            "side": "sell",
+            "position_intent": "sell_to_open"
+        }
+    ]
+    
+    spread_label = f"{sym} ${long_strike:.1f}/${short_strike:.1f} {option_type} SPREAD"
+    action_headline = (
+        f"{'BULL CALL' if is_bull else 'BEAR PUT'} SPREAD {contract_qty}x {sym} "
+        f"${long_strike:.1f}/${short_strike:.1f} Exp {expiry.strftime('%m/%d')} @ ${net_debit:.2f} Debit "
+        f"(Max Profit: ${max_reward_dollars:.0f} | Max Risk: ${max_risk_dollars:.0f})"
+    )
+    
+    return {
+        "instrument": "OPTION_SPREAD",
+        "strategy": strategy_name,
+        "ticker": sym,
+        "contract_symbol": spread_label,
+        "symbol": spread_label,
+        "occ_symbol": long_occ, # Fallback
+        "option_type": option_type,
+        "strike": long_strike,
+        "long_leg": long_occ,
+        "short_leg": short_occ,
+        "long_strike": long_strike,
+        "short_strike": short_strike,
+        "spread_width": width,
+        "order_class": "mleg",
+        "legs": legs,
+        "expiry_str": expiry.strftime("%Y-%m-%d"),
+        "expiry": expiry.strftime("%Y-%m-%d"),
+        "dte_days": int(dte_days),
+        "contracts": contract_qty,
+        "multiplier": 100,
+        "spot_price": spot,
+        "limit_premium": net_debit,
+        "estimated_premium": net_debit,
+        "long_premium": long_prem,
+        "short_premium": short_prem,
+        "take_profit_premium": tp_premium,
+        "take_profit_price": tp_premium,
+        "stop_loss_premium": sl_premium,
+        "stop_loss_price": sl_premium,
+        "take_profit_pct": f"+{round((tp_premium - net_debit)/net_debit * 100, 1)}%",
+        "stop_loss_pct": f"-{round((net_debit - sl_premium)/net_debit * 100, 1)}%",
+        "total_cost": total_cost,
+        "max_risk_dollars": max_risk_dollars,
+        "max_reward_dollars": max_reward_dollars,
+        "risk_reward_ratio": round(max_reward_dollars / max(1.0, max_risk_dollars), 2),
+        "same_day_exit_time": "15:50 ET",
+        "same_day_rule": "MANDATORY_EOD_FLATTEN",
+        "action_headline": action_headline,
+        "confidence": confidence
+    }
+
