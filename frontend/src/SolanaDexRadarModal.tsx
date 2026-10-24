@@ -166,6 +166,8 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
   const [activeTab, setActiveTab] = useState<'SPLIT' | 'RADAR' | 'POSITIONS' | 'HISTORY' | 'WALLETS' | 'LEARNING' | 'BLUECHIPS' | 'ARENA'>('SPLIT');
   const [arenaData, setArenaData] = useState<any>(null);
   const [isTuningBeekeeper, setIsTuningBeekeeper] = useState<boolean>(false);
+  const [freqtradeData, setFreqtradeData] = useState<any>(null);
+  const [isUnlockingProtections, setIsUnlockingProtections] = useState<boolean>(false);
   const [bluechipData, setBluechipData] = useState<any>(null);
   const [isLoadingBluechips, setIsLoadingBluechips] = useState<boolean>(false);
   const [bluechipStrategyMode, setBluechipStrategyMode] = useState<string>('BLUECHIP_MOMENTUM');
@@ -355,6 +357,33 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
     }
   };
 
+  const fetchFreqtradeProtections = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/freqtrade/protections`);
+      if (res.ok) {
+        setFreqtradeData(await res.json());
+      }
+    } catch (e) {
+      console.error('Failed to fetch Freqtrade protections:', e);
+    }
+  };
+
+  const handleUnlockProtections = async () => {
+    setIsUnlockingProtections(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/freqtrade/unlock-all`, { method: 'POST' });
+      if (res.ok) {
+        setToastMsg({ type: 'success', text: '🛡️ All Freqtrade Protection Guards cleared & unlocked!' });
+        fetchFreqtradeProtections();
+        fetchArenaData();
+      }
+    } catch (e: any) {
+      setToastMsg({ type: 'error', text: `Unlock failed: ${e.message}` });
+    } finally {
+      setIsUnlockingProtections(false);
+    }
+  };
+
   const handleSetStrategyMode = async (mode: string) => {
     try {
       const res = await fetch(`${API_BASE}/api/dex/set-strategy-mode`, {
@@ -432,6 +461,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
       fetchLearningData();
       fetchBluechips();
       fetchArenaData();
+      fetchFreqtradeProtections();
 
       const posInterval = setInterval(() => {
         fetchPositions();
@@ -442,6 +472,7 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
         fetchLearningData();
         fetchBluechips();
         fetchArenaData();
+        fetchFreqtradeProtections();
       }, 10000);
 
       return () => {
@@ -3129,6 +3160,177 @@ export const SolanaDexRadarModal: React.FC<SolanaDexRadarModalProps> = ({ isOpen
                       <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-mono">
                         🛡️ RISK GUARD: Dynamic trailing ratchet
                       </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Freqtrade Institutional Protections & Dynamic Minimal ROI Panel */}
+              <div className="p-4 rounded-xl bg-gradient-to-r from-blue-950/30 via-[#0c121e]/90 to-purple-950/30 border border-blue-500/30 shadow-[0_0_20px_rgba(59,130,246,0.1)] space-y-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-white/5 pb-2.5">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🛡️</span>
+                      <h4 className="font-extrabold text-xs text-blue-300 tracking-wider">
+                        FREQTRADE INSTITUTIONAL PROTECTIONS &amp; DYNAMIC MINIMAL ROI
+                      </h4>
+                      <span className="px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                        FREQTRADE ENGINE
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Circuit breakers and time-decaying take-profit tables ported from Freqtrade (34k★ GitHub).
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleUnlockProtections}
+                    disabled={isUnlockingProtections}
+                    className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white font-mono text-[11px] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <Shield size={12} className="text-cyan-400" />
+                    <span>{isUnlockingProtections ? 'CLEARING...' : 'RESET ALL GUARDS'}</span>
+                  </button>
+                </div>
+
+                {/* Protections Status Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5 text-xs">
+                  {/* StoplossGuard */}
+                  <div className="p-2.5 rounded-lg bg-black/40 border border-white/5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">STOPLOSS GUARD</span>
+                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold ${
+                        freqtradeData?.stoploss_guard?.is_tripped
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      }`}>
+                        {freqtradeData?.stoploss_guard?.status || 'CLEAR'}
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      <div className="text-sm font-extrabold text-white">
+                        {freqtradeData?.stoploss_guard?.recent_stops_count || 0} / {freqtradeData?.stoploss_guard?.threshold || 2} Stops
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {freqtradeData?.stoploss_guard?.is_tripped
+                          ? `Lockout: ${(freqtradeData.stoploss_guard.lock_remaining_seconds / 60).toFixed(0)}m left`
+                          : 'Trips on 2 stops in 30m'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* MaxDrawdownGuard */}
+                  <div className="p-2.5 rounded-lg bg-black/40 border border-white/5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">MAX DRAWDOWN</span>
+                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold ${
+                        freqtradeData?.max_drawdown_guard?.is_tripped
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      }`}>
+                        {freqtradeData?.max_drawdown_guard?.is_tripped ? 'LOCKED' : 'CLEAR'}
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      <div className="text-sm font-extrabold text-white">
+                        -{freqtradeData?.max_drawdown_guard?.max_drawdown_pct || 7.5}% Max
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Halts new entries on daily slump
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* LowProfitPairs */}
+                  <div className="p-2.5 rounded-lg bg-black/40 border border-white/5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">LOW PROFIT PAIRS</span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                        {freqtradeData?.low_profit_pairs?.quarantined_count || 0} LOCKED
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      <div className="text-sm font-extrabold text-white">
+                        24H Blacklist
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Bans assets with negative expectancy
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cooldown Period */}
+                  <div className="p-2.5 rounded-lg bg-black/40 border border-white/5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">ANTI-CHURN COOLDOWN</span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        {freqtradeData?.cooldown_period?.active_cooldowns_count || 0} ACTIVE
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      <div className="text-sm font-extrabold text-white">
+                        15m Pause
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Mandatory wait post-exit
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Minimal ROI Decaying Hurdle Schedule */}
+                <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                      <Target size={12} className="text-amber-400" />
+                      <span>TIME-DECAYING MINIMAL ROI SCHEDULE (PREVENTS CAPITAL STAGNATION)</span>
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Take-profit target decays dynamically as trade duration increases
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 font-mono text-[11px]">
+                    {/* Bizzy ROI Table */}
+                    <div className="p-2 rounded bg-white/5 border border-white/5 space-y-1">
+                      <div className="text-amber-300 font-bold flex items-center justify-between">
+                        <span>⚡ Bizzy (Scalper)</span>
+                        <span className="text-[9px] text-slate-400">High-Freq</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300 space-y-0.5">
+                        <div className="flex justify-between"><span>0 - 15m:</span> <strong className="text-neon-green">+8.0%</strong></div>
+                        <div className="flex justify-between"><span>15 - 30m:</span> <strong className="text-emerald-400">+4.5%</strong></div>
+                        <div className="flex justify-between"><span>30 - 60m:</span> <strong className="text-cyan-300">+2.5%</strong></div>
+                        <div className="flex justify-between"><span>60m+:</span> <strong className="text-amber-300">+1.2%</strong></div>
+                      </div>
+                    </div>
+
+                    {/* Breezy ROI Table */}
+                    <div className="p-2 rounded bg-white/5 border border-white/5 space-y-1">
+                      <div className="text-cyan-300 font-bold flex items-center justify-between">
+                        <span>🌊 Breezy (Trend)</span>
+                        <span className="text-[9px] text-slate-400">Institutional</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300 space-y-0.5">
+                        <div className="flex justify-between"><span>0 - 30m:</span> <strong className="text-neon-green">+20.0%</strong></div>
+                        <div className="flex justify-between"><span>30 - 60m:</span> <strong className="text-emerald-400">+12.0%</strong></div>
+                        <div className="flex justify-between"><span>60 - 120m:</span> <strong className="text-cyan-300">+6.0%</strong></div>
+                        <div className="flex justify-between"><span>120m+:</span> <strong className="text-amber-300">+3.0%</strong></div>
+                      </div>
+                    </div>
+
+                    {/* Boozy ROI Table */}
+                    <div className="p-2 rounded bg-white/5 border border-white/5 space-y-1">
+                      <div className="text-purple-300 font-bold flex items-center justify-between">
+                        <span>🎯 Boozy (Dip Sniper)</span>
+                        <span className="text-[9px] text-slate-400">Reversion</span>
+                      </div>
+                      <div className="text-[10px] text-slate-300 space-y-0.5">
+                        <div className="flex justify-between"><span>0 - 20m:</span> <strong className="text-neon-green">+14.0%</strong></div>
+                        <div className="flex justify-between"><span>20 - 45m:</span> <strong className="text-emerald-400">+7.0%</strong></div>
+                        <div className="flex justify-between"><span>45 - 90m:</span> <strong className="text-cyan-300">+3.5%</strong></div>
+                        <div className="flex justify-between"><span>90m+:</span> <strong className="text-amber-300">+1.5%</strong></div>
+                      </div>
                     </div>
                   </div>
                 </div>

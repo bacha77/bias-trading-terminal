@@ -29,7 +29,9 @@ DEFAULT_BEEKEEPER_STATE = {
     "active_tuning_rules": [
         "Price action EMAs (20/50) are supreme over raw indicators.",
         "Require 2 confirmation ticks before catastrophic rug dump liquidations.",
-        "Enforce 30-minute persistent cooldown on closed positions to prevent re-entry churn.",
+        "Freqtrade Minimal ROI Table: Decays profit target as trade duration increases to prevent capital lockup.",
+        "Freqtrade StoplossGuard: Tripped after 2 rapid stops to prevent cascading market tilt.",
+        "Enforce 15-minute persistent cooldown on closed positions to prevent re-entry churn.",
         "Deepest-liquidity pool dictates price (prevents fragmented micro-pool traps)."
     ],
     "toxic_asset_quarantine": {},  # {address_or_ticker: expire_timestamp}
@@ -238,10 +240,17 @@ def stamp_trade_decision(
     }
 
 def is_asset_quarantined(identifier: str) -> bool:
-    """Checks if an address or ticker is in the Beekeeper's toxic asset quarantine."""
+    """Checks if an address or ticker is in the Beekeeper's toxic asset quarantine or Freqtrade guards."""
     state = load_beekeeper_state()
     quarantine = state.get("toxic_asset_quarantine", {})
     exp = quarantine.get(identifier)
     if exp and exp > time.time():
         return True
+    try:
+        import freqtrade_protections
+        is_cleared, _ = freqtrade_protections.check_entry_guardrails(identifier, identifier)
+        if not is_cleared:
+            return True
+    except Exception:
+        pass
     return False

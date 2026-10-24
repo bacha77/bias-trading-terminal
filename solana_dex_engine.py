@@ -2430,12 +2430,61 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
             closed_pos.insert(0, exit_ticket)
             _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
             try:
+                import freqtrade_protections
+                freqtrade_protections.record_closed_trade_protection(exit_ticket)
+            except Exception:
+                pass
+            try:
                 from desk_notifier import dispatch_desk_alert
                 dispatch_desk_alert(
                     f"🛑 DEX STOP LOSS: {pos['symbol']}",
                     f"Closed at {pnl_pct*100:.1f}% (${pos['unrealized_pnl_usd']:.2f}) | Capital preserved",
                     "STOP_LOSS",
                     metadata={"token": pos["symbol"], "loss": f"{pnl_pct*100:.1f}%"}
+                )
+            except Exception:
+                pass
+            continue
+
+        # 4B. Freqtrade Dynamic Minimal ROI Decaying Hurdle
+        # Decays required take-profit target as trade duration increases, securing gains and recycling capital
+        persona_name = str(pos.get("bee_persona") or prof_key or "BREEZY").upper()
+        try:
+            import freqtrade_protections
+            m_hit, req_roi_pct, m_reason = freqtrade_protections.evaluate_minimal_roi(
+                entry_timestamp=float(pos.get("timestamp") or time.time()),
+                current_pnl_pct=pnl_pct,
+                persona_or_style=persona_name
+            )
+        except Exception:
+            m_hit, req_roi_pct, m_reason = False, 10.0, ""
+
+        if m_hit:
+            full_gain = round((cur_px - entry_px) * float(pos.get("tokens_held", 0)), 2)
+            exit_ticket = {
+                **pos,
+                "exit_price": cur_px,
+                "exit_time": datetime.now().strftime("%H:%M:%S"),
+                "reason": m_reason,
+                "realized_pnl_pct": f"+{pnl_pct*100:.1f}%",
+                "realized_pnl_usd": full_gain,
+                "status": "MINIMAL_ROI_CLOSED"
+            }
+            _execute_live_exit_if_needed(pos, exit_ticket, state, portion_pct=1.0)
+            closed_pos.insert(0, exit_ticket)
+            _TOKEN_COOLDOWNS[addr] = time.time() + TOKEN_COOLDOWN_SECONDS
+            try:
+                import freqtrade_protections
+                freqtrade_protections.record_closed_trade_protection(exit_ticket)
+            except Exception:
+                pass
+            try:
+                from desk_notifier import dispatch_desk_alert
+                dispatch_desk_alert(
+                    f"🎯 FREQTRADE MINIMAL ROI: {pos['symbol']}",
+                    f"{m_reason} (+${full_gain:.2f} banked). Capital recycled into liquid SOL!",
+                    "TAKE_PROFIT",
+                    metadata={"token": pos["symbol"], "gain": f"+{pnl_pct*100:.1f}%", "banked": f"+${full_gain:.2f}"}
                 )
             except Exception:
                 pass
@@ -2649,6 +2698,19 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
             ]
             if clean_bcs:
                 top_bc = clean_bcs[0]
+                try:
+                    import freqtrade_protections
+                    is_allowed, guard_msg = freqtrade_protections.check_entry_guardrails(top_bc["symbol"], top_bc["address"])
+                    if not is_allowed:
+                        logger.info(f"🛡️ [FREQTRADE GUARD BLOCKED] {guard_msg}")
+                        return {
+                            "status": "FREQTRADE_PROTECTION_BLOCKED",
+                            "message": guard_msg,
+                            "risk": risk_res
+                        }
+                except Exception as ft_err:
+                    logger.debug(f"Freqtrade guard check note: {ft_err}")
+
                 logger.info(f"🏛️ [INSTITUTIONAL BLUE-CHIP] Top Pick: {top_bc['symbol']} (Score: {top_bc['momentum_score']}, Signal: {top_bc['signal']}, 5m: +{top_bc['m5_change']}%, Flow: {top_bc['buy_ratio_5m']}%)")
                 base_amount = float(state.get("sniper_amount_usd", 7.0))
                 if dex_mode == "LIVE":

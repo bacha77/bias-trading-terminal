@@ -3454,6 +3454,21 @@ async def api_beekeeper_arena():
         "recent_log": state.get("recent_tuning_log", [])[:5]
     }
 
+# ==========================================
+# FREQTRADE-INSPIRED PROTECTIONS & MINIMAL ROI
+# ==========================================
+@app.get("/api/freqtrade/protections")
+@app.get("/freqtrade/protections")
+async def api_freqtrade_protections():
+    import freqtrade_protections
+    return freqtrade_protections.get_protections_telemetry()
+
+@app.post("/api/freqtrade/unlock-all")
+@app.post("/freqtrade/unlock-all")
+async def api_freqtrade_unlock_all():
+    import freqtrade_protections
+    return freqtrade_protections.unlock_all_guards()
+
 @app.post("/api/dex/set-risk-profile")
 @app.post("/dex/set-risk-profile")
 async def api_set_dex_risk_profile(req: DexRiskProfileRequest):
