@@ -2520,6 +2520,75 @@ async def get_forex_sessions():
     data = await asyncio.to_thread(get_forex_sessions_status)
     return data
 
+# ----------------- MetaTrader 5 (MT5) Real Broker Endpoints -----------------
+class Mt5SetModeRequest(BaseModel):
+    execution_mode: str  # "LIVE_MT5" or "PAPER"
+
+class Mt5CloseRequest(BaseModel):
+    ticket: int
+
+class Mt5TelemetrySyncRequest(BaseModel):
+    status: Dict[str, Any]
+    positions: Optional[List[Dict[str, Any]]] = []
+
+_MT5_SYNC_CACHE = {
+    "status": None,
+    "positions": [],
+    "last_sync": 0
+}
+
+@app.post("/api/forex/mt5/telemetry-sync")
+async def api_forex_mt5_telemetry_sync(req: Mt5TelemetrySyncRequest):
+    _MT5_SYNC_CACHE["status"] = req.status
+    _MT5_SYNC_CACHE["positions"] = req.positions or []
+    _MT5_SYNC_CACHE["last_sync"] = time.time()
+    return {"status": "SUCCESS", "synced": True}
+
+@app.get("/api/forex/mt5/status")
+async def api_forex_mt5_status():
+    import mt5_engine
+    local_st = await asyncio.to_thread(mt5_engine.get_mt5_status)
+    if local_st.get("connected"):
+        return local_st
+    
+    # Cloud fallback: Return live relayed telemetry from user's Windows MT5 client
+    now_ts = time.time()
+    cached_st = _MT5_SYNC_CACHE.get("status")
+    last_sync = _MT5_SYNC_CACHE.get("last_sync", 0)
+    if cached_st and (now_ts - last_sync < 60):
+        return {**cached_st, "bridge_relayed": True, "sync_age_sec": round(now_ts - last_sync, 1)}
+        
+    return local_st
+
+@app.get("/api/forex/mt5/positions")
+async def api_forex_mt5_positions():
+    import mt5_engine
+    local_st = await asyncio.to_thread(mt5_engine.get_mt5_status)
+    if local_st.get("connected"):
+        return {"positions": await asyncio.to_thread(mt5_engine.get_mt5_positions)}
+        
+    now_ts = time.time()
+    last_sync = _MT5_SYNC_CACHE.get("last_sync", 0)
+    if (now_ts - last_sync < 60):
+        return {"positions": _MT5_SYNC_CACHE.get("positions", []), "bridge_relayed": True}
+        
+    return {"positions": []}
+
+@app.post("/api/forex/mt5/close-position")
+async def api_forex_mt5_close_position(req: Mt5CloseRequest):
+    import mt5_engine
+    res = await asyncio.to_thread(mt5_engine.close_mt5_position, req.ticket)
+    return res
+
+@app.post("/api/forex/mt5/set-mode")
+async def api_forex_mt5_set_mode(req: Mt5SetModeRequest):
+    import mt5_engine
+    cfg = mt5_engine.load_mt5_config()
+    clean_mode = "LIVE_MT5" if req.execution_mode.upper() == "LIVE_MT5" else "PAPER"
+    cfg["execution_mode"] = clean_mode
+    mt5_engine.save_mt5_config(cfg)
+    return {"status": "SUCCESS", "execution_mode": clean_mode}
+
 class ForexOrderRequest(BaseModel):
     symbol: str
     lots: float = 0.10
@@ -2529,27 +2598,62 @@ class ForexOrderRequest(BaseModel):
     stop_loss: float
     tp_pips: Optional[str] = None
     sl_pips: Optional[str] = None
+    mode: Optional[str] = None  # "LIVE_MT5" or "PAPER"
 
 @app.post("/api/forex/execute-bracket")
 async def execute_forex_bracket_endpoint(req: ForexOrderRequest):
+    import mt5_engine
     import paper_engine
+
     sym = req.symbol.upper().strip()
     clean_sym = clean_forex_symbol(sym)
     meta = FOREX_PAIRS_META.get(clean_sym, {})
     disp = meta.get("display", sym)
+    
+    cfg = mt5_engine.load_mt5_config()
+    active_mode = req.mode or cfg.get("execution_mode", "LIVE_MT5")
     
     # 1. Macro Red-Folder Calendar News Freeze Check
     # Avoid entries 15m before/after critical central bank or CPI events
     cal_data = get_macro_calendar()
     next_crit = cal_data.get("next_critical")
     if next_crit and next_crit.get("impact") == "CRITICAL":
-        crit_time = next_crit.get("time", "")
         crit_event = next_crit.get("event", "Central Bank Event")
-        # Log active macro awareness in ticket
         macro_tag = f"Macro Awareness: {crit_event} on radar"
     else:
         macro_tag = "Clear Macro Radar"
 
+    # If Live MT5 mode is selected, route through local MetaTrader 5 broker
+    if active_mode == "LIVE_MT5":
+        mt5_res = await asyncio.to_thread(
+            mt5_engine.execute_mt5_bracket_order,
+            symbol=disp,
+            side=req.side,
+            lots=req.lots,
+            entry_price=req.entry_price,
+            take_profit=req.take_profit,
+            stop_loss=req.stop_loss,
+            tp_pips=req.tp_pips,
+            sl_pips=req.sl_pips,
+            comment="Bias Terminal Alpha"
+        )
+        if mt5_res.get("status") == "SUCCESS":
+            return {
+                "status": "SUCCESS",
+                "mode": "LIVE_MT5",
+                "message": f"🔴 LIVE MT5 ORDER FILLED: {req.lots} Lots {mt5_res.get('symbol')} ({req.side.upper()}) @ {mt5_res.get('price')} [Ticket #{mt5_res.get('ticket')}]",
+                "ticket": mt5_res.get("ticket"),
+                "order": mt5_res
+            }
+        else:
+            return {
+                "status": "FAILED",
+                "mode": "LIVE_MT5",
+                "message": mt5_res.get("message", "MT5 execution rejected by broker"),
+                "details": mt5_res
+            }
+
+    # Safe Paper Simulation
     forex_details = {
         "display": disp,
         "lots": req.lots,
@@ -2573,9 +2677,55 @@ async def execute_forex_bracket_endpoint(req: ForexOrderRequest):
 
     return {
         "status": "SUCCESS",
-        "message": f"Interbank Paper Order for {req.lots} Lots {disp} ({req.side}) placed at {req.entry_price}",
+        "mode": "PAPER",
+        "message": f"🟡 Interbank Paper Order for {req.lots} Lots {disp} ({req.side}) placed at {req.entry_price}",
         "ticket": ticket
     }
+
+# ----------------- Forex Sovereign Daemon (Pillar 1) Endpoints -----------------
+class ForexDaemonToggleRequest(BaseModel):
+    armed: bool
+    execution_mode: Optional[str] = None
+    lot_size: Optional[float] = None
+    max_active_positions: Optional[int] = None
+    pillar_1_strict_sovereign: Optional[bool] = None
+
+@app.get("/api/forex/daemon/status")
+async def api_get_forex_daemon_status():
+    import forex_sovereign_daemon
+    import mt5_engine
+    state = forex_sovereign_daemon.load_forex_daemon_state()
+    mt5_st = await asyncio.to_thread(mt5_engine.get_mt5_status)
+    positions = await asyncio.to_thread(mt5_engine.get_mt5_positions) if mt5_st.get("connected") else []
+    return {
+        "status": "SUCCESS",
+        "daemon": state,
+        "mt5": mt5_st,
+        "active_positions": positions
+    }
+
+@app.post("/api/forex/daemon/toggle")
+async def api_toggle_forex_daemon(req: ForexDaemonToggleRequest):
+    import forex_sovereign_daemon
+    state = forex_sovereign_daemon.load_forex_daemon_state()
+    state["armed"] = req.armed
+    if req.execution_mode:
+        clean_mode = "LIVE_MT5" if req.execution_mode.upper() == "LIVE_MT5" else "PAPER"
+        state["execution_mode"] = clean_mode
+    if req.lot_size is not None:
+        state["lot_size"] = max(0.01, min(0.50, float(req.lot_size)))
+    if req.max_active_positions is not None:
+        state["max_active_positions"] = max(1, min(5, int(req.max_active_positions)))
+    if req.pillar_1_strict_sovereign is not None:
+        state["pillar_1_strict_sovereign"] = bool(req.pillar_1_strict_sovereign)
+    forex_sovereign_daemon.save_forex_daemon_state(state)
+    return {"status": "SUCCESS", "daemon": state}
+
+@app.post("/api/forex/daemon/run-cycle")
+async def api_run_forex_daemon_cycle():
+    import forex_sovereign_daemon
+    res = await asyncio.to_thread(forex_sovereign_daemon.run_autonomous_forex_sovereign_cycle)
+    return res
 
 # ------------------------------------------------ News Catalyst & Contagion Intelligence
 import news_catalyst_engine
@@ -2833,7 +2983,7 @@ COPILOT_STATE_FILE = os.path.join(os.path.dirname(__file__), "copilot_state.json
 def load_copilot_state() -> dict:
     default_state = {
         "armed": True,
-        "min_confidence": 70,
+        "min_confidence": 68,
         "order_qty": 1,
         "is_simulated": False,
         "options_only": True,
@@ -2952,7 +3102,7 @@ async def get_copilot_status():
     
     return {
         "armed": state.get("armed", True),
-        "min_confidence": state.get("min_confidence", 70),
+        "min_confidence": state.get("min_confidence", 68),
         "order_qty": state.get("order_qty", 1),
         "is_simulated": state.get("is_simulated", False),
         "options_only": state.get("options_only", True),
@@ -3255,6 +3405,55 @@ async def api_get_dex_positions(mode: Optional[str] = None):
         "pnl_summary": pnl_summary
     }
 
+@app.post("/api/dex/reset-history")
+@app.get("/api/dex/reset-history")
+async def api_reset_dex_history():
+    import solana_dex_engine
+    state = solana_dex_engine.load_dex_state()
+    state["closed_trades"] = []
+    solana_dex_engine.save_dex_state(state)
+    try:
+        with open("dex_trade_history.json", "w", encoding="utf-8") as f:
+            json.dump([], f)
+    except Exception:
+        pass
+    return {"status": "SUCCESS", "message": "Closed trade history reset."}
+
+# ==========================================
+# THE BEEKEEPER SUPERVISOR & BEE RACING ARENA
+# ==========================================
+@app.get("/api/beekeeper/status")
+@app.get("/beekeeper/status")
+async def api_beekeeper_status():
+    import beekeeper_supervisor
+    state = beekeeper_supervisor.load_beekeeper_state()
+    return {"status": "SUCCESS", "beekeeper": state}
+
+@app.post("/api/beekeeper/tune-now")
+@app.post("/beekeeper/tune-now")
+async def api_beekeeper_tune_now():
+    import beekeeper_supervisor
+    res = beekeeper_supervisor.run_beekeeper_tuning_cycle(force=True)
+    return res
+
+@app.get("/api/beekeeper/arena")
+@app.get("/beekeeper/arena")
+async def api_beekeeper_arena():
+    import beekeeper_supervisor
+    state = beekeeper_supervisor.load_beekeeper_state()
+    personas = state.get("personas", {})
+    leader = state.get("active_persona_leader", "BREEZY")
+    return {
+        "status": "SUCCESS",
+        "leader": leader,
+        "tuning_cycles": state.get("tuning_cycles_run", 0),
+        "last_tuned": state.get("last_tuning_time", "Never"),
+        "quarantined_count": len(state.get("toxic_asset_quarantine", {})),
+        "personas": list(personas.values()),
+        "rules": state.get("active_tuning_rules", []),
+        "recent_log": state.get("recent_tuning_log", [])[:5]
+    }
+
 @app.post("/api/dex/set-risk-profile")
 @app.post("/dex/set-risk-profile")
 async def api_set_dex_risk_profile(req: DexRiskProfileRequest):
@@ -3320,6 +3519,67 @@ async def api_set_dex_max_positions(req: DexSetMaxPositionsRequest):
 async def api_get_dex_wallet():
     import solana_dex_engine
     return solana_dex_engine.get_solana_wallet_status()
+
+@app.post("/api/dex/reclaim-rent")
+@app.post("/dex/reclaim-rent")
+async def api_reclaim_dex_rent():
+    import solana_dex_engine
+    return await asyncio.to_thread(solana_dex_engine.reclaim_all_empty_token_accounts)
+
+class DexSetRpcRequest(BaseModel):
+    rpc_url: str
+
+@app.get("/api/dex/rpc-status")
+@app.get("/dex/rpc-status")
+async def api_get_dex_rpc_status():
+    import solana_dex_engine
+    return await asyncio.to_thread(solana_dex_engine.get_rpc_health_status, None, True)
+
+@app.post("/api/dex/set-rpc")
+@app.post("/dex/set-rpc")
+async def api_set_dex_rpc(req: DexSetRpcRequest):
+    import solana_dex_engine
+    return await asyncio.to_thread(solana_dex_engine.set_solana_rpc_url, req.rpc_url)
+
+@app.post("/api/dex/test-rpc")
+@app.post("/dex/test-rpc")
+async def api_test_dex_rpc(req: DexSetRpcRequest):
+    import solana_dex_engine
+    return await asyncio.to_thread(solana_dex_engine.get_rpc_health_status, req.rpc_url, True)
+
+class DexSetStrategyModeRequest(BaseModel):
+    strategy_mode: str
+
+@app.get("/api/dex/bluechips")
+@app.get("/dex/bluechips")
+async def api_get_dex_bluechips():
+    import solana_dex_engine
+    signals = await asyncio.to_thread(solana_dex_engine.scan_bluechip_momentum_signals, True)
+    state = solana_dex_engine.load_dex_state()
+    return {
+        "status": "SUCCESS",
+        "bluechips": signals,
+        "active_strategy": state.get("strategy_mode", "BLUECHIP_MOMENTUM"),
+        "risk_rules": {
+            "stop_loss_pct": -3.0,
+            "tp1_pct": 4.0,
+            "tp2_pct": 8.0,
+            "max_slippage_bps": 50,
+            "min_liquidity_usd": 100000
+        }
+    }
+
+@app.post("/api/dex/set-strategy-mode")
+@app.post("/dex/set-strategy-mode")
+async def api_set_dex_strategy_mode(req: DexSetStrategyModeRequest):
+    import solana_dex_engine
+    state = solana_dex_engine.load_dex_state()
+    clean_mode = req.strategy_mode.upper().strip()
+    if clean_mode not in ["BLUECHIP_MOMENTUM", "SNIPER_LISTINGS", "HYBRID"]:
+        clean_mode = "BLUECHIP_MOMENTUM"
+    state["strategy_mode"] = clean_mode
+    solana_dex_engine.save_dex_state(state)
+    return {"status": "SUCCESS", "strategy_mode": clean_mode}
 
 class DexSetModeRequest(BaseModel):
     mode: str
@@ -3670,22 +3930,24 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             c_score = float(iq_eval.get("confluence_score", 0))
             trade_verdict = iq_eval.get("trade_verdict", "")
             bias = iq_eval.get("bias", "NEUTRAL")
+            chart_pa = iq_eval.get("chart_price_action", {})
+            chart_permitted = chart_pa.get("permitted_side", "STAND_DOWN")
 
-            # 1. Must satisfy institutional confidence threshold
-            if c_score < min_conf and not forced_symbol:
-                continue
+            # 0. MASTER CHART-FIRST FILTER: Price Action & Visual Chart Structure is King
+            if not forced_symbol:
+                if chart_permitted == "STAND_DOWN":
+                    print(f"[CHART FILTER STAND DOWN] Skipped {sym}: {chart_pa.get('rationale')}")
+                    continue
+                if not iq_eval.get("execution_permitted", False) or "STAND_DOWN" in trade_verdict:
+                    print(f"[QUANT ALPHA BOT] Stand down on {sym}: Confluence {c_score}/100. Verdict: {trade_verdict}.")
+                    continue
 
-            # 2. Strict Stand Down check: If engine says STAND DOWN or execution not permitted, abort!
-            if ("STAND_DOWN" in trade_verdict or not iq_eval.get("execution_permitted", False)) and not forced_symbol:
-                print(f"[QUANT ALPHA BOT] Stand down on {sym}: Confluence {c_score}/100. Verdict: {trade_verdict}.")
-                continue
-
-            # Directional Determination: strictly from 4-Pillar Quant Alpha Matrix
-            is_call = ("BULLISH" in trade_verdict or "LONG" in trade_verdict or bias == "INSTITUTIONAL_BULLISH")
-            is_put = ("BEARISH" in trade_verdict or "SHORT" in trade_verdict or bias == "INSTITUTIONAL_BEARISH")
+            # Directional Determination: strictly aligned with Chart Permitted Direction
+            is_call = ("BULLISH" in trade_verdict or "LONG" in trade_verdict or bias == "INSTITUTIONAL_BULLISH") and (chart_permitted in ["CALLS_ONLY", "BULLISH"])
+            is_put = ("BEARISH" in trade_verdict or "SHORT" in trade_verdict or bias == "INSTITUTIONAL_BEARISH") and (chart_permitted in ["PUTS_ONLY", "BEARISH"])
 
             if not is_call and not is_put:
-                print(f"[QUANT ALPHA BOT] Stand down on {sym}: Confluence {c_score}/100. Verdict: {trade_verdict}. No clean directional edge.")
+                print(f"[CHART & FLOW DISAGREEMENT] Skipped {sym}: Chart side is {chart_permitted}, but confluence verdict is {trade_verdict}. No trade.")
                 continue
 
             # 2B. Institutional Relative Strength Gate (Two Sigma / Millennium Model)
@@ -3737,10 +3999,10 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
                 if is_put and (spot_val > vwap_val or trend_state == "BULLISH_EXPANSION"):
                     print(f"[TREND VETO] Blocked PUT on {sym}: Spot (${spot_val:.2f}) is above 15m VWAP (${vwap_val:.2f}) in {trend_state}. No counter-trend shorting.")
                     continue
-                if is_call and ("OVERBOUGHT" in band_zone or z_score > 1.8):
+                if is_call and ("EXTREME_OVERBOUGHT" in band_zone or z_score > 2.6):
                     print(f"[VWAP EXTENSION VETO] Blocked CALL on {sym}: Trading at +{z_score:.1f}σ above VWAP (overbought extension).")
                     continue
-                if is_put and ("OVERSOLD" in band_zone or z_score < -1.8):
+                if is_put and ("EXTREME_OVERSOLD" in band_zone or z_score < -2.6):
                     print(f"[VWAP EXTENSION VETO] Blocked PUT on {sym}: Trading at {z_score:.1f}σ below VWAP (oversold extension).")
                     continue
 
@@ -3812,11 +4074,14 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
             rec_contracts = int(iq_eval.get("volatility_parity", {}).get("recommended_contracts", state.get("order_qty", 1)))
             final_contract_qty = max(1, min(5, rec_contracts))
             
+            p2 = iq_eval.get("pillars", {}).get("pillar_2_variance_risk_premium", {})
+            opt_iv = float(p2.get("implied_vol_atm", 25.0))
+            vrp_val = float(p2.get("variance_risk_premium", 1.5))
+            
             use_spreads = str(state.get("options_mode", "SPREADS")).upper() != "SINGLE_LEG"
             
             if use_spreads:
                 gex_reg = p1.get("regime", "POSITIVE_GAMMA")
-                vrp_val = float(iq_eval.get("pillars", {}).get("pillar_2_variance_risk_premium", {}).get("vrp", 1.5))
                 opt_bracket = generate_adaptive_spread_setup(
                     ticker=sym,
                     spot=spot_val,
@@ -3892,6 +4157,11 @@ async def _execute_copilot_eval_cycle(forced_symbol: Optional[str] = None):
                     "credit": iq_eval["pillars"]["pillar_3_credit_lead_lag"].get("divergence_state"),
                     "sweep": iq_eval["pillars"]["pillar_4_liquidity_sweep"].get("sweep_pattern")
                 },
+                "chart_trend": chart_pa.get("chart_trend"),
+                "rsi_1h": chart_pa.get("rsi_1h"),
+                "chart_support": chart_pa.get("key_support"),
+                "chart_resistance": chart_pa.get("key_resistance"),
+                "chart_rationale": chart_pa.get("rationale"),
                 "order_details": order_res
             }
         
@@ -4611,6 +4881,39 @@ async def _solana_dex_risk_worker():
         except Exception as e:
             print(f"[SOLANA DEX WORKER ERROR] {e}")
 
+async def _forex_sovereign_daemon_worker():
+    while True:
+        try:
+            await asyncio.sleep(20)
+            import forex_sovereign_daemon
+            await asyncio.to_thread(forex_sovereign_daemon.run_autonomous_forex_sovereign_cycle)
+        except Exception as e:
+            print(f"[FOREX SOVEREIGN DAEMON WORKER ERROR] {e}")
+
+async def _mt5_cloud_relay_worker():
+    """
+    Relays live MT5 telemetry from local Windows MT5 terminal to Cloud Run backend
+    every 3 seconds so cloud web apps (https://money.maisonrx.life) show connected status.
+    """
+    if os.getenv("K_SERVICE"):
+        return
+        
+    cloud_url = os.getenv("CLOUD_RUN_BASE_URL", "https://bias-api-901493256178.us-central1.run.app")
+    import httpx
+    import mt5_engine
+    
+    while True:
+        try:
+            st = await asyncio.to_thread(mt5_engine.get_mt5_status)
+            if st.get("connected"):
+                pos = await asyncio.to_thread(mt5_engine.get_mt5_positions)
+                payload = {"status": st, "positions": pos}
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    await client.post(f"{cloud_url}/api/forex/mt5/telemetry-sync", json=payload)
+        except Exception:
+            pass
+        await asyncio.sleep(3)
+
 @app.on_event("startup")
 async def start_background_workers():
     asyncio.create_task(_alerts_background_worker())
@@ -4619,6 +4922,8 @@ async def start_background_workers():
     asyncio.create_task(_crypto_autonomous_worker())
     asyncio.create_task(_solana_dex_risk_worker())
     asyncio.create_task(_hyperliquid_arb_worker())
+    asyncio.create_task(_forex_sovereign_daemon_worker())
+    asyncio.create_task(_mt5_cloud_relay_worker())
     try:
         import desk_notifier
         desk_notifier.start_telegram_callback_listener()

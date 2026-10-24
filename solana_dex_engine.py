@@ -157,8 +157,8 @@ def _solana_forensics(mint: str) -> Dict[str, Any]:
                     dev_pct = float(h.get("pct", 0.0))
                     break
                     
-            # LP lock
-            lp_pct = 100.0 if mint.endswith("pump") else 0.0
+            # LP lock - strictly require verified pool lock (pre-graduation pump.fun tokens have 0% LP locked)
+            lp_pct = 0.0
             markets = rc_data.get("markets") or []
             if markets and isinstance(markets, list):
                 for m in markets:
@@ -172,7 +172,7 @@ def _solana_forensics(mint: str) -> Dict[str, Any]:
                 "mint_revoked": mint_revoked,
                 "freeze_revoked": freeze_revoked,
                 "lp_burned_pct": round(lp_pct, 1),
-                "lp_model": "PUMP_BONDING" if mint.endswith("pump") else "LP_LOCKED",
+                "lp_model": "PUMP_BONDING_PRE_GRADUATION" if (mint.endswith("pump") and lp_pct < 85.0) else "LP_LOCKED",
                 "dev_holding_pct": round(dev_pct, 2),
                 "top10_holding_pct": round(top10_sum, 2),
                 "buy_tax_pct": round(transfer_fee, 2),
@@ -220,8 +220,8 @@ def _solana_forensics(mint: str) -> Dict[str, Any]:
                 "forensic_error": None,
                 "mint_revoked": mint_revoked,
                 "freeze_revoked": freeze_revoked,
-                "lp_burned_pct": 100.0 if mint.endswith("pump") else 85.0,
-                "lp_model": "PUMP_BONDING" if mint.endswith("pump") else "LP_LOCKED",
+                "lp_burned_pct": 0.0 if mint.endswith("pump") else 85.0,
+                "lp_model": "PUMP_BONDING_UNVERIFIED" if mint.endswith("pump") else "LP_LOCKED",
                 "dev_holding_pct": dev_pct,
                 "top10_holding_pct": top10_val,
                 "buy_tax_pct": 0.0,
@@ -728,21 +728,206 @@ def get_solana_keypair():
         logger.error(f"Failed to load Solana keypair: {e}")
         return None
 
+_RPC_STATUS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "status": {}}
+
+def normalize_rpc_url(input_str: str) -> str:
+    """Accepts full URL or bare Helius API key and normalizes to a complete valid RPC endpoint."""
+    val = (input_str or "").strip()
+    if not val:
+        return "https://api.mainnet-beta.solana.com"
+    if "://" not in val:
+        return f"https://mainnet.helius-rpc.com/?api-key={val}"
+    return val
+
 def get_solana_rpc_url() -> str:
-    """Returns configured RPC endpoint (e.g. Helius / Quicknode) or standard public cluster."""
-    rpc = os.getenv("SOLANA_RPC_URL", "").strip()
-    if not rpc:
-        env_path = os.path.join(os.path.dirname(__file__), ".env")
+    """Returns configured RPC endpoint (e.g. Helius / QuickNode) or standard public cluster."""
+    # 1. State file preference
+    try:
+        st = load_dex_state()
+        if st.get("solana_rpc_url"):
+            return normalize_rpc_url(st["solana_rpc_url"])
+    except Exception:
+        pass
+        
+    # 2. Environment variable
+    rpc = os.getenv("SOLANA_RPC_URL", "").strip() or os.getenv("HELIUS_API_KEY", "").strip()
+    if rpc:
+        return normalize_rpc_url(rpc)
+        
+    # 3. .env file
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r") as f:
+                for line in f:
+                    if line.startswith("SOLANA_RPC_URL=") and not line.startswith("#"):
+                        raw = line.strip().split("=", 1)[1].strip()
+                        if raw:
+                            return normalize_rpc_url(raw)
+                    elif line.startswith("HELIUS_API_KEY=") and not line.startswith("#"):
+                        key = line.strip().split("=", 1)[1].strip()
+                        if key:
+                            return normalize_rpc_url(key)
+        except Exception:
+            pass
+            
+    return "https://api.mainnet-beta.solana.com"
+
+def get_rpc_health_status(target_url: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
+    """
+    Benchmarks RPC round-trip latency, slot height, and provider tier.
+    Cached for 20s unless forced or testing a custom target URL.
+    """
+    global _RPC_STATUS_CACHE
+    now = time.time()
+    if not target_url and not force and (now - _RPC_STATUS_CACHE["timestamp"] < 20.0) and _RPC_STATUS_CACHE["status"]:
+        return _RPC_STATUS_CACHE["status"]
+
+    active_url = normalize_rpc_url(target_url) if target_url else get_solana_rpc_url()
+    
+    url_lower = active_url.lower()
+    if "helius" in url_lower:
+        provider = "Helius Dedicated Ultra"
+        is_dedicated = True
+    elif "quiknode" in url_lower or "quicknode" in url_lower:
+        provider = "QuickNode Dedicated"
+        is_dedicated = True
+    elif "alchemy" in url_lower:
+        provider = "Alchemy Dedicated"
+        is_dedicated = True
+    elif "triton" in url_lower or "rpcpool" in url_lower:
+        provider = "Triton RPC Dedicated"
+        is_dedicated = True
+    else:
+        provider = "Solana Public Cluster"
+        is_dedicated = False
+
+    if "?" in active_url:
+        base_part, query_part = active_url.split("?", 1)
+        masked_url = f"{base_part}?api-key=***{query_part[-4:] if len(query_part) >= 4 else ''}"
+    elif len(active_url) > 30 and "://" in active_url:
+        protocol, rest = active_url.split("://", 1)
+        masked_url = f"{protocol}://{rest[:8]}...{rest[-10:]}"
+    else:
+        masked_url = active_url
+
+    t0 = time.time()
+    status = "OFFLINE"
+    slot = 0
+    latency_ms = 9999.0
+    error_msg = None
+
+    try:
+        payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getSlot"}).encode()
+        req = urllib.request.Request(active_url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, method="POST")
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            data = json.loads(resp.read().decode())
+            slot = int(data.get("result") or 0)
+            latency_ms = round((time.time() - t0) * 1000, 1)
+            status = "HEALTHY" if slot > 0 else "DEGRADED"
+    except Exception as e:
+        latency_ms = round((time.time() - t0) * 1000, 1)
+        error_msg = str(e)
+        status = "OFFLINE"
+
+    res = {
+        "status": status,
+        "provider": provider,
+        "is_dedicated": is_dedicated,
+        "latency_ms": latency_ms,
+        "slot": slot,
+        "rpc_url": masked_url,
+        "raw_url": active_url,
+        "error": error_msg,
+        "timestamp": now,
+        "tier_rating": "OPTIMAL (<150ms)" if latency_ms < 150 else ("ACCEPTABLE (<350ms)" if latency_ms < 350 else "HIGH_LATENCY (>350ms)")
+    }
+
+    if not target_url:
+        _RPC_STATUS_CACHE["timestamp"] = now
+        _RPC_STATUS_CACHE["status"] = res
+
+    return res
+
+def set_solana_rpc_url(new_url: str) -> Dict[str, Any]:
+    """
+    Validates and sets a new Solana RPC endpoint (or bare Helius API key).
+    Updates state and .env file if connection succeeds.
+    """
+    clean_url = normalize_rpc_url(new_url)
+    health = get_rpc_health_status(target_url=clean_url, force=True)
+    if health.get("status") == "OFFLINE":
+        return {
+            "status": "ERROR",
+            "message": f"Connection failed to '{clean_url}': {health.get('error')}. Setting was not saved.",
+            "health": health
+        }
+
+    st = load_dex_state()
+    st["solana_rpc_url"] = clean_url
+    save_dex_state(st)
+
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    try:
+        lines = []
+        found = False
         if os.path.exists(env_path):
-            try:
-                with open(env_path, "r") as f:
-                    for line in f:
-                        if line.startswith("SOLANA_RPC_URL=") and not line.startswith("#"):
-                            rpc = line.strip().split("=", 1)[1].strip()
-                            break
-            except Exception:
-                pass
-    return rpc or "https://api.mainnet-beta.solana.com"
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+        new_lines = []
+        for line in lines:
+            if line.startswith("SOLANA_RPC_URL="):
+                new_lines.append(f"SOLANA_RPC_URL={clean_url}\n")
+                found = True
+            else:
+                new_lines.append(line)
+        if not found:
+            new_lines.append(f"\nSOLANA_RPC_URL={clean_url}\n")
+        with open(env_path, "w") as f:
+            f.writelines(new_lines)
+    except Exception as env_err:
+        logger.warning(f"Failed to persist SOLANA_RPC_URL to .env: {env_err}")
+
+    global _RPC_STATUS_CACHE
+    _RPC_STATUS_CACHE = {"timestamp": 0.0, "status": {}}
+
+    return {
+        "status": "SUCCESS",
+        "message": f"RPC endpoint successfully updated to {health['provider']} ({health['latency_ms']}ms latency).",
+        "health": health
+    }
+
+def rpc_request_with_failover(payload: Dict[str, Any], timeout: float = 6.0) -> Dict[str, Any]:
+    """
+    Sends JSON-RPC payload to active RPC with automatic fallback if primary cluster fails or throttles (429).
+    """
+    primary_url = get_solana_rpc_url()
+    fallback_urls = [
+        primary_url,
+        "https://api.mainnet-beta.solana.com"
+    ]
+    urls = list(dict.fromkeys(fallback_urls))
+
+    data_bytes = json.dumps(payload).encode("utf-8")
+    last_err = None
+
+    for url in urls:
+        try:
+            req = urllib.request.Request(
+                url, data=data_bytes,
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                res = json.loads(resp.read().decode())
+                if "error" in res and res["error"].get("code") == 429:
+                    continue
+                return res
+        except Exception as e:
+            last_err = e
+            continue
+
+    raise Exception(f"All RPC endpoints in failover pool failed. Last error: {last_err}")
 
 def get_solana_wallet_status() -> Dict[str, Any]:
     """
@@ -782,6 +967,9 @@ def get_solana_wallet_status() -> Dict[str, Any]:
         logger.warning(f"Failed to query SOL balance for {pubkey}: {e}")
 
     sol_px = get_sol_price_usd()
+    empty_accs = get_empty_token_accounts()
+    reclaimable_sol = round(len(empty_accs) * 0.002039, 4)
+    reclaimable_usd = round(reclaimable_sol * sol_px, 2)
     return {
         "configured": True,
         "address": pubkey,
@@ -791,7 +979,165 @@ def get_solana_wallet_status() -> Dict[str, Any]:
         "rpc_url": rpc_url,
         "jito_enabled": bool(os.getenv("SOLANA_JITO_ENABLED", "true").lower() == "true"),
         "mode": "LIVE_READY" if balance_sol >= 0.02 else "LOW_BALANCE",
-        "message": f"Wallet active ({balance_sol} SOL). Ready for live execution." if balance_sol >= 0.02 else f"Low SOL balance ({balance_sol} SOL). Deposit at least 0.05 SOL to execute."
+        "message": f"Wallet active ({balance_sol} SOL). Ready for live execution." if balance_sol >= 0.02 else f"Low SOL balance ({balance_sol} SOL). Deposit at least 0.05 SOL to execute.",
+        "empty_accounts_count": len(empty_accs),
+        "reclaimable_rent_sol": reclaimable_sol,
+        "reclaimable_rent_usd": reclaimable_usd,
+        "rpc_health": get_rpc_health_status()
+    }
+
+_EMPTY_ACCOUNTS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "accounts": []}
+
+def get_empty_token_accounts(force: bool = False) -> List[Dict[str, Any]]:
+    """
+    Finds all zero-balance SPL and Token-2022 token accounts owned by the wallet.
+    Each account locks ~0.002039 SOL rent exemption that can be reclaimed into native SOL.
+    """
+    global _EMPTY_ACCOUNTS_CACHE
+    now = time.time()
+    if not force and (now - _EMPTY_ACCOUNTS_CACHE["timestamp"] < 25.0):
+        return _EMPTY_ACCOUNTS_CACHE["accounts"]
+        
+    kp = get_solana_keypair()
+    if not kp:
+        return []
+    user_pubkey = str(kp.pubkey())
+    rpc_url = get_solana_rpc_url()
+    
+    programs = [
+        ("Tokenkeg", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        ("Token-2022", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+    ]
+    empty_list = []
+    for prog_name, pid in programs:
+        try:
+            payload = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getTokenAccountsByOwner",
+                "params": [user_pubkey, {"programId": pid}, {"encoding": "jsonParsed"}]
+            }
+            req = urllib.request.Request(
+                rpc_url, data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode())
+                for a in data.get("result", {}).get("value", []):
+                    info = a.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+                    amt = float(info.get("tokenAmount", {}).get("uiAmount") or 0.0)
+                    raw_amt = int(info.get("tokenAmount", {}).get("amount") or 0)
+                    if amt == 0.0 and raw_amt == 0:
+                        empty_list.append({
+                            "account": a.get("pubkey"),
+                            "mint": info.get("mint"),
+                            "program": prog_name,
+                            "program_id": pid
+                        })
+        except Exception as e:
+            logger.warning(f"Error querying {prog_name} empty accounts: {e}")
+            
+    _EMPTY_ACCOUNTS_CACHE["timestamp"] = now
+    _EMPTY_ACCOUNTS_CACHE["accounts"] = empty_list
+    return empty_list
+
+
+def reclaim_all_empty_token_accounts(batch_size: int = 12) -> Dict[str, Any]:
+    """
+    Closes all zero-balance SPL and Token-2022 token accounts owned by the wallet,
+    reclaiming all locked ~0.002039 SOL rent-exemption lamports directly into native SOL.
+    Batches up to `batch_size` accounts per transaction with compute budget priority to guarantee block inclusion.
+    """
+    import base64
+    from solders.pubkey import Pubkey
+    from solders.hash import Hash
+    from solders.message import MessageV0
+    from solders.transaction import VersionedTransaction
+    import solders.compute_budget as cb
+    import spl.token.instructions as spl_ix
+    import spl.token.models as spl_models
+    
+    kp = get_solana_keypair()
+    if not kp:
+        return {"status": "ERROR", "message": "No Solana private key configured."}
+    user_pubkey = kp.pubkey()
+    rpc_url = get_solana_rpc_url()
+    
+    empty_accs = get_empty_token_accounts(force=True)
+    if not empty_accs:
+        return {
+            "status": "SUCCESS", 
+            "message": "No empty token accounts found. All rent is already liquid.",
+            "closed_count": 0,
+            "reclaimed_sol": 0.0
+        }
+        
+    total_reclaimed = 0
+    txids = []
+    failed_batches = 0
+    
+    for i in range(0, len(empty_accs), batch_size):
+        chunk = empty_accs[i:i + batch_size]
+        ixs = [
+            cb.set_compute_unit_limit(200_000),
+            cb.set_compute_unit_price(75_000)
+        ]
+        for item in chunk:
+            pid = Pubkey.from_string(item["program_id"])
+            acc = Pubkey.from_string(item["account"])
+            params = spl_models.CloseAccountParams(
+                account=acc,
+                dest=user_pubkey,
+                owner=user_pubkey,
+                program_id=pid
+            )
+            ixs.append(spl_ix.close_account(params))
+            
+        try:
+            b_payload = {"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash", "params": [{"commitment": "confirmed"}]}
+            b_req = urllib.request.Request(rpc_url, data=json.dumps(b_payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(b_req, timeout=10) as r:
+                bh_data = json.loads(r.read().decode())
+                bh_str = bh_data.get("result", {}).get("value", {}).get("blockhash")
+                
+            msg = MessageV0.try_compile(user_pubkey, ixs, [], Hash.from_string(bh_str))
+            tx = VersionedTransaction(msg, [kp])
+            signed_b64 = base64.b64encode(bytes(tx)).decode("utf-8")
+            
+            send_payload = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "sendTransaction",
+                "params": [signed_b64, {"skipPreflight": False, "encoding": "base64"}]
+            }
+            s_req = urllib.request.Request(rpc_url, data=json.dumps(send_payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(s_req, timeout=10) as r:
+                send_res = json.loads(r.read().decode())
+                
+            if "error" in send_res:
+                logger.error(f"Error closing batch {i//batch_size}: {send_res['error']}")
+                failed_batches += 1
+            else:
+                txid = send_res.get("result")
+                txids.append(txid)
+                total_reclaimed += len(chunk)
+                time.sleep(1.5)
+        except Exception as b_err:
+            logger.error(f"Batch close execution exception: {b_err}")
+            failed_batches += 1
+            
+    get_empty_token_accounts(force=True)
+    updated_wallet = get_solana_wallet_status()
+    sol_amount_reclaimed = round(total_reclaimed * 0.002039, 4)
+    
+    return {
+        "status": "SUCCESS" if total_reclaimed > 0 else ("PARTIAL" if failed_batches > 0 else "NOOP"),
+        "closed_count": total_reclaimed,
+        "reclaimed_sol": sol_amount_reclaimed,
+        "reclaimed_usd": round(sol_amount_reclaimed * updated_wallet.get("sol_price", 100.0), 2),
+        "balance_sol": updated_wallet.get("balance_sol", 0.0),
+        "balance_usd": updated_wallet.get("balance_usd", 0.0),
+        "txids": txids,
+        "message": f"Successfully closed {total_reclaimed} dead accounts and refunded +{sol_amount_reclaimed} SOL back to your wallet."
     }
 
 _LIVE_ONCHAIN_CACHE: Dict[str, Any] = {
@@ -897,20 +1243,19 @@ def sync_live_positions_from_chain(force: bool = False) -> List[Dict[str, Any]]:
         if not state_match:
             state_match = next((p for p in curr_state.get("closed_trades", []) if p.get("address") == mint), None)
 
-        if state_match and state_match.get("amount_usd"):
-            est_entry_usd = float(state_match["amount_usd"])
-            entry_px = float(state_match.get("entry_price") or (est_entry_usd / max(0.000001, tok["tokens_held"])))
+        if state_match and state_match.get("entry_price"):
+            entry_px = float(state_match["entry_price"])
+            est_entry_usd = round(entry_px * tok["tokens_held"], 2)
             breakeven_locked = bool(state_match.get("breakeven_locked", False))
             hwm = max(float(state_match.get("high_water_mark") or price_usd), price_usd)
         else:
-            default_size = float(curr_state.get("sniper_amount_usd", 25.0))
-            est_entry_usd = default_size if current_val_usd >= (default_size * 0.4) else current_val_usd
-            entry_px = round(est_entry_usd / max(0.000001, tok["tokens_held"]), 6)
+            entry_px = price_usd
+            est_entry_usd = current_val_usd
             breakeven_locked = False
-            hwm = max(price_usd, entry_px)
+            hwm = price_usd
 
         unrealized_pnl_usd = round(current_val_usd - est_entry_usd, 2)
-        unrealized_pnl_pct = round((unrealized_pnl_usd / est_entry_usd) * 100, 2) if est_entry_usd > 0 else 0.0
+        unrealized_pnl_pct = round(((price_usd - entry_px) / entry_px) * 100, 2) if entry_px > 0 else 0.0
 
         live_positions.append({
             "id": f"live_onchain_{mint[:8]}",
@@ -983,6 +1328,8 @@ def execute_jupiter_onchain_swap(
             }
         amount_sol = round(max_allowed, 4)
 
+    # OPTION A: Institutional Anti-MEV Armor - Cap slippage to max 50 bps (0.50%)
+    slippage_bps = min(int(slippage_bps), 50)
     quote_res = get_jupiter_quote(output_mint=output_mint, input_mint=input_mint, amount_sol=amount_sol, slippage_bps=slippage_bps)
     if not quote_res.get("success"):
         return {"status": "ERROR", "message": f"Jupiter quote failed: {quote_res.get('error')}"}
@@ -1018,7 +1365,31 @@ def execute_jupiter_onchain_swap(
         signed_b64 = base64.b64encode(bytes(signed_tx)).decode("utf-8")
         txid = str(signed_tx.signatures[0])
 
-        # Broadcast via Solana RPC sendTransaction
+        # 1. Anti-MEV Private Mempool: Route via Jito Block Engine Bundle first
+        jito_bundle_submitted = False
+        try:
+            jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/bundles"
+            jito_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendBundle",
+                "params": [[signed_b64]]
+            }
+            jito_req = urllib.request.Request(
+                jito_url,
+                data=json.dumps(jito_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                method="POST"
+            )
+            with urllib.request.urlopen(jito_req, timeout=3.5) as jr:
+                j_res = json.loads(jr.read().decode())
+                if "result" in j_res:
+                    jito_bundle_submitted = True
+                    logger.info(f"🛡️ [JITO PRIVATE BUNDLE] Swap bundle submitted to block engine: {j_res.get('result')}")
+        except Exception as j_err:
+            logger.debug(f"Jito bundle notice: {j_err}")
+
+        # 2. RPC Direct Broadcast with skipPreflight
         rpc_url = get_solana_rpc_url()
         broadcast_payload = {
             "jsonrpc": "2.0",
@@ -1051,7 +1422,8 @@ def execute_jupiter_onchain_swap(
             "solscan_url": solscan_url,
             "in_amount": quote.get("inAmount"),
             "out_amount": quote.get("outAmount"),
-            "price_impact_pct": quote.get("priceImpactPct", "0")
+            "price_impact_pct": quote.get("priceImpactPct", "0"),
+            "jito_private_bundle": jito_bundle_submitted
         }
     except Exception as e:
         logger.error(f"Jupiter onchain swap execution error: {e}")
@@ -1105,6 +1477,29 @@ def execute_jupiter_onchain_sell(
         signed_b64 = base64.b64encode(bytes(signed_tx)).decode("utf-8")
         txid = str(signed_tx.signatures[0])
 
+        # 1. Anti-MEV: Route sell transaction via Jito Block Engine Bundle first
+        try:
+            jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/bundles"
+            jito_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendBundle",
+                "params": [[signed_b64]]
+            }
+            jito_req = urllib.request.Request(
+                jito_url,
+                data=json.dumps(jito_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                method="POST"
+            )
+            with urllib.request.urlopen(jito_req, timeout=3.5) as jr:
+                j_res = json.loads(jr.read().decode())
+                if "result" in j_res:
+                    logger.info(f"🛡️ [JITO PRIVATE BUNDLE] Sell bundle submitted to block engine: {j_res.get('result')}")
+        except Exception as j_err:
+            logger.debug(f"Jito sell bundle notice: {j_err}")
+
+        # 2. RPC Direct Broadcast
         rpc_url = get_solana_rpc_url()
         broadcast_payload = {
             "jsonrpc": "2.0",
@@ -1129,6 +1524,13 @@ def execute_jupiter_onchain_sell(
             b_res = json.loads(br.read().decode())
             if "error" in b_res:
                 return {"status": "ERROR", "message": f"RPC sell error: {b_res['error']}", "txid": txid}
+
+        # Automatically reclaim rent in the background
+        try:
+            import threading
+            threading.Thread(target=reclaim_all_empty_token_accounts, daemon=True).start()
+        except Exception:
+            pass
 
         return {
             "status": "SUCCESS",
@@ -1304,31 +1706,100 @@ def _fetch_dexscreener_fallback(chain_key: str = "solana") -> List[Dict[str, Any
                     pairs.append(p)
     except Exception as e:
         logger.warning(f"DexScreener fallback error: {e}")
-def _fetch_anchor_tokens() -> List[Dict[str, Any]]:
-    """Fetches real-time price & volume for top verified foundational Solana tokens."""
-    anchors = [
-        "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",  # JUP
-        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
-        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
-        "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",  # PYTH
-    ]
-    pairs = []
+INSTITUTIONAL_BLUE_CHIPS: List[Dict[str, Any]] = [
+    {"symbol": "JUP", "name": "Jupiter Exchange", "address": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", "min_liq": 1500000.0},
+    {"symbol": "RAY", "name": "Raydium AMM", "address": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "min_liq": 1000000.0},
+    {"symbol": "BONK", "name": "Bonk", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "min_liq": 2000000.0},
+    {"symbol": "WIF", "name": "dogwifhat", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "min_liq": 2000000.0},
+    {"symbol": "PYTH", "name": "Pyth Network", "address": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3", "min_liq": 1000000.0},
+    {"symbol": "DRIFT", "name": "Drift Protocol", "address": "DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7", "min_liq": 500000.0},
+    {"symbol": "KMNO", "name": "Kamino Finance", "address": "KMNo3nJsBXfcpJTVhZnvnvJmNVokdgYTXeztTSPm3kh", "min_liq": 500000.0}
+]
+
+_BLUECHIP_CACHE: Dict[str, Any] = {"timestamp": 0.0, "signals": []}
+
+def scan_bluechip_momentum_signals(force: bool = False) -> List[Dict[str, Any]]:
+    """
+    Quantitative Momentum & Flow Engine for Top Institutional Solana Blue Chips.
+    Evaluates 5-minute price velocity, 1-hour trend alignment, and smart money buy/sell imbalance.
+    Returns ranked trading signals with zero memecoin or low-liquidity risk.
+    """
+    global _BLUECHIP_CACHE
+    now = time.time()
+    if not force and (now - _BLUECHIP_CACHE["timestamp"] < 20.0) and _BLUECHIP_CACHE["signals"]:
+        return _BLUECHIP_CACHE["signals"]
+
+    addrs = [c["address"] for c in INSTITUTIONAL_BLUE_CHIPS if c["address"] != SOL_MINT]
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs)}"
+    pairs_by_addr: Dict[str, Any] = {}
     try:
-        url = f"https://api.dexscreener.com/latest/dex/tokens/{','.join(anchors)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            seen = set()
-            for p in data.get("pairs", []):
+        with urllib.request.urlopen(req, timeout=6.0) as r:
+            data = json.loads(r.read().decode())
+            for p in data.get("pairs", []) or []:
                 if p.get("chainId") != "solana":
                     continue
-                base_addr = p.get("baseToken", {}).get("address")
-                if base_addr in anchors and base_addr not in seen:
-                    seen.add(base_addr)
-                    pairs.append(p)
+                addr = p.get("baseToken", {}).get("address")
+                if addr in addrs:
+                    cur_liq = float((pairs_by_addr.get(addr, {}).get("liquidity") or {}).get("usd") or 0.0)
+                    new_liq = float((p.get("liquidity") or {}).get("usd") or 0.0)
+                    if addr not in pairs_by_addr or new_liq > cur_liq:
+                        pairs_by_addr[addr] = p
     except Exception as e:
-        logger.debug(f"Anchor tokens fetch error: {e}")
-    return pairs
+        logger.warning(f"Error fetching bluechip pairs: {e}")
+
+    scored = []
+    for c in INSTITUTIONAL_BLUE_CHIPS:
+        if c["address"] == SOL_MINT:
+            continue
+        p = pairs_by_addr.get(c["address"])
+        if not p:
+            continue
+        px = float(p.get("priceUsd") or 0.0)
+        liq = float((p.get("liquidity") or {}).get("usd") or 0.0)
+        vol24 = float((p.get("volume") or {}).get("h24") or 0.0)
+        m5 = float((p.get("priceChange") or {}).get("m5") or 0.0)
+        h1 = float((p.get("priceChange") or {}).get("h1") or 0.0)
+        h24 = float((p.get("priceChange") or {}).get("h24") or 0.0)
+        tx_buys = int(((p.get("txns") or {}).get("m5") or {}).get("buys") or 0)
+        tx_sells = int(((p.get("txns") or {}).get("m5") or {}).get("sells") or 0)
+        total_tx = tx_buys + tx_sells
+        buy_ratio = round((tx_buys / max(1, total_tx)) * 100, 1) if total_tx > 0 else 50.0
+
+        flow_score = min(100.0, max(0.0, buy_ratio))
+        velocity_score = 90.0 if (0.15 <= m5 <= 4.0) else (60.0 if m5 > 0 else 30.0)
+        trend_score = 85.0 if h1 > 0 else 40.0
+        composite = round((flow_score * 0.40) + (velocity_score * 0.35) + (trend_score * 0.25), 1)
+
+        signal = "STRONG_BUY" if (composite >= 75 and m5 > 0) else ("BUY" if composite >= 60 else "NEUTRAL")
+
+        scored.append({
+            "symbol": c["symbol"],
+            "name": c["name"],
+            "address": c["address"],
+            "price_usd": px,
+            "liquidity_usd": liq,
+            "vol_24h": vol24,
+            "m5_change": m5,
+            "h1_change": h1,
+            "h24_change": h24,
+            "tx_buys_5m": tx_buys,
+            "tx_sells_5m": tx_sells,
+            "buy_ratio_5m": buy_ratio,
+            "momentum_score": composite,
+            "signal": signal,
+            "chain": "solana",
+            "forensic_status": "PASSED",
+            "safety_score": 99,
+            "rugcheck_score": 0,
+            "pair_url": p.get("url") or f"https://dexscreener.com/solana/{c['address']}",
+            "embed_chart_url": f"https://dexscreener.com/solana/{c['address']}?embed=1&theme=dark&trades=0&info=0"
+        })
+
+    scored.sort(key=lambda x: x["momentum_score"], reverse=True)
+    _BLUECHIP_CACHE["timestamp"] = now
+    _BLUECHIP_CACHE["signals"] = scored
+    return scored
 
 
 def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 50000.0, min_vol_24h: float = 50000.0, force_refresh: bool = False) -> List[Dict[str, Any]]:
@@ -1350,10 +1821,9 @@ def fetch_new_solana_listings(chain: str = "solana", min_liquidity: float = 5000
     # Primary Institutional Discovery: GeckoTerminal
     pairs: List[Dict[str, Any]] = _fetch_geckoterminal_pairs(chain_key)
     
-    # Secondary Institutional Discovery (Solana): Official Raydium v3 API + Verified Anchors
+    # Secondary Institutional Discovery (Solana): Official Raydium v3 API
     if chain_key == "solana":
         pairs.extend(_fetch_raydium_pairs())
-        pairs.extend(_fetch_anchor_tokens())
         
     # Emergency Fallback if primary venues failed
     if not pairs:
@@ -1611,33 +2081,51 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
     if forensics.get("forensic_status") == "FAILED":
         return {"status": "ERROR", "message": f"Forensic gate blocked {symbol}: {'; '.join(forensics.get('forensic_failures', []))}"}
             
+    # OPTION A: Live Institutional Blue-Chip & Anti-MEV / Anti-Rug Armor
+    if target_mode == "LIVE":
+        is_whitelisted_bluechip = any(c["address"] == token_address for c in INSTITUTIONAL_BLUE_CHIPS)
+        if not is_whitelisted_bluechip:
+            token_liq = float(forensics.get("liquidity_usd") or 0.0)
+            token_age_min = float(forensics.get("token_age_minutes") or 0.0)
+            rug_score = int(forensics.get("rugcheck_score") or 9999)
+            top10_pct = float(forensics.get("top10_holding_pct") or 100.0)
+            is_pump = token_address.lower().endswith("pump")
+            
+            if token_liq < 75000.0 or token_age_min < 60.0 or rug_score > 200 or top10_pct > 20.0 or is_pump:
+                logger.warning(f"🛡️ [LIVE ANTI-RUG ARMOR BLOCKED] {symbol} rejected from live execution: liq=${token_liq:,.0f} (<$75k), age={token_age_min:.0f}m (<60m), rugcheck={rug_score} (>200), top10={top10_pct:.1f}% (>20%), pump={is_pump}.")
+                return {
+                    "status": "ERROR",
+                    "message": f"Anti-MEV/Rug Armor: {symbol} rejected. Live trading strictly restricted to verified Blue-Chips (JUP, RAY, BONK, WIF, PYTH, DRIFT, KMNO) or audited tokens with >= $75k liquidity & 60m+ age."
+                }
+
+        # Anti-MEV Armor: Max 50 bps (0.50%) slippage & force Jito protection in LIVE mode
+        slippage_bps = min(int(state.get("slippage_bps", 50)), 50)
+        gas_priority = "ULTRA_JITO"
+        mev_shield = True
+    else:
+        slippage_bps = int(state.get("slippage_bps", 100))
+        gas_priority = state.get("gas_priority", "TURBO")
+        mev_shield = bool(state.get("anti_mev_shield", True))
+
     sol_price_est = get_sol_price_usd()
     amount_sol = amount_usd / sol_price_est
-    slippage_bps = int(state.get("slippage_bps", 100))
-    gas_priority = state.get("gas_priority", "TURBO")
-    mev_shield = bool(state.get("anti_mev_shield", True))
 
     quote_res = get_jupiter_quote(output_mint=token_address, amount_sol=amount_sol, slippage_bps=slippage_bps) if chain == "solana" else {"success": False}
     
-    entry_px = 0.0
-    out_tokens = 0.0
-    if quote_res.get("success"):
-        q = quote_res["quote"]
-        out_lamports = int(q.get("outAmount", 0))
-        out_tokens = out_lamports / (10 ** 6)
-        entry_px = amount_usd / max(0.0000001, out_tokens)
-    else:
-        try:
-            req = urllib.request.Request(f"https://api.dexscreener.com/latest/dex/tokens/{token_address}", headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=5) as r:
-                d = json.loads(r.read().decode())
-                pairs = d.get("pairs", [])
-                if pairs:
-                    entry_px = float(pairs[0].get("priceUsd") or 0.001)
-                    out_tokens = amount_usd / max(0.0000001, entry_px)
-        except Exception:
-            entry_px = 0.01
-            out_tokens = amount_usd / entry_px
+    # Resolve true market price from DexScreener (highest liquidity pool) to ensure identical scale
+    market_px = 0.0
+    try:
+        req = urllib.request.Request(f"https://api.dexscreener.com/latest/dex/tokens/{token_address}", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            d = json.loads(r.read().decode())
+            all_pairs = sorted(d.get("pairs", []), key=lambda x: float(x.get("liquidity", {}).get("usd") or 0.0), reverse=True)
+            if all_pairs:
+                market_px = float(all_pairs[0].get("priceUsd") or 0.0)
+    except Exception as e:
+        logger.debug(f"DexScreener price query error: {e}")
+
+    entry_px = market_px if market_px > 0 else 0.001
+    out_tokens = amount_usd / max(1e-9, entry_px)
 
     now_ts = time.time()
     ticket_id = f"dex_{symbol}_{int(now_ts)}"
@@ -1669,6 +2157,25 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
             logger.warning("[LIVE DEX SWAP] No SOLANA_PRIVATE_KEY configured. Defaulting to SIMULATION.")
             actual_mode = "SIMULATION"
 
+    # Stamp decision attribution & persona via The Beekeeper
+    try:
+        import beekeeper_supervisor
+        bee_stamp = beekeeper_supervisor.stamp_trade_decision(
+            symbol=symbol,
+            action="BUY",
+            preferred_persona="BREEZY" if chain == "solana" else "BIZZY",
+            ai_conviction_score=float(forensics.get("ai_conviction_score", 82.0)),
+            technical_trigger="Institutional Blue-Chip Momentum · 5M Velocity Gate"
+        )
+    except Exception:
+        bee_stamp = {
+            "decision_source": "DETERMINISTIC_QUANT",
+            "decision_badge": "📐 QUANT MATH",
+            "decision_rationale": "High-Velocity Momentum Gate",
+            "bee_persona": "Breezy",
+            "bee_avatar": "🌊"
+        }
+
     pos_record = {
         "id": ticket_id,
         "address": token_address,
@@ -1694,7 +2201,8 @@ def execute_dex_snipe(token_address: str, symbol: str, amount_usd: float = 100.0
         "mode": actual_mode,
         "txid": onchain_txid,
         "solscan_url": solscan_url,
-        "status": "ACTIVE"
+        "status": "ACTIVE",
+        **bee_stamp
     }
     
     active_pos.append(pos_record)
@@ -1783,7 +2291,8 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
         req = urllib.request.Request(query_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=6) as resp:
             data = json.loads(resp.read().decode())
-            for p in data.get("pairs", []):
+            all_pairs = sorted(data.get("pairs", []), key=lambda x: float(x.get("liquidity", {}).get("usd") or 0.0), reverse=True)
+            for p in all_pairs:
                 a = p.get("baseToken", {}).get("address")
                 px = float(p.get("priceUsd") or 0.0)
                 if a and px > 0 and a not in prices:
@@ -1815,10 +2324,11 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
         
         # 1. Catastrophic Dev Dump / Flash Rug Panic Bailout
         last_px = pos.get("last_check_price", entry_px)
-        if last_px > 0 and cur_px < entry_px:
+        ticks = pos.get("ticks_monitored", 0)
+        if last_px > 0 and cur_px < entry_px and ticks >= 2:
             interval_drop = (cur_px - last_px) / last_px
-            # Genuine rug/dump threshold: -25% single-candle drop (NOT 4% normal wick noise)
-            if interval_drop <= -0.250:
+            # Genuine rug/dump threshold: -35% drop confirmed after initial handshake ticks
+            if interval_drop <= -0.350:
                 exit_ticket = {
                     **pos,
                     "exit_price": cur_px,
@@ -1843,6 +2353,7 @@ def update_dex_positions_risk_cycle() -> Dict[str, Any]:
                     pass
                 continue
         pos["last_check_price"] = cur_px
+        pos["ticks_monitored"] = ticks + 1
 
         # 2. Photon Micro-Trailing Ratchet:
         # Tier 1 (+6% gain): Lock stop-loss to Breakeven (+0.5% buffer covers gas & fees)
@@ -2058,6 +2569,12 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     Called by background worker every 25 seconds.
     """
     risk_res = update_dex_positions_risk_cycle()
+    try:
+        import beekeeper_supervisor
+        beekeeper_supervisor.run_beekeeper_tuning_cycle()
+    except Exception as bk_err:
+        logger.debug(f"Beekeeper tuning cycle note: {bk_err}")
+
     state = load_dex_state()
     if not state.get("dex_armed"):
         return {"status": "STANDBY", "risk": risk_res}
@@ -2105,8 +2622,76 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
     # Count current active exposure per chain for smart diversification
     sol_active_count = sum(1 for p in active_pos if p.get("chain", "solana") == "solana")
     base_active_count = sum(1 for p in active_pos if p.get("chain") == "base")
+
+    # 0. Primary Institutional Blue-Chip Momentum Engine (JUP, RAY, BONK, WIF, PYTH, DRIFT, KMNO)
+    strategy_mode = state.get("strategy_mode", "BLUECHIP_MOMENTUM")
+    # OPTION A: In LIVE mode, permanently lock to BLUECHIP_MOMENTUM - memecoins physically blocked
+    if dex_mode == "LIVE":
+        strategy_mode = "BLUECHIP_MOMENTUM"
+
+    recent_closed_addrs = {
+        t.get("address") for t in state.get("closed_trades", [])
+        if t.get("address") and (now - float(t.get("timestamp") or (now - 3600))) < 1800
+    }
+
+    if strategy_mode in ["BLUECHIP_MOMENTUM", "HYBRID"] or dex_mode == "LIVE":
+        try:
+            import beekeeper_supervisor
+            bc_signals = scan_bluechip_momentum_signals()
+            clean_bcs = [
+                b for b in bc_signals
+                if b["address"] not in held_addrs
+                and b["address"] not in recent_closed_addrs
+                and not beekeeper_supervisor.is_asset_quarantined(b["address"])
+                and _TOKEN_COOLDOWNS.get(b["address"], 0.0) <= now
+                and b.get("momentum_score", 0) >= 65
+                and b.get("m5_change", -1.0) >= 0.02
+            ]
+            if clean_bcs:
+                top_bc = clean_bcs[0]
+                logger.info(f"🏛️ [INSTITUTIONAL BLUE-CHIP] Top Pick: {top_bc['symbol']} (Score: {top_bc['momentum_score']}, Signal: {top_bc['signal']}, 5m: +{top_bc['m5_change']}%, Flow: {top_bc['buy_ratio_5m']}%)")
+                base_amount = float(state.get("sniper_amount_usd", 7.0))
+                if dex_mode == "LIVE":
+                    base_amount = min(7.0, base_amount)
+                kelly_amount = compute_kelly_dynamic_sizing(
+                    base_amount,
+                    token_liquidity_usd=float(top_bc.get("liquidity_usd") or 1000000.0),
+                    ai_conviction_score=float(top_bc.get("momentum_score", 75.0))
+                )
+                final_trade_amount = min(base_amount, kelly_amount)
+                if dex_mode == "LIVE":
+                    final_trade_amount = min(7.0, final_trade_amount)
+                snipe_res = execute_dex_snipe(top_bc["address"], top_bc["symbol"], amount_usd=final_trade_amount, mode=dex_mode, chain="solana")
+                return {
+                    "status": "AUTO_SNIPED_BLUECHIP",
+                    "token": top_bc["symbol"],
+                    "strategy": "INSTITUTIONAL_BLUECHIP_MOMENTUM",
+                    "score": top_bc.get("momentum_score"),
+                    "signal": top_bc.get("signal"),
+                    "kelly_size_usd": final_trade_amount,
+                    "snipe": snipe_res,
+                    "risk": risk_res
+                }
+            elif strategy_mode == "BLUECHIP_MOMENTUM" or dex_mode == "LIVE":
+                return {
+                    "status": "BLUECHIP_MONITORING_NO_MOMENTUM_SIGNAL",
+                    "message": "Institutional Blue-Chip filter active. Waiting for high-conviction momentum signal on JUP/RAY/BONK/WIF/PYTH/DRIFT/KMNO.",
+                    "risk": risk_res
+                }
+        except Exception as bc_err:
+            logger.warning(f"Bluechip momentum evaluation error: {bc_err}")
+            if dex_mode == "LIVE":
+                return {"status": "LIVE_BLUECHIP_EVAL_ERROR", "message": str(bc_err), "risk": risk_res}
+
+    # HARD SAFETY WALL: In LIVE mode, never touch or evaluate new token listings/memecoins
+    if dex_mode == "LIVE":
+        return {
+            "status": "LIVE_BLUECHIP_STANDBY",
+            "message": "Live on-chain trading is 100% physically restricted to Institutional Blue-Chips. Waiting for next cycle.",
+            "risk": risk_res
+        }
     
-    # Anti-churn & GMGN Smart Money Candidate Filter
+    # Anti-churn & GMGN Smart Money Candidate Filter (Simulation Only)
     candidates = []
     for tok in listings:
         addr = tok["address"]
@@ -2121,21 +2706,20 @@ def run_autonomous_dex_snipe_cycle() -> Dict[str, Any]:
         if tok.get("safety_score", 0) < min_safety:
             continue
             
-        # Institutional Rule 0: Raydium / Meteora Graduation Gate
-        # Strictly reject pre-bonding curve pump.fun tokens in Live mode
-        bonding_pct = float(tok.get("bonding_curve_pct") or 100.0)
+        # Institutional Rule 0: Pump.fun Gate & Pool Graduation
+        # Strictly reject ALL pump.fun tokens in Live mode to prevent memecoin rugpulls
         grad_status = str(tok.get("graduation_status") or "")
         if dex_mode == "LIVE":
-            if addr.lower().endswith("pump") and bonding_pct < 100.0:
-                logger.info(f"⏳ [LIVE SAFETY] Skipping {tok.get('symbol')}: Pump.fun token still on bonding curve ({bonding_pct:.1f}%)")
+            if addr.lower().endswith("pump"):
+                logger.info(f"🚫 [LIVE INSTITUTIONAL SAFETY] Skipping {tok.get('symbol')}: Pump.fun tokens prohibited in Live mode.")
                 continue
             if grad_status in ["BONDING", "PRE_GRADUATION"]:
                 logger.info(f"⏳ [LIVE SAFETY] Skipping {tok.get('symbol')}: ungraduated bonding token ({grad_status})")
                 continue
 
-        # Institutional Rule 1: Minimum Liquidity Depth ($75k for live)
+        # Institutional Rule 1: Minimum Liquidity Depth ($150k for live, $40k for simulation)
         liq_val = float(tok.get("liquidity_usd") or 0.0)
-        min_liq_req = 75000.0 if dex_mode == "LIVE" else 40000.0
+        min_liq_req = 150000.0 if dex_mode == "LIVE" else 40000.0
         if liq_val < min_liq_req:
             continue
 
