@@ -35,7 +35,8 @@ async def normalize_api_paths(request: Request, call_next):
             "/forex/", "/backtest", "/market-data/", "/scanner/",
             "/options/", "/algo/", "/market/", "/alpaca/",
             "/paper/", "/crypto/", "/news/", "/alerts/", "/copilot/", "/macro/",
-            "/dex/", "/telegram/", "/desk/", "/hyperliquid/", "/institutional/"
+            "/dex/", "/telegram/", "/desk/", "/hyperliquid/", "/institutional/",
+            "/ccxt/"
         )
         if any(path.startswith(kp) or path == kp for kp in known_prefixes):
             request.scope["path"] = f"/api{path}"
@@ -3469,6 +3470,21 @@ async def api_freqtrade_unlock_all():
     import freqtrade_protections
     return freqtrade_protections.unlock_all_guards()
 
+# ==========================================
+# CCXT MULTI-EXCHANGE ARBITRAGE & LIQUIDITY
+# ==========================================
+@app.get("/api/ccxt/arbitrage")
+@app.get("/ccxt/arbitrage")
+async def api_ccxt_arbitrage():
+    import ccxt_arb_engine
+    return await asyncio.to_thread(ccxt_arb_engine.scan_multi_exchange_arbitrage)
+
+@app.get("/api/ccxt/health")
+@app.get("/ccxt/health")
+async def api_ccxt_health():
+    import ccxt_arb_engine
+    return await asyncio.to_thread(ccxt_arb_engine.get_exchange_connectivity_matrix)
+
 @app.post("/api/dex/set-risk-profile")
 @app.post("/dex/set-risk-profile")
 async def api_set_dex_risk_profile(req: DexRiskProfileRequest):
@@ -4929,6 +4945,15 @@ async def _mt5_cloud_relay_worker():
             pass
         await asyncio.sleep(3)
 
+async def _ccxt_arb_background_worker():
+    while True:
+        try:
+            await asyncio.sleep(25)
+            import ccxt_arb_engine
+            await asyncio.to_thread(ccxt_arb_engine.scan_multi_exchange_arbitrage)
+        except Exception as e:
+            pass
+
 @app.on_event("startup")
 async def start_background_workers():
     asyncio.create_task(_alerts_background_worker())
@@ -4939,6 +4964,7 @@ async def start_background_workers():
     asyncio.create_task(_hyperliquid_arb_worker())
     asyncio.create_task(_forex_sovereign_daemon_worker())
     asyncio.create_task(_mt5_cloud_relay_worker())
+    asyncio.create_task(_ccxt_arb_background_worker())
     try:
         import desk_notifier
         desk_notifier.start_telegram_callback_listener()
